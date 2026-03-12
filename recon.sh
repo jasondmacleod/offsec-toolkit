@@ -189,7 +189,7 @@ wait_all_enum() {
 cleanup() {
     echo ""
     warn "Caught interrupt — cleaning up background jobs..."
-    local pid
+    local pid=""
     for pid in "${CHILD_PIDS[@]}" "${CLEANUP_ONLY_PIDS[@]}"; do
         if kill -0 "$pid" 2>/dev/null; then
             kill -TERM "$pid" 2>/dev/null
@@ -297,7 +297,7 @@ run_rustscan() {
 
     # Parse open ports from rustscan output
     # Format 1 (per-port): "Open 10.10.10.5:22"
-    local ports
+    local ports=""
     ports=$(grep -oP 'Open \S+:\K[0-9]+' "$outfile" 2>/dev/null | sort -un | tr '\n' ',' | sed 's/,$//')
 
     if [[ -z "$ports" ]]; then
@@ -318,7 +318,7 @@ run_rustscan() {
     fi
 
     echo "$ports" > "$target_dir/scans/tcp_ports.txt"
-    local port_count
+    local port_count=""
     port_count=$(echo "$ports" | tr ',' '\n' | wc -l)
     success "Found $port_count open TCP port(s) on $ip: $ports"
     progress_log "$target_dir" "DONE" "rustscan" "ports=$ports"
@@ -339,7 +339,7 @@ run_nmap_tcp() {
         return 0
     fi
 
-    local ports
+    local ports=""
     ports=$(cat "$ports_file" 2>/dev/null)
     if [[ -z "$ports" || "$ports" == "NO_OPEN_PORTS" ]]; then
         warn "No TCP ports to scan for $ip"
@@ -399,18 +399,20 @@ run_nmap_udp() {
     # --- Pass 1: Top ports (fast, gets you going) ---
     info "Scanning top $UDP_TOP_PORTS UDP ports (this runs in background)"
 
-    if ! timeout "$NMAP_UDP_TIMEOUT" "${sudo_cmd[@]}" nmap -sU -sV \
+    local udp_scan_ok=true
+    timeout "$NMAP_UDP_TIMEOUT" "${sudo_cmd[@]}" nmap -sU -sV \
         --top-ports "$UDP_TOP_PORTS" \
         --open \
         --version-intensity 0 \
         -oA "$outbase" \
-        "$ip" 2>&1 | tee "$target_dir/scans/nmap_udp_console.txt"; then
+        "$ip" 2>&1 | tee "$target_dir/scans/nmap_udp_console.txt" || udp_scan_ok=false
+    if [[ "$udp_scan_ok" == "false" ]]; then
         warn "Nmap UDP scan failed or timed out for $ip (this is normal if not root)"
         progress_log "$target_dir" "FAIL" "nmap_udp" "timeout=${NMAP_UDP_TIMEOUT}s"
     fi
 
     # --- Pass 2: Full UDP scan (only if --udp-full flag set) ---
-    if $UDP_FULL && ! is_phase_done "$target_dir" "nmap_udp_full"; then
+    if [[ "$UDP_FULL" == "true" ]] && ! is_phase_done "$target_dir" "nmap_udp_full"; then
         info "Full UDP scan requested (--udp-full) — scanning all 65535 ports"
         info "This will take a LONG time. Results saved as nmap_udp_full.*"
         warn "Tip: if you're stuck on a box, this is worth the wait"
@@ -428,7 +430,7 @@ run_nmap_udp() {
             "$ip" 2>&1 | tee "$target_dir/scans/nmap_udp_full_console.txt" || true
 
         # Merge any new ports into udp_ports.txt
-        local full_udp_ports
+        local full_udp_ports=""
         full_udp_ports=$(grep -P '^\d+/udp\s+open\s' "${outbase}_full.nmap" 2>/dev/null | \
             awk '{print $1}' | cut -d/ -f1 | tr '\n' ',' | sed 's/,$//')
         if [[ -n "$full_udp_ports" ]]; then
@@ -445,7 +447,7 @@ run_nmap_udp() {
     fi
 
     # Parse UDP findings
-    local udp_ports
+    local udp_ports=""
     udp_ports=$(grep -P '^\d+/udp\s+open\s' "${outbase}.nmap" 2>/dev/null | awk '{print $1}' | cut -d/ -f1 | tr '\n' ',' | sed 's/,$//')
     if [[ -n "$udp_ports" ]]; then
         echo "$udp_ports" > "$target_dir/scans/udp_ports.txt"
@@ -454,7 +456,9 @@ run_nmap_udp() {
         info "No open UDP ports found (or all filtered)"
     fi
 
-    progress_log "$target_dir" "DONE" "nmap_udp" "ports=${udp_ports:-NONE}"
+    if [[ "$udp_scan_ok" == "true" ]]; then
+        progress_log "$target_dir" "DONE" "nmap_udp" "ports=${udp_ports:-NONE}"
+    fi
     return 0
 }
 
@@ -541,7 +545,7 @@ enum_http() {
     # --- Feroxbuster (alternative/complementary to gobuster) ---
     # Only run if gobuster didn't find much and feroxbuster is available
     if check_tool feroxbuster; then
-        local gobuster_hits
+        local gobuster_hits=""
         # Count only actual result lines (start with /) — wc -l is unreliable due to gobuster headers
         gobuster_hits=$(grep -c '^/' "$outdir/gobuster_dir.txt" 2>/dev/null || echo "0")
         if (( gobuster_hits < 5 )); then
@@ -567,7 +571,7 @@ enum_http() {
                 -t 30 -noninteractive -of json -o "$outdir/ffuf_vhosts.json" \
                 2>/dev/null || true
             if [[ -f "$outdir/ffuf_vhosts.json" ]]; then
-                local vhost_count
+                local vhost_count=""
                 if command -v jq &>/dev/null; then
                     vhost_count=$(jq '.results | length' "$outdir/ffuf_vhosts.json" 2>/dev/null || echo "0")
                 else
@@ -748,7 +752,7 @@ enum_ssh() {
         -p "$port" -oN "$outdir/nmap_ssh_scripts.txt" "$ip" 2>&1 | tail -5 || true
 
     # --- Note version for known vulnerabilities ---
-    local ssh_version
+    local ssh_version=""
     ssh_version=$(head -1 "$outdir/banner.txt" 2>/dev/null | tr -d '\r\n')
     if [[ -n "$ssh_version" ]]; then
         echo "SSH Version: $ssh_version" > "$outdir/version_info.txt"
@@ -787,7 +791,7 @@ enum_snmp() {
     if check_tool onesixtyone; then
         info "  → onesixtyone community string brute"
         # Create temp community list
-        local comm_file
+        local comm_file=""
         comm_file=$(mktemp)
         printf '%s\n' "${SNMP_COMMUNITY_STRINGS[@]}" > "$comm_file"
         # Also try the kali default list if it exists
@@ -802,7 +806,7 @@ enum_snmp() {
         rm -f "$comm_file"
 
         # Check for found community strings
-        local found_strings
+        local found_strings=""
         found_strings=$(grep -oP '\[\K[^\]]+' "$outdir/onesixtyone.txt" 2>/dev/null | sort -u)
         if [[ -n "$found_strings" ]]; then
             success "  ★ Found SNMP community string(s): $found_strings"
@@ -987,7 +991,7 @@ enum_dns() {
         # --- Zone transfer attempt ---
         info "  → zone transfer attempt (need domain name — checking nmap output)"
         # Try to extract domain from nmap results
-        local domain
+        local domain=""
         domain=$(grep -oP 'commonName=\K[^\s/]+' "$target_dir/scans/nmap_tcp.nmap" 2>/dev/null | head -1)
         if [[ -z "$domain" ]]; then
             domain=$(grep -oP 'Domain:\s*\K\S+' "$target_dir/scans/nmap_tcp.nmap" 2>/dev/null | head -1)
@@ -1059,7 +1063,7 @@ enum_smtp() {
             done < <(head -100 "$users_file")
         ' -- "$ip" "$port" "$users_file" > "$outdir/vrfy_users.txt" 2>&1 || true
 
-        local valid_count
+        local valid_count=""
         valid_count=$(grep -c "^VALID:" "$outdir/vrfy_users.txt" 2>/dev/null || echo "0")
         if (( valid_count > 0 )); then
             success "  ★ Found $valid_count valid SMTP user(s)"
@@ -1147,13 +1151,13 @@ enum_ldap() {
         timeout 30 ldapsearch -x -H "ldap://${ip}:${port}" -s base \
             namingContexts > "$outdir/naming_contexts.txt" 2>&1 || true
 
-        local base_dn
+        local base_dn=""
         base_dn=$(grep -oP 'namingContexts:\s*\K.*' "$outdir/naming_contexts.txt" 2>/dev/null | head -1)
         if [[ -n "$base_dn" ]]; then
             info "  → full anonymous dump (base: $base_dn)"
             timeout 120 ldapsearch -x -H "ldap://${ip}:${port}" -b "$base_dn" \
                 > "$outdir/ldap_full_dump.txt" 2>&1 || true
-            local entry_count
+            local entry_count=""
             entry_count=$(grep -c '^dn:' "$outdir/ldap_full_dump.txt" 2>/dev/null || echo "0")
             if (( entry_count > 0 )); then
                 success "  ★ LDAP anonymous bind: $entry_count entries found"
@@ -1229,8 +1233,8 @@ triage_and_enumerate() {
     # Parse nmap output: extract port/proto/state/service/version lines
     # Format: "22/tcp open ssh OpenSSH 8.2p1 Ubuntu..."
     local services_found=()
+    local port="" proto="" state="" service="" version=""
     while IFS= read -r line; do
-        local port proto state service version
         port=$(echo "$line" | awk -F'/' '{print $1}')
         proto=$(echo "$line" | awk '{print $1}' | awk -F'/' '{print $2}')
         state=$(echo "$line" | awk '{print $2}')
@@ -1399,7 +1403,7 @@ generate_summary() {
         echo ""
         for httpdir in "$target_dir/tcp/http"/port_*; do
             [[ -d "$httpdir" ]] || continue
-            local p
+            local p=""
             p=$(basename "$httpdir" | sed 's/port_//')
             echo "  --- Port $p ---"
             if [[ -f "$httpdir/whatweb.txt" ]]; then
@@ -1450,7 +1454,7 @@ generate_summary() {
             echo "  Completed phases:"
             grep '| DONE |' "$target_dir/progress.log" | awk -F'|' '{print "    ✓ " $3}' | sort -u
             echo ""
-            local failed
+            local failed=""
             failed=$(grep '| FAIL |' "$target_dir/progress.log" 2>/dev/null)
             if [[ -n "$failed" ]]; then
                 echo "  Failed phases (may need manual re-run):"
@@ -1465,7 +1469,7 @@ generate_summary() {
         echo "  Full results: $target_dir/"
         find "$target_dir" -type f \( -name "*.txt" -o -name "*.nmap" -o -name "*.xml" -o -name "*.json" \) 2>/dev/null | \
             sort | while IFS= read -r f; do
-                local size
+                local size=""
                 size=$(du -h "$f" 2>/dev/null | awk '{print $1}')
                 echo "    [$size] ${f#$target_dir/}"
             done
@@ -1527,7 +1531,7 @@ recon_target() {
     local udp_file="$target_dir/scans/nmap_udp.nmap"
     if [[ -f "$udp_file" ]]; then
         if grep -qP '161/udp\s+open' "$udp_file" 2>/dev/null; then
-            if ! is_phase_done "$target_dir" "snmp"; then
+            if [[ -z "${QUEUED_PHASES[snmp]+x}" ]] && ! is_phase_done "$target_dir" "snmp"; then
                 success "SNMP found on UDP 161 (post-UDP check) — launching enumeration"
                 enum_snmp "$ip" "161" "$target_dir" "true"
             fi
@@ -1591,6 +1595,7 @@ while [[ $# -gt 0 ]]; do
             exit 0
             ;;
         -f|--file)
+            [[ $# -lt 2 ]] && { error "Option $1 requires an argument"; exit 1; }
             TARGET_FILE="$2"
             shift 2
             ;;
@@ -1599,6 +1604,7 @@ while [[ $# -gt 0 ]]; do
             shift
             ;;
         --udp-ports)
+            [[ $# -lt 2 ]] && { error "Option $1 requires an argument"; exit 1; }
             UDP_TOP_PORTS="$2"
             shift 2
             ;;
@@ -1607,14 +1613,17 @@ while [[ $# -gt 0 ]]; do
             shift
             ;;
         --rate)
+            [[ $# -lt 2 ]] && { error "Option $1 requires an argument"; exit 1; }
             RUSTSCAN_RATE="$2"
             shift 2
             ;;
         --outdir)
+            [[ $# -lt 2 ]] && { error "Option $1 requires an argument"; exit 1; }
             RECON_DIR="$2"
             shift 2
             ;;
         --max-parallel)
+            [[ $# -lt 2 ]] && { error "Option $1 requires an argument"; exit 1; }
             MAX_PARALLEL_SERVICES="$2"
             shift 2
             ;;
@@ -1696,7 +1705,7 @@ done
 echo ""
 info "Targets: ${TARGETS[*]}"
 info "Output:  ${RECON_DIR}/"
-info "Mode:    $(if $AUTO_MODE; then echo "AUTO (no prompts)"; else echo "INTERACTIVE"; fi)"
+info "Mode:    $(if [[ "$AUTO_MODE" == "true" ]]; then echo "AUTO (no prompts)"; else echo "INTERACTIVE"; fi)"
 info "UDP:     Top $UDP_TOP_PORTS ports"
 info "Rate:    $RUSTSCAN_RATE pps"
 echo ""
@@ -1718,6 +1727,10 @@ else
     local_ip=$(ip -4 addr show eth0 2>/dev/null | grep -oP '(?<=inet\s)\d+(\.\d+){3}' | head -1)
     if [[ -z "$local_ip" ]]; then
         local_ip=$(ip -4 route get 1 2>/dev/null | grep -oP 'src \K\S+' | head -1)
+    fi
+    if [[ -z "$local_ip" ]]; then
+        local_ip="unknown"
+        warn "  Could not determine local IP — check network interfaces"
     fi
     warn "  No VPN detected (tun0 not found) — using $local_ip"
     warn "  If this is the engagement, check your VPN connection!"
@@ -1747,7 +1760,7 @@ for target in "${TARGETS[@]}"; do
     fi
 done
 
-if (( ${#UNREACHABLE_TARGETS[@]} > 0 )) && ! $AUTO_MODE; then
+if (( ${#UNREACHABLE_TARGETS[@]} > 0 )) && [[ "$AUTO_MODE" != "true" ]]; then
     echo ""
     warn "${#UNREACHABLE_TARGETS[@]} target(s) appear unreachable."
     echo -n "Continue anyway? [Y/n] "
@@ -1759,7 +1772,7 @@ fi
 echo ""
 
 # Confirmation (unless auto mode)
-if ! $AUTO_MODE; then
+if [[ "$AUTO_MODE" != "true" ]]; then
     echo -e "${BOLD}Ready to start enumeration of ${#TARGETS[@]} target(s).${NC}"
     echo -n "Proceed? [Y/n] "
     read -r confirm
