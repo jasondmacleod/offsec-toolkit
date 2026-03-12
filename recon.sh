@@ -565,7 +565,7 @@ enum_http() {
         if [[ "$ip" =~ [a-zA-Z] ]]; then
             info "  → ffuf vhost fuzz $url"
             local baseline_size=""
-            baseline_size=$(curl -sk "${url}/$(tr -dc 'a-z' </dev/urandom | head -c12)" -o /dev/null -w '%{size_download}' 2>/dev/null || echo "0")
+            baseline_size=$(curl -sk "${url}/$(tr -dc '[:lower:]' </dev/urandom | head -c12)" -o /dev/null -w '%{size_download}' 2>/dev/null || echo "0")
             timeout 300 ffuf -w /usr/share/seclists/Discovery/DNS/subdomains-top1million-5000.txt \
                 -u "$url" -H "Host: FUZZ.${ip}" -fs "$baseline_size" \
                 -t 30 -noninteractive -of json -o "$outdir/ffuf_vhosts.json" \
@@ -683,11 +683,13 @@ enum_ftp() {
 
     # --- Banner grab ---
     info "  → banner grab"
+    # shellcheck disable=SC2016
     timeout "$FTP_TIMEOUT" bash -c 'printf "QUIT\r\n" | nc -w 5 "$1" "$2"' \
         -- "$ip" "$port" > "$outdir/banner.txt" 2>&1 || true
 
     # --- Anonymous login check ---
     info "  → anonymous login check"
+    # shellcheck disable=SC2016
     timeout "$FTP_TIMEOUT" bash -c '
         (
             sleep 1; printf "USER anonymous\r\n";
@@ -743,6 +745,7 @@ enum_ssh() {
 
     # --- Version/Banner grab ---
     info "  → banner grab"
+    # shellcheck disable=SC2016
     timeout 10 bash -c 'echo "" | nc -w 5 "$1" "$2"' \
         -- "$ip" "$port" > "$outdir/banner.txt" 2>&1 || true
 
@@ -775,7 +778,6 @@ enum_snmp() {
     local ip="$1"
     local port="$2"
     local target_dir="$3"
-    local is_udp="${4:-false}"  # Whether this was found via UDP scan
     local outdir="$target_dir/udp/snmp"
     mkdir -p "$outdir"
 
@@ -888,6 +890,7 @@ enum_mysql() {
 
     # --- Banner/version ---
     info "  → banner grab"
+    # shellcheck disable=SC2016
     timeout 10 bash -c 'echo "" | nc -w 5 "$1" "$2"' \
         -- "$ip" "$port" > "$outdir/banner.txt" 2>&1 || true
 
@@ -1038,6 +1041,7 @@ enum_smtp() {
 
     # --- Banner ---
     info "  → banner grab"
+    # shellcheck disable=SC2016
     timeout 15 bash -c 'printf "QUIT\r\n" | nc -w 5 "$1" "$2"' \
         -- "$ip" "$port" > "$outdir/banner.txt" 2>&1 || true
 
@@ -1053,6 +1057,7 @@ enum_smtp() {
         users_file="/usr/share/wordlists/metasploit/unix_users.txt"
     fi
     if [[ -f "$users_file" ]]; then
+        # shellcheck disable=SC2016
         timeout 120 bash -c '
             ip="$1"; port="$2"; users_file="$3"
             while IFS= read -r user; do
@@ -1189,6 +1194,7 @@ enum_redis() {
 
     # --- Info command (no auth check) ---
     info "  → Redis INFO (no-auth check)"
+    # shellcheck disable=SC2016
     timeout 15 bash -c 'printf "INFO\r\nQUIT\r\n" | nc -w 5 "$1" "$2"' \
         -- "$ip" "$port" > "$outdir/info_noauth.txt" 2>&1 || true
 
@@ -1197,8 +1203,10 @@ enum_redis() {
         echo "REDIS NO-AUTH on $ip:$port" >> "$target_dir/loot/quick_wins.txt"
 
         # Get config and keys
+        # shellcheck disable=SC2016
         timeout 15 bash -c 'printf "CONFIG GET *\r\nQUIT\r\n" | nc -w 5 "$1" "$2"' \
             -- "$ip" "$port" > "$outdir/config.txt" 2>&1 || true
+        # shellcheck disable=SC2016
         timeout 15 bash -c 'printf "KEYS *\r\nQUIT\r\n" | nc -w 5 "$1" "$2"' \
             -- "$ip" "$port" > "$outdir/keys.txt" 2>&1 || true
     fi
@@ -1471,7 +1479,7 @@ generate_summary() {
             sort | while IFS= read -r f; do
                 local size=""
                 size=$(du -h "$f" 2>/dev/null | awk '{print $1}')
-                echo "    [$size] ${f#$target_dir/}"
+                echo "    [$size] ${f#"$target_dir"/}"
             done
 
     } > "$summary"
@@ -1748,6 +1756,7 @@ fi
 echo ""
 info "Checking target reachability..."
 UNREACHABLE_TARGETS=()
+# shellcheck disable=SC2016
 for target in "${TARGETS[@]}"; do
     if ping -c 1 -W 2 "$target" &>/dev/null; then
         success "  $target — reachable"
