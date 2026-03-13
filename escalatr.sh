@@ -128,7 +128,7 @@ trap cleanup EXIT INT TERM
 #------------------------------------------------------------------------------
 get_kali_ip() {
     # Try tun0 first (VPN), then eth0, then any non-lo interface
-    local ip
+    local ip=""
     ip=$(ip -4 addr show tun0 2>/dev/null | grep -oP '(?<=inet\s)\d+(\.\d+){3}' | head -1)
     if [[ -z "$ip" ]]; then
         ip=$(ip -4 addr show eth0 2>/dev/null | grep -oP '(?<=inet\s)\d+(\.\d+){3}' | head -1)
@@ -216,7 +216,7 @@ stage_tools() {
 #------------------------------------------------------------------------------
 serve_tools() {
     local tools_dir="$1"
-    local kali_ip
+    local kali_ip=""
     kali_ip=$(get_kali_ip)
 
     if ! [[ -d "$tools_dir" ]] || [[ -z "$(ls -A "$tools_dir" 2>/dev/null)" ]]; then
@@ -229,7 +229,7 @@ serve_tools() {
         fuser -k "$HTTP_PORT/tcp" 2>/dev/null
     else
         # Fallback: find and kill process on our port
-        local existing_pid
+        local existing_pid=""
         existing_pid=$(lsof -ti :"$HTTP_PORT" 2>/dev/null || ss -tlnp 2>/dev/null | grep ":$HTTP_PORT " | grep -oP 'pid=\K[0-9]+' || true)
         if [[ -n "$existing_pid" ]]; then
             kill "$existing_pid" 2>/dev/null || true
@@ -244,8 +244,8 @@ serve_tools() {
     # Print download commands for each file
     success "Transfer commands for target:"
     echo -e "${BOLD}───────────────────────────────────────────────────${NC}"
+    local fname=""
     for f in "$tools_dir"/*; do
-        local fname
         fname=$(basename "$f")
         if [[ "$fname" == *.sh ]]; then
             echo -e "  ${CYAN}# Linux: wget or curl${NC}"
@@ -294,7 +294,7 @@ generate_linux_commands() {
     local target_ip="$1"
     local target_dir="$2"
     local cmd_file="$target_dir/commands.txt"
-    local kali_ip
+    local kali_ip=""
     kali_ip=$(get_kali_ip)
 
     phase "Generating Linux privesc commands"
@@ -478,7 +478,7 @@ generate_windows_commands() {
     local target_ip="$1"
     local target_dir="$2"
     local cmd_file="$target_dir/commands.txt"
-    local kali_ip
+    local kali_ip=""
     kali_ip=$(get_kali_ip)
 
     phase "Generating Windows privesc commands"
@@ -975,7 +975,7 @@ detect_os() {
     info "Attempting OS detection for $target_ip..."
 
     # Quick port check — if 135/445 open, likely Windows; if 22 open, likely Linux
-    local win_ports linux_ports
+    local win_ports="" linux_ports=""
     win_ports=$(timeout 5 bash -c "echo '' > /dev/tcp/$target_ip/445 2>/dev/null && echo 'open'" 2>/dev/null || true)
     linux_ports=$(timeout 5 bash -c "echo '' > /dev/tcp/$target_ip/22 2>/dev/null && echo 'open'" 2>/dev/null || true)
 
@@ -987,7 +987,7 @@ detect_os() {
         echo "linux"
     else
         # Try nmap OS detection as fallback (requires root)
-        local nmap_os
+        local nmap_os=""
         nmap_os=$(timeout 15 sudo nmap -O --osscan-guess -T4 "$target_ip" 2>/dev/null | grep -i "OS details\|Running:" | head -1)
         if [[ -z "$nmap_os" ]]; then
             # Try without sudo (will likely fail but won't hurt)
@@ -1093,6 +1093,7 @@ main() {
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --os)
+                [[ $# -lt 2 ]] && { error "Option $1 requires an argument"; exit 1; }
                 target_os="$2"
                 shift 2
                 ;;
@@ -1101,10 +1102,12 @@ main() {
                 shift
                 ;;
             --parse)
+                [[ $# -lt 2 ]] && { error "Option $1 requires an argument"; exit 1; }
                 parse_file="$2"
                 shift 2
                 ;;
             --commands)
+                [[ $# -lt 2 ]] && { error "Option $1 requires an argument"; exit 1; }
                 commands_only=true
                 target_os="$2"
                 shift 2
@@ -1118,6 +1121,7 @@ main() {
                 shift
                 ;;
             --port)
+                [[ $# -lt 2 ]] && { error "Option $1 requires an argument"; exit 1; }
                 HTTP_PORT="$2"
                 shift 2
                 ;;
@@ -1161,7 +1165,7 @@ main() {
             error "File not found: $parse_file"
             exit 1
         fi
-        local parse_dir
+        local parse_dir=""
         parse_dir="$PRIVESC_DIR/parsed_$(date +%Y%m%d_%H%M%S)"
         mkdir -p "$parse_dir"
 
@@ -1202,7 +1206,7 @@ main() {
     info "Target: $target_ip"
 
     # --- Connectivity pre-flight ---
-    local kali_ip_check
+    local kali_ip_check=""
     kali_ip_check=$(get_kali_ip)
     info "Kali IP: $kali_ip_check"
 
@@ -1248,17 +1252,25 @@ main() {
 
     # Stage tools
     if [[ "$no_stage" != true ]]; then
-        stage_tools "$target_os" "$target_dir"
-        progress_log "$target_dir" "DONE" "tool_staging" "$target_os"
+        if stage_tools "$target_os" "$target_dir"; then
+            progress_log "$target_dir" "DONE" "tool_staging" "$target_os"
+        else
+            progress_log "$target_dir" "FAIL" "tool_staging" "$target_os"
+        fi
     fi
 
     # Generate commands
+    local cmd_gen_ok=true
     if [[ "$target_os" == "linux" ]]; then
-        generate_linux_commands "$target_ip" "$target_dir"
+        generate_linux_commands "$target_ip" "$target_dir" || cmd_gen_ok=false
     else
-        generate_windows_commands "$target_ip" "$target_dir"
+        generate_windows_commands "$target_ip" "$target_dir" || cmd_gen_ok=false
     fi
-    progress_log "$target_dir" "DONE" "command_gen" "$target_os"
+    if [[ "$cmd_gen_ok" == "true" ]]; then
+        progress_log "$target_dir" "DONE" "command_gen" "$target_os"
+    else
+        progress_log "$target_dir" "FAIL" "command_gen" "$target_os"
+    fi
 
     # Print cheatsheet
     print_cheatsheet "$target_os"
