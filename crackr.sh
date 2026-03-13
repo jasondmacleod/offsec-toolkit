@@ -341,6 +341,21 @@ log_cmd() {
     echo "[$(date '+%H:%M:%S')] CMD: ${cmd_str}" >> "$LOG_FILE" 2>/dev/null || true
 }
 
+is_positive_integer() {
+    [[ "$1" =~ ^[1-9][0-9]*$ ]]
+}
+
+is_port_number() {
+    [[ "$1" =~ ^[0-9]+$ ]] && (( "$1" >= 1 && "$1" <= 65535 ))
+}
+
+is_valid_hydra_target() {
+    local target="$1"
+    [[ -n "$target" ]] || return 1
+    [[ "$target" != *[[:space:]]* ]] || return 1
+    [[ "$target" != */* ]] || return 1
+}
+
 # ── List resources ──────────────────────────────────────────────────────────
 list_resources() {
     echo -e "\n${BOLD}Available Wordlists:${NC}"
@@ -422,18 +437,11 @@ resolve_wordlist() {
     # Check if the wordlist exists but is gzipped (common on fresh Kali)
     if [[ -n "$resolved" && -f "${resolved}.gz" ]]; then
         log_warn "Wordlist is compressed: ${resolved}.gz"
-        log_info "Decompressing: sudo gunzip ${resolved}.gz"
-        if sudo gunzip "${resolved}.gz" 2>/dev/null; then
-            log_success "Decompressed: $resolved"
-            echo "$resolved"
-            return 0
-        else
-            log_error "Failed to decompress. Run manually: sudo gunzip ${resolved}.gz"
-            exit 1
-        fi
+        log_error "Decompress it before running: sudo gunzip ${resolved}.gz"
+        exit 1
     elif [[ -f "${input}.gz" ]]; then
         log_warn "Wordlist is compressed: ${input}.gz"
-        log_info "Run: sudo gunzip ${input}.gz"
+        log_error "Decompress it before running: sudo gunzip ${input}.gz"
         exit 1
     fi
 
@@ -1002,7 +1010,10 @@ run_hydra() {
 
     # Connectivity check
     if ! ping -c 1 -W 2 "$target" &>/dev/null; then
-        if ! timeout 3 bash -c "echo '' > /dev/tcp/$target/${HYDRA_PORT:-${HYDRA_DEFAULT_PORTS[$service]:-80}} 2>/dev/null" 2>/dev/null; then
+        # shellcheck disable=SC2016
+        if ! timeout 3 bash -c 'echo "" > "/dev/tcp/$1/$2"' bash \
+            "$target" "${HYDRA_PORT:-${HYDRA_DEFAULT_PORTS[$service]:-80}}" \
+            >/dev/null 2>&1; then
             log_warn "Target $target does not appear reachable (ping failed, port probe failed)"
             log_warn "Check: Is the target up? Is your VPN connected?"
         fi
@@ -1394,6 +1405,46 @@ while [[ $# -gt 0 ]]; do
             exit 1 ;;
     esac
 done
+
+if [[ "$TOOL" != "auto" && "$TOOL" != "hashcat" && "$TOOL" != "jtr" ]]; then
+    log_error "Invalid tool: $TOOL (expected: auto, hashcat, or jtr)"
+    exit 1
+fi
+
+if [[ -n "$FORCE_HASHCAT_MODE" ]] && ! is_positive_integer "$FORCE_HASHCAT_MODE"; then
+    log_error "Invalid hashcat mode: $FORCE_HASHCAT_MODE"
+    exit 1
+fi
+
+if [[ -n "$HYDRA_MODE" && -z "${HYDRA_DEFAULT_PORTS[$HYDRA_MODE]+_}" ]]; then
+    log_error "Unsupported hydra service: $HYDRA_MODE"
+    exit 1
+fi
+
+if [[ -n "$HYDRA_TARGET" ]] && ! is_valid_hydra_target "$HYDRA_TARGET"; then
+    log_error "Invalid Hydra target: $HYDRA_TARGET"
+    exit 1
+fi
+
+if [[ -n "$HYDRA_PORT" ]] && ! is_port_number "$HYDRA_PORT"; then
+    log_error "Invalid port: $HYDRA_PORT"
+    exit 1
+fi
+
+if ! is_positive_integer "$HYDRA_THREADS"; then
+    log_error "Invalid hydra thread count: $HYDRA_THREADS"
+    exit 1
+fi
+
+if ! is_positive_integer "$CEWL_DEPTH"; then
+    log_error "Invalid CeWL depth: $CEWL_DEPTH"
+    exit 1
+fi
+
+if ! is_positive_integer "$CEWL_MIN_LEN"; then
+    log_error "Invalid CeWL minimum word length: $CEWL_MIN_LEN"
+    exit 1
+fi
 
 # ═══════════════════════════════════════════════════════════════════════════
 # ── Main Execution ──────────────────────────────────────────────────────

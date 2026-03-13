@@ -110,8 +110,15 @@ is_phase_done() {
 #------------------------------------------------------------------------------
 declare -a CHILD_PIDS=()
 HTTP_SERVER_PID=""
+CLEANUP_RUNNING=false
 
 cleanup() {
+    local exit_code="${1:-0}"
+    if [[ "$CLEANUP_RUNNING" == "true" ]]; then
+        return
+    fi
+    CLEANUP_RUNNING=true
+    trap - EXIT INT TERM
     warn "Cleaning up..."
     for pid in "${CHILD_PIDS[@]}"; do
         kill "$pid" 2>/dev/null && wait "$pid" 2>/dev/null
@@ -120,8 +127,12 @@ cleanup() {
         kill "$HTTP_SERVER_PID" 2>/dev/null && wait "$HTTP_SERVER_PID" 2>/dev/null
         success "HTTP server stopped"
     fi
+    if [[ "$exit_code" -ne 0 ]]; then
+        exit "$exit_code"
+    fi
 }
-trap cleanup EXIT INT TERM
+trap 'cleanup 0' EXIT
+trap 'cleanup 130' INT TERM
 
 #------------------------------------------------------------------------------
 # HELPER: Get Kali IP (for transfer commands)
@@ -137,6 +148,33 @@ get_kali_ip() {
         ip=$(ip -4 route get 1 2>/dev/null | grep -oP 'src \K\S+' | head -1)
     fi
     echo "${ip:-YOUR_KALI_IP}"
+}
+
+is_valid_target() {
+    local target="$1"
+    if [[ "$target" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]; then
+        local IFS='.'
+        local octets=()
+        read -r -a octets <<< "$target"
+        local octet=""
+        for octet in "${octets[@]}"; do
+            (( 10#$octet <= 255 )) || return 1
+        done
+        return 0
+    fi
+    [[ "$target" =~ ^[a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?)*$ ]]
+}
+
+is_valid_port() {
+    [[ "$1" =~ ^[0-9]+$ ]] && (( 1 <= $1 && $1 <= 65535 ))
+}
+
+normalize_os() {
+    case "${1,,}" in
+        linux) echo "linux" ;;
+        win|windows) echo "windows" ;;
+        *) return 1 ;;
+    esac
 }
 
 #------------------------------------------------------------------------------
@@ -169,7 +207,7 @@ stage_tools() {
             cp "$cached" "$tools_dir/$filename"
             success "Downloaded: $filename"
             return 0
-        elif curl -sL --connect-timeout 30 "$url" -o "$cached" 2>/dev/null; then
+        elif curl -fsSL --connect-timeout 30 "$url" -o "$cached" 2>/dev/null; then
             cp "$cached" "$tools_dir/$filename"
             success "Downloaded: $filename"
             return 0
@@ -972,35 +1010,36 @@ EOF
 #==============================================================================
 detect_os() {
     local target_ip="$1"
-    info "Attempting OS detection for $target_ip..."
+    info "Attempting OS detection for $target_ip..." >&2
 
     # Quick port check — if 135/445 open, likely Windows; if 22 open, likely Linux
     local win_ports="" linux_ports=""
-    win_ports=$(timeout 5 bash -c "echo '' > /dev/tcp/$target_ip/445 2>/dev/null && echo 'open'" 2>/dev/null || true)
-    linux_ports=$(timeout 5 bash -c "echo '' > /dev/tcp/$target_ip/22 2>/dev/null && echo 'open'" 2>/dev/null || true)
+    # shellcheck disable=SC2016
+    win_ports=$(timeout 5 bash -c 'echo "" > "/dev/tcp/$1/445" 2>/dev/null && echo "open"' -- "$target_ip" 2>/dev/null || true)
+    # shellcheck disable=SC2016
+    linux_ports=$(timeout 5 bash -c 'echo "" > "/dev/tcp/$1/22" 2>/dev/null && echo "open"' -- "$target_ip" 2>/dev/null || true)
 
     if [[ "$win_ports" == "open" ]]; then
-        success "Port 445 open → likely Windows"
+        success "Port 445 open → likely Windows" >&2
         echo "windows"
     elif [[ "$linux_ports" == "open" ]]; then
-        success "Port 22 open → likely Linux"
+        success "Port 22 open → likely Linux" >&2
         echo "linux"
     else
-        # Try nmap OS detection as fallback (requires root)
         local nmap_os=""
-        nmap_os=$(timeout 15 sudo nmap -O --osscan-guess -T4 "$target_ip" 2>/dev/null | grep -i "OS details\|Running:" | head -1)
-        if [[ -z "$nmap_os" ]]; then
-            # Try without sudo (will likely fail but won't hurt)
+        if [[ $EUID -eq 0 ]]; then
             nmap_os=$(timeout 15 nmap -O --osscan-guess -T4 "$target_ip" 2>/dev/null | grep -i "OS details\|Running:" | head -1)
+        else
+            warn "nmap OS detection skipped in non-root mode" >&2
         fi
         if echo "$nmap_os" | grep -qi "windows"; then
-            success "nmap OS detect → Windows"
+            success "nmap OS detect → Windows" >&2
             echo "windows"
         elif echo "$nmap_os" | grep -qi "linux"; then
-            success "nmap OS detect → Linux"
+            success "nmap OS detect → Linux" >&2
             echo "linux"
         else
-            warn "Could not detect OS — specify with --os linux|windows"
+            warn "Could not detect OS — specify with --os linux|windows" >&2
             echo ""
         fi
     fi
@@ -1063,7 +1102,7 @@ ${BOLD}OPTIONS:${NC}
   --os linux|windows     Specify target OS (skip auto-detection)
   --serve                Stage tools and start HTTP server only
   --parse <file>         Parse linpeas/winpeas output for quick-wins
-  --commands linux|win   Print privesc command cheatsheet
+  --commands linux|windows   Print privesc command cheatsheet
   --potato               Print potato variant selection guide
   --no-stage             Skip tool download/staging
   --port <N>             HTTP server port (default: $HTTP_PORT)
@@ -1094,7 +1133,10 @@ main() {
         case "$1" in
             --os)
                 [[ $# -lt 2 ]] && { error "Option $1 requires an argument"; exit 1; }
-                target_os="$2"
+                if ! target_os=$(normalize_os "$2"); then
+                    error "Invalid OS: $2 (use linux or windows)"
+                    exit 1
+                fi
                 shift 2
                 ;;
             --serve)
@@ -1109,7 +1151,10 @@ main() {
             --commands)
                 [[ $# -lt 2 ]] && { error "Option $1 requires an argument"; exit 1; }
                 commands_only=true
-                target_os="$2"
+                if ! target_os=$(normalize_os "$2"); then
+                    error "Invalid OS for --commands: $2 (use linux or windows)"
+                    exit 1
+                fi
                 shift 2
                 ;;
             --potato)
@@ -1151,10 +1196,6 @@ main() {
 
     # Handle --commands
     if [[ "$commands_only" == true ]]; then
-        if [[ -z "$target_os" ]]; then
-            error "Specify OS: --commands linux|windows"
-            exit 1
-        fi
         print_cheatsheet "$target_os"
         exit 0
     fi
@@ -1197,9 +1238,14 @@ main() {
         exit 1
     fi
 
-    # Validate IP format (basic)
-    if ! [[ "$target_ip" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-        warn "Target doesn't look like an IP: $target_ip (proceeding anyway)"
+    if ! is_valid_target "$target_ip"; then
+        error "Invalid target: $target_ip"
+        exit 1
+    fi
+
+    if ! is_valid_port "$HTTP_PORT"; then
+        error "Invalid HTTP port: $HTTP_PORT (use 1-65535)"
+        exit 1
     fi
 
     header "ESCALATR — Privilege Escalation Enumeration"
@@ -1225,9 +1271,10 @@ main() {
     fi
 
     # Target reachability
+    # shellcheck disable=SC2016
     if ping -c 1 -W 2 "$target_ip" &>/dev/null; then
         success "Target $target_ip is reachable"
-    elif timeout 3 bash -c "echo '' > /dev/tcp/$target_ip/445 2>/dev/null || echo '' > /dev/tcp/$target_ip/22 2>/dev/null || echo '' > /dev/tcp/$target_ip/80 2>/dev/null" 2>/dev/null; then
+    elif timeout 3 bash -c 'echo "" > "/dev/tcp/$1/445" 2>/dev/null || echo "" > "/dev/tcp/$1/22" 2>/dev/null || echo "" > "/dev/tcp/$1/80" 2>/dev/null' -- "$target_ip" 2>/dev/null; then
         success "Target $target_ip is reachable (ICMP blocked, but TCP responding)"
     else
         warn "Target $target_ip is NOT responding to ping or common ports"
@@ -1276,8 +1323,9 @@ main() {
     print_cheatsheet "$target_os"
 
     # Serve tools
+    local serve_ok=true
     if [[ "$serve_only" == true ]] || [[ "$no_stage" != true ]]; then
-        serve_tools "$target_dir/tools"
+        serve_tools "$target_dir/tools" || serve_ok=false
     fi
 
     echo ""
@@ -1296,7 +1344,13 @@ main() {
         warn "If you see SeImpersonatePrivilege: ./escalatr.sh --potato"
     fi
 
-    progress_log "$target_dir" "DONE" "escalatr" "complete"
+    if [[ "$serve_ok" == "true" ]]; then
+        progress_log "$target_dir" "DONE" "escalatr" "complete"
+    else
+        progress_log "$target_dir" "FAIL" "escalatr" "serve_tools_failed"
+        error "Tool serving failed"
+        exit 1
+    fi
 
     # Keep running if serving tools
     if [[ -n "$HTTP_SERVER_PID" ]] && kill -0 "$HTTP_SERVER_PID" 2>/dev/null; then

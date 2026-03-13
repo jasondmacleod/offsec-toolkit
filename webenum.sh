@@ -172,6 +172,14 @@ check_wordlist() {
     return 1
 }
 
+is_positive_integer() {
+    [[ "$1" =~ ^[1-9][0-9]*$ ]]
+}
+
+is_nonnegative_integer() {
+    [[ "$1" =~ ^[0-9]+$ ]]
+}
+
 #==============================================================================
 # URL PARSING HELPERS
 #==============================================================================
@@ -311,9 +319,9 @@ phase_fingerprint() {
 
     # --- Check for common sensitive paths directly ---
     info "  → probing common sensitive paths"
-    # shellcheck disable=SC2016  # $url injected via quoting trick, not meant to expand here
+    # shellcheck disable=SC2016  # $1 is expanded by the inner bash -c
     timeout "$PHASE_FINGERPRINT_TIMEOUT" bash -c '
-        url="'"$url"'"
+        url="$1"
         echo "# Sensitive path probes — 200/301/302/401/403 = potentially interesting"
         echo ""
         for path in \
@@ -330,7 +338,7 @@ phase_fingerprint() {
                 echo "  [${resp}] ${url%/}${path}"
             fi
         done
-    ' > "$outdir/sensitive_paths.txt" 2>&1 || warn "Sensitive path probing timed out"
+    ' -- "$url" > "$outdir/sensitive_paths.txt" 2>&1 || warn "Sensitive path probing timed out"
 
     progress_log "$2" "DONE" "$phase_name" ""
     success "Fingerprinting complete"
@@ -393,7 +401,7 @@ phase_content() {
             -w "${wl_dir}:FUZZ" \
             -u "${url%/}/FUZZ" \
             -o "$outdir/dirs_medium.json" -of json \
-            2>&1 | grep -E '\[.*\]|Progress:|Finished' || phase_ok=false
+            > "$outdir/dirs_medium_console.txt" 2>&1 || phase_ok=false
 
         # Also save human-readable version
         ffuf_json_to_text "$outdir/dirs_medium.json" > "$outdir/dirs_medium.txt" 2>/dev/null || true
@@ -410,7 +418,7 @@ phase_content() {
             -u "${url%/}/FUZZ" \
             -e ".${extensions//,/,.}" \
             -o "$outdir/files_medium.json" -of json \
-            2>&1 | grep -E '\[.*\]|Progress:|Finished' || phase_ok=false
+            > "$outdir/files_medium_console.txt" 2>&1 || phase_ok=false
 
         ffuf_json_to_text "$outdir/files_medium.json" > "$outdir/files_medium.txt" 2>/dev/null || true
     fi
@@ -423,7 +431,7 @@ phase_content() {
             -w "${WL_DIR_LARGE}:FUZZ" \
             -u "${url%/}/FUZZ" \
             -o "$outdir/dirs_large.json" -of json \
-            2>&1 | grep -E '\[.*\]|Progress:|Finished' || phase_ok=false
+            > "$outdir/dirs_large_console.txt" 2>&1 || phase_ok=false
 
         ffuf_json_to_text "$outdir/dirs_large.json" > "$outdir/dirs_large.txt" 2>/dev/null || true
     fi
@@ -534,7 +542,7 @@ PYEOF
             -u "${dir_url%/}/FUZZ" \
             -e ".${extensions//,/,.}" \
             -o "$outdir/${safe_name}.json" -of json \
-            2>&1 | grep -E '\[.*\]|Finished' || phase_ok=false
+            > "$outdir/${safe_name}_console.txt" 2>&1 || phase_ok=false
 
         ffuf_json_to_text "$outdir/${safe_name}.json" > "$outdir/${safe_name}.txt" 2>/dev/null || true
     done
@@ -602,7 +610,7 @@ phase_vhosts() {
         -u "$url" \
         -H "Host: FUZZ.${VHOST_DOMAIN}" \
         -o "$outdir/vhosts.json" -of json \
-        2>&1 | grep -E '\[.*\]|Finished' || phase_ok=false
+        > "$outdir/vhosts_console.txt" 2>&1 || phase_ok=false
 
     ffuf_json_to_text "$outdir/vhosts.json" > "$outdir/vhosts.txt" 2>/dev/null || true
 
@@ -735,7 +743,7 @@ PYEOF
             -w "${WL_PARAMS}:FUZZ" \
             -u "${endpoint}?FUZZ=testvalue" \
             -o "$outdir/params_${safe_name}.json" -of json \
-            2>&1 | grep -E '\[.*\]|Finished' || phase_ok=false
+            > "$outdir/params_${safe_name}_console.txt" 2>&1 || phase_ok=false
 
         ffuf_json_to_text "$outdir/params_${safe_name}.json" \
             > "$outdir/params_${safe_name}.txt" 2>/dev/null || true
@@ -1073,7 +1081,7 @@ EXAMPLES:
   ./webenum.sh --url http://10.10.10.5 --root ~/pg
 
 OUTPUT:
-  <root>/<host>/artifacts/web/
+  <root>/<host>_<port>_<proto>/artifacts/web/
     fingerprint/     whatweb, headers, cookies, source hints, sensitive paths
     content/         ffuf directory and file fuzzing (JSON + text)
     content/recursive/  recursive fuzzing on interesting dirs (--deep)
@@ -1100,8 +1108,8 @@ NOTES:
   - Enumeration only — no exploitation, OffSec compliant
   - Re-run safely: completed phases are skipped
   - Ctrl+C cleans up all background jobs
-  - Requires: ffuf, whatweb, curl, python3 (for JSON parsing)
-  - Optional: none — degrades gracefully if tools missing
+  - Requires: ffuf, curl, python3 (for JSON parsing)
+  - Optional: whatweb — fingerprinting degrades gracefully if missing
 EOF
 }
 
@@ -1117,6 +1125,7 @@ while [[ $# -gt 0 ]]; do
             exit 0
             ;;
         --url)
+            [[ $# -lt 2 ]] && { error "Option $1 requires an argument"; exit 1; }
             TARGET_URL="$2"
             shift 2
             ;;
@@ -1125,18 +1134,22 @@ while [[ $# -gt 0 ]]; do
             shift
             ;;
         --vhost)
+            [[ $# -lt 2 ]] && { error "Option $1 requires an argument"; exit 1; }
             VHOST_DOMAIN="$2"
             shift 2
             ;;
         --root)
+            [[ $# -lt 2 ]] && { error "Option $1 requires an argument"; exit 1; }
             OUTPUT_ROOT="$2"
             shift 2
             ;;
         --threads)
+            [[ $# -lt 2 ]] && { error "Option $1 requires an argument"; exit 1; }
             THREADS="$2"
             shift 2
             ;;
         --rate)
+            [[ $# -lt 2 ]] && { error "Option $1 requires an argument"; exit 1; }
             FFUF_RATE="$2"
             shift 2
             ;;
@@ -1165,12 +1178,28 @@ if ! echo "$TARGET_URL" | grep -qP '^https?://'; then
     warn "No scheme detected — assuming http: ${TARGET_URL}"
 fi
 
+if ! is_positive_integer "$THREADS"; then
+    error "--threads must be a positive integer"
+    exit 1
+fi
+
+if ! is_nonnegative_integer "$FFUF_RATE"; then
+    error "--rate must be a non-negative integer"
+    exit 1
+fi
+
 #==============================================================================
 # OUTPUT DIRECTORY SETUP
 #==============================================================================
+PROTO=$(get_proto "$TARGET_URL")
 HOST=$(get_host "$TARGET_URL")
 PORT=$(get_port "$TARGET_URL")
-OUTPUT_DIR="${OUTPUT_ROOT}/${HOST}/artifacts/web"
+if [[ -z "$PROTO" || -z "$HOST" || ! "$PORT" =~ ^[0-9]+$ ]]; then
+    error "Could not parse target URL: $TARGET_URL"
+    exit 1
+fi
+TARGET_TAG="${HOST}_${PORT}_${PROTO}"
+OUTPUT_DIR="${OUTPUT_ROOT}/${TARGET_TAG}/artifacts/web"
 mkdir -p "${OUTPUT_DIR}"/{fingerprint,content,content/recursive,vhosts,params,summary}
 
 #==============================================================================
@@ -1207,10 +1236,12 @@ if (( ${#TOOLS_MISSING[@]} > 0 )); then
     warn "Install: sudo apt install ${TOOLS_MISSING[*]}"
 fi
 
-if ! check_tool ffuf; then
-    error "ffuf is required for content fuzzing. Install: sudo apt install ffuf"
-    exit 1
-fi
+for required_tool in ffuf curl python3; do
+    if ! check_tool "$required_tool"; then
+        error "Required tool missing: $required_tool"
+        exit 1
+    fi
+done
 
 echo ""
 info "Wordlist status:"

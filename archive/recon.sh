@@ -55,7 +55,7 @@ set -u
 # CONFIGURATION — Tune these for your environment / engagement needs
 #------------------------------------------------------------------------------
 RECON_DIR="./recon"                    # Base output directory
-RUSTSCAN_BATCH_SIZE=1500               # Rustscan batch size / concurrent sockets per batch
+RUSTSCAN_RATE=1500                     # Packets/sec (raise on fast networks, lower if dropping)
 RUSTSCAN_TIMEOUT=4000                  # Connection timeout in ms
 NMAP_TCP_TIMEOUT=600                   # Seconds for TCP service scan
 NMAP_UDP_TIMEOUT=900                   # Seconds for UDP scan (slow by nature)
@@ -136,18 +136,6 @@ register_pid() {
 
 register_cleanup_pid() {
     CLEANUP_ONLY_PIDS+=("$1")
-}
-
-unregister_cleanup_pid() {
-    local remove_pid="$1"
-    local new_pids=()
-    local pid=""
-    for pid in "${CLEANUP_ONLY_PIDS[@]}"; do
-        if [[ "$pid" != "$remove_pid" ]]; then
-            new_pids+=("$pid")
-        fi
-    done
-    CLEANUP_ONLY_PIDS=("${new_pids[@]}")
 }
 
 # Semaphore for limiting parallel jobs
@@ -249,10 +237,6 @@ check_tool() {
     fi
 }
 
-is_positive_integer() {
-    [[ "$1" =~ ^[1-9][0-9]*$ ]]
-}
-
 #------------------------------------------------------------------------------
 # PORT CLASSIFICATION HELPERS
 #------------------------------------------------------------------------------
@@ -291,7 +275,7 @@ run_rustscan() {
     fi
 
     phase "TCP Port Discovery (rustscan) → $ip"
-    progress_log "$target_dir" "START" "rustscan" "batch_size=$RUSTSCAN_BATCH_SIZE"
+    progress_log "$target_dir" "START" "rustscan" "rate=$RUSTSCAN_RATE"
 
     # rustscan 2.4.x outputs "Open <IP>:<PORT>" lines when NOT in greppable mode.
     # --scripts none = skip nmap handoff (replaces deprecated --no-nmap)
@@ -299,7 +283,7 @@ run_rustscan() {
     # Final summary line "IP -> [port,port]" is also printed with --scripts none.
     timeout 300 rustscan -a "$ip" \
         --range 1-65535 \
-        -b "$RUSTSCAN_BATCH_SIZE" \
+        -b "$RUSTSCAN_RATE" \
         --timeout "$RUSTSCAN_TIMEOUT" \
         --scripts none \
         --no-banner \
@@ -377,22 +361,16 @@ run_nmap_tcp() {
         warn "Not running as root — skipping nmap -O (OS detection). Run as root for full results."
     fi
 
-    local tcp_scan_ok=true
     if ! timeout "$NMAP_TCP_TIMEOUT" nmap "${nmap_flags[@]}" \
         "$ip" 2>&1 | tee "$target_dir/scans/nmap_tcp_console.txt"; then
-        tcp_scan_ok=false
         error "Nmap TCP scan failed or timed out for $ip"
         progress_log "$target_dir" "FAIL" "nmap_tcp" "timeout=${NMAP_TCP_TIMEOUT}s"
-        warn "Partial TCP scan output may still exist in $target_dir/scans/"
+        # Don't return 1 — partial results may still be useful
     fi
 
-    if [[ "$tcp_scan_ok" == "true" ]]; then
-        success "Nmap TCP scan complete for $ip"
-        progress_log "$target_dir" "DONE" "nmap_tcp" "output=$outbase"
-        return 0
-    fi
-
-    return 1
+    success "Nmap TCP scan complete for $ip"
+    progress_log "$target_dir" "DONE" "nmap_tcp" "output=$outbase"
+    return 0
 }
 
 #------------------------------------------------------------------------------
@@ -411,18 +389,18 @@ run_nmap_udp() {
     phase "UDP Top-Port Scan (nmap) → $ip"
     progress_log "$target_dir" "START" "nmap_udp" "top_ports=$UDP_TOP_PORTS"
 
-    # UDP scanning requires root. Do not prompt with sudo from a background job.
+    # UDP scanning requires root/sudo. Check and warn.
+    local -a sudo_cmd=()
     if [[ $EUID -ne 0 ]]; then
-        warn "UDP scan requires root privileges — skipping in non-root mode"
-        progress_log "$target_dir" "SKIP" "nmap_udp" "requires_root=true"
-        return 0
+        warn "UDP scan requires root privileges — trying with sudo"
+        sudo_cmd=(sudo)
     fi
 
     # --- Pass 1: Top ports (fast, gets you going) ---
     info "Scanning top $UDP_TOP_PORTS UDP ports (this runs in background)"
 
     local udp_scan_ok=true
-    timeout "$NMAP_UDP_TIMEOUT" nmap -sU -sV \
+    timeout "$NMAP_UDP_TIMEOUT" "${sudo_cmd[@]}" nmap -sU -sV \
         --top-ports "$UDP_TOP_PORTS" \
         --open \
         --version-intensity 0 \
@@ -442,7 +420,7 @@ run_nmap_udp() {
 
         # Use aggressive timing and skip version detection to speed it up
         # --max-retries 1 cuts time dramatically (at slight accuracy cost)
-        timeout 3600 nmap -sU \
+        timeout 3600 "${sudo_cmd[@]}" nmap -sU \
             -p 1-65535 \
             --open \
             --max-retries 1 \
@@ -1554,7 +1532,6 @@ recon_target() {
     wait_all_enum
     # Wait for UDP independently so summary reliably includes UDP output
     wait "$udp_pid" 2>/dev/null || true
-    unregister_cleanup_pid "$udp_pid"
 
     # --- Phase 4b: Post-UDP SNMP check ---
     # UDP scan was backgrounded during triage, so SNMP on UDP 161 may have been
@@ -1592,8 +1569,7 @@ OPTIONS:
   --auto                Skip confirmation prompts (auto-run everything)
   --udp-ports N         Number of top UDP ports to scan (default: 200)
   --udp-full            Also scan ALL 65535 UDP ports (slow — use when stuck)
-  --batch-size N        Rustscan batch size (default: 1500)
-  --rate N              Deprecated alias for --batch-size
+  --rate N              Rustscan packet rate (default: 1500)
   --outdir DIR          Output directory (default: ./recon)
   --max-parallel N      Max parallel service enumerations (default: 5)
   -h, --help            Show this help message
@@ -1603,11 +1579,11 @@ EXAMPLES:
   ./recon.sh 10.10.10.1 10.10.10.2         # Multiple targets
   ./recon.sh -f targets.txt                 # From file
   ./recon.sh --auto 10.10.10.1              # No prompts
-  ./recon.sh --batch-size 3000 --auto 10.10.10.1  # Larger rustscan batches
+  ./recon.sh --rate 3000 --auto 10.10.10.1  # Fast + auto
   ./recon.sh --udp-full --auto 10.10.10.1   # Deep UDP scan
 
 NOTES:
-  - Run as root for UDP scanning; non-root mode skips UDP scans safely
+  - Run as root for UDP scanning (or it will try sudo)
   - Re-run safely: completed phases are skipped (delete progress.log to redo)
   - Ctrl+C cleanly kills all background jobs
   - Results in ./recon/<IP>/summary.txt
@@ -1644,9 +1620,9 @@ while [[ $# -gt 0 ]]; do
             UDP_FULL=true
             shift
             ;;
-        --batch-size|--rate)
+        --rate)
             [[ $# -lt 2 ]] && { error "Option $1 requires an argument"; exit 1; }
-            RUSTSCAN_BATCH_SIZE="$2"
+            RUSTSCAN_RATE="$2"
             shift 2
             ;;
         --outdir)
@@ -1670,21 +1646,6 @@ while [[ $# -gt 0 ]]; do
             ;;
     esac
 done
-
-if ! is_positive_integer "$UDP_TOP_PORTS" || (( UDP_TOP_PORTS > 65535 )); then
-    error "--udp-ports must be an integer between 1 and 65535"
-    exit 1
-fi
-
-if ! is_positive_integer "$RUSTSCAN_BATCH_SIZE"; then
-    error "--batch-size/--rate must be a positive integer"
-    exit 1
-fi
-
-if ! is_positive_integer "$MAX_PARALLEL_SERVICES"; then
-    error "--max-parallel must be a positive integer"
-    exit 1
-fi
 
 # Load targets from file if specified
 if [[ -n "$TARGET_FILE" ]]; then
@@ -1754,7 +1715,7 @@ info "Targets: ${TARGETS[*]}"
 info "Output:  ${RECON_DIR}/"
 info "Mode:    $(if [[ "$AUTO_MODE" == "true" ]]; then echo "AUTO (no prompts)"; else echo "INTERACTIVE"; fi)"
 info "UDP:     Top $UDP_TOP_PORTS ports"
-info "Rustscan batch size: $RUSTSCAN_BATCH_SIZE"
+info "Rate:    $RUSTSCAN_RATE pps"
 echo ""
 
 if (( ${#MISSING_OPTIONAL[@]} > 0 )); then
