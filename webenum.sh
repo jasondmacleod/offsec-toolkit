@@ -69,13 +69,11 @@ WL_DIR_LARGE="/usr/share/seclists/Discovery/Web-Content/raft-large-directories.t
 WL_DIR_DIRBUSTER="/usr/share/wordlists/dirbuster/directory-list-2.3-medium.txt"
 
 WL_FILES_MEDIUM="/usr/share/seclists/Discovery/Web-Content/raft-medium-files.txt"
-WL_FILES_LARGE="/usr/share/seclists/Discovery/Web-Content/raft-large-files.txt"
 
 WL_VHOSTS="/usr/share/seclists/Discovery/DNS/subdomains-top1million-5000.txt"
 WL_PARAMS="/usr/share/seclists/Discovery/Web-Content/burp-parameter-names.txt"
 
 # Extensions targeted per tech stack — auto-detected where possible
-EXT_COMMON="php,html,txt,bak,old,conf,config,xml,json,sql"
 EXT_WINDOWS="asp,aspx,ashx,asmx,config,txt,bak"
 EXT_JAVA="jsp,jspx,do,action,xml,properties,war"
 EXT_GENERIC="php,html,txt,js,json,xml,conf,bak,old,zip,tar,gz,sql,log,env"
@@ -189,7 +187,7 @@ get_host() {
 
 get_port() {
     local url="$1"
-    local proto
+    local proto=""
     proto=$(get_proto "$url")
     # Check for explicit port
     if echo "$url" | grep -qP ':\d+'; then
@@ -313,6 +311,7 @@ phase_fingerprint() {
 
     # --- Check for common sensitive paths directly ---
     info "  → probing common sensitive paths"
+    # shellcheck disable=SC2016  # $url injected via quoting trick, not meant to expand here
     timeout "$PHASE_FINGERPRINT_TIMEOUT" bash -c '
         url="'"$url"'"
         echo "# Sensitive path probes — 200/301/302/401/403 = potentially interesting"
@@ -360,29 +359,32 @@ phase_content() {
     fi
 
     # Detect tech stack for extension selection
-    local tech
+    local tech=""
     tech=$(detect_tech "$2/fingerprint/whatweb.txt")
-    local extensions
+    local extensions=""
     extensions=$(get_extensions "$tech")
     info "  Detected tech hint: $tech → extensions: $extensions"
 
     # Determine SSL flag
-    local proto
+    local proto=""
     proto=$(get_proto "$url")
-    local ssl_flag=""
-    [[ "$proto" == "https" ]] && ssl_flag="-k"
+    local -a ssl_flag=()
+    [[ "$proto" == "https" ]] && ssl_flag=(-k)
 
     # Build base ffuf flags
     # NOTE: -ac (autocalibration) intentionally omitted — it silently drops valid
     # results on some targets by over-filtering. Use explicit -mc instead.
     # NOTE: -v (verbose) intentionally omitted — floods output and breaks grep pipe.
+    # shellcheck disable=SC2054  # commas in -mc value are ffuf syntax, not array separators
     local base_flags=(-t "$THREADS" -timeout "$FFUF_TIMEOUT" \
         -mc 200,201,204,301,302,307,401,403,405 \
-        -c -noninteractive $ssl_flag)
+        -c -noninteractive "${ssl_flag[@]}")
     [[ "$FFUF_RATE" -gt 0 ]] && base_flags+=(-rate "$FFUF_RATE")
 
+    local phase_ok=true
+
     # --- 2a: Directory fuzzing with raft-medium ---
-    local wl_dir
+    local wl_dir=""
     wl_dir=$(check_wordlist "$WL_DIR_MEDIUM" "$WL_DIR_DIRBUSTER" "$WL_DIR_FAST") || true
     if [[ -n "$wl_dir" ]]; then
         info "  → ffuf directory fuzzing (wordlist: $(basename "$wl_dir"))"
@@ -391,14 +393,14 @@ phase_content() {
             -w "${wl_dir}:FUZZ" \
             -u "${url%/}/FUZZ" \
             -o "$outdir/dirs_medium.json" -of json \
-            2>&1 | grep -E '\[.*\]|Progress:|Finished' || true
+            2>&1 | grep -E '\[.*\]|Progress:|Finished' || phase_ok=false
 
         # Also save human-readable version
         ffuf_json_to_text "$outdir/dirs_medium.json" > "$outdir/dirs_medium.txt" 2>/dev/null || true
     fi
 
     # --- 2b: File fuzzing with extensions ---
-    local wl_files
+    local wl_files=""
     wl_files=$(check_wordlist "$WL_FILES_MEDIUM" "$WL_DIR_MEDIUM" "$WL_DIR_FAST") || true
     if [[ -n "$wl_files" ]]; then
         info "  → ffuf file fuzzing (extensions: $extensions)"
@@ -406,27 +408,31 @@ phase_content() {
             "${base_flags[@]}" \
             -w "${wl_files}:FUZZ" \
             -u "${url%/}/FUZZ" \
-            -e ".$(echo "$extensions" | sed 's/,/,./g')" \
+            -e ".${extensions//,/,.}" \
             -o "$outdir/files_medium.json" -of json \
-            2>&1 | grep -E '\[.*\]|Progress:|Finished' || true
+            2>&1 | grep -E '\[.*\]|Progress:|Finished' || phase_ok=false
 
         ffuf_json_to_text "$outdir/files_medium.json" > "$outdir/files_medium.txt" 2>/dev/null || true
     fi
 
     # --- 2c: If raft-large exists AND we're in deep mode, run it too ---
-    if $DEEP_MODE && [[ -f "$WL_DIR_LARGE" ]]; then
+    if [[ "$DEEP_MODE" == "true" ]] && [[ -f "$WL_DIR_LARGE" ]]; then
         info "  → ffuf deep directory fuzzing (raft-large — this is slow)"
         timeout "$PHASE_CONTENT_TIMEOUT" ffuf \
             "${base_flags[@]}" \
             -w "${WL_DIR_LARGE}:FUZZ" \
             -u "${url%/}/FUZZ" \
             -o "$outdir/dirs_large.json" -of json \
-            2>&1 | grep -E '\[.*\]|Progress:|Finished' || true
+            2>&1 | grep -E '\[.*\]|Progress:|Finished' || phase_ok=false
 
         ffuf_json_to_text "$outdir/dirs_large.json" > "$outdir/dirs_large.txt" 2>/dev/null || true
     fi
 
-    progress_log "$2" "DONE" "$phase_name" "tech=$tech"
+    if [[ "$phase_ok" == "true" ]]; then
+        progress_log "$2" "DONE" "$phase_name" "tech=$tech"
+    else
+        progress_log "$2" "FAIL" "$phase_name" "tech=$tech"
+    fi
     success "Content fuzzing complete"
 }
 
@@ -438,7 +444,7 @@ phase_recursive() {
     local outdir="$2/content/recursive"
     mkdir -p "$outdir"
 
-    if ! $DEEP_MODE; then
+    if [[ "$DEEP_MODE" != "true" ]]; then
         info "Skipping recursive fuzzing (use --deep to enable)"
         return 0
     fi
@@ -458,13 +464,14 @@ phase_recursive() {
 
     # Find interesting directories from phase 2 to recurse into
     local interesting_dirs=()
+    local path_part=""
 
     # Extract URLs directly from ffuf JSON (reliable) for 200/301/302 results
     if [[ -f "$2/content/dirs_medium.json" ]]; then
         while IFS= read -r dir_url; do
             [[ -z "$dir_url" ]] && continue
             # Skip root URL itself
-            local path_part
+            # shellcheck disable=SC2001  # regex replacement not expressible as param expansion
             path_part=$(echo "$dir_url" | sed 's|https\?://[^/]*||')
             [[ "$path_part" == "/" || -z "$path_part" ]] && continue
             interesting_dirs+=("$dir_url")
@@ -497,40 +504,46 @@ PYEOF
 
     info "  Found ${#interesting_dirs[@]} directory/ies to recurse into"
 
-    local wl_dir
+    local wl_dir=""
     wl_dir=$(check_wordlist "$WL_DIR_MEDIUM" "$WL_DIR_FAST") || return 1
 
-    local proto
+    local proto=""
     proto=$(get_proto "$url")
-    local ssl_flag=""
-    [[ "$proto" == "https" ]] && ssl_flag="-k"
+    local -a ssl_flag=()
+    [[ "$proto" == "https" ]] && ssl_flag=(-k)
 
-    local tech
+    local tech=""
     tech=$(detect_tech "$2/fingerprint/whatweb.txt")
-    local extensions
+    local extensions=""
     extensions=$(get_extensions "$tech")
 
+    local phase_ok=true
+    local safe_name=""
     local i=0
     for dir_url in "${interesting_dirs[@]}"; do
         (( i++ ))
-        local safe_name
         safe_name=$(echo "$dir_url" | sed 's|https\?://||;s|[/:]|_|g')
         info "  → recursing into: $dir_url ($i/${#interesting_dirs[@]})"
 
+        # shellcheck disable=SC2054  # commas in -mc value are ffuf syntax, not array separators
         timeout "$PHASE_RECURSIVE_TIMEOUT" ffuf \
             -t "$THREADS" -timeout "$FFUF_TIMEOUT" \
             -mc 200,201,204,301,302,307,401,403 \
-            -c -noninteractive $ssl_flag \
+            -c -noninteractive "${ssl_flag[@]}" \
             -w "${wl_dir}:FUZZ" \
             -u "${dir_url%/}/FUZZ" \
-            -e ".$(echo "$extensions" | sed 's/,/,./g')" \
+            -e ".${extensions//,/,.}" \
             -o "$outdir/${safe_name}.json" -of json \
-            2>&1 | grep -E '\[.*\]|Finished' || true
+            2>&1 | grep -E '\[.*\]|Finished' || phase_ok=false
 
         ffuf_json_to_text "$outdir/${safe_name}.json" > "$outdir/${safe_name}.txt" 2>/dev/null || true
     done
 
-    progress_log "$2" "DONE" "$phase_name" "dirs=${#interesting_dirs[@]}"
+    if [[ "$phase_ok" == "true" ]]; then
+        progress_log "$2" "DONE" "$phase_name" "dirs=${#interesting_dirs[@]}"
+    else
+        progress_log "$2" "FAIL" "$phase_name" "dirs=${#interesting_dirs[@]}"
+    fi
     success "Recursive fuzzing complete"
 }
 
@@ -560,17 +573,17 @@ phase_vhosts() {
         return 1
     fi
 
-    local wl
+    local wl=""
     wl=$(check_wordlist "$WL_VHOSTS" "/usr/share/wordlists/dirb/common.txt") || return 1
 
-    local proto
+    local proto=""
     proto=$(get_proto "$url")
-    local ssl_flag=""
-    [[ "$proto" == "https" ]] && ssl_flag="-k"
+    local -a ssl_flag=()
+    [[ "$proto" == "https" ]] && ssl_flag=(-k)
 
     # Step 1: Get baseline response size to filter on
     info "  → getting baseline response size for filtering"
-    local baseline_size
+    local baseline_size=""
     baseline_size=$(timeout "$CURL_TIMEOUT" curl -sk -o /dev/null -w "%{size_download}" \
         -H "Host: nonexistent12345.${VHOST_DOMAIN}" \
         -A "Mozilla/5.0" "$url" 2>/dev/null || echo "0")
@@ -578,28 +591,30 @@ phase_vhosts() {
 
     # Step 2: Vhost fuzz with size filter
     info "  → ffuf vhost fuzzing (Host: FUZZ.${VHOST_DOMAIN})"
+    local phase_ok=true
+    # shellcheck disable=SC2054  # commas in -mc value are ffuf syntax, not array separators
     timeout "$PHASE_VHOST_TIMEOUT" ffuf \
         -t "$THREADS" -timeout "$FFUF_TIMEOUT" \
         -mc 200,201,204,301,302,307,401,403 \
         -fs "$baseline_size" \
-        -c -noninteractive $ssl_flag \
+        -c -noninteractive "${ssl_flag[@]}" \
         -w "${wl}:FUZZ" \
         -u "$url" \
         -H "Host: FUZZ.${VHOST_DOMAIN}" \
         -o "$outdir/vhosts.json" -of json \
-        2>&1 | grep -E '\[.*\]|Finished' || true
+        2>&1 | grep -E '\[.*\]|Finished' || phase_ok=false
 
     ffuf_json_to_text "$outdir/vhosts.json" > "$outdir/vhosts.txt" 2>/dev/null || true
 
     # Report discovered vhosts for /etc/hosts
     # Use ffuf_json_fuzz_words to extract the FUZZ input (vhost name), not the URL
-    local found_vhosts
+    local found_vhosts=""
     found_vhosts=$(ffuf_json_fuzz_words "$outdir/vhosts.json" 2>/dev/null)
-    local found_count
+    local found_count=""
     found_count=$(echo "$found_vhosts" | grep -c '.' 2>/dev/null || echo "0")
 
     if (( found_count > 0 )); then
-        local ip
+        local ip=""
         ip=$(get_host "$url")
         echo ""
         success "  ★ Found ${found_count} vhost(s) — add to /etc/hosts:"
@@ -609,7 +624,11 @@ phase_vhosts() {
         done | tee "$outdir/hosts_entries.txt"
     fi
 
-    progress_log "$2" "DONE" "$phase_name" "found=$found_count"
+    if [[ "$phase_ok" == "true" ]]; then
+        progress_log "$2" "DONE" "$phase_name" "found=$found_count"
+    else
+        progress_log "$2" "FAIL" "$phase_name" "found=$found_count"
+    fi
     success "VHost fuzzing complete"
 }
 
@@ -621,7 +640,7 @@ phase_params() {
     local outdir="$2/params"
     mkdir -p "$outdir"
 
-    if ! $DEEP_MODE; then
+    if [[ "$DEEP_MODE" != "true" ]]; then
         info "Skipping parameter discovery (use --deep to enable)"
         return 0
     fi
@@ -645,10 +664,10 @@ phase_params() {
         return 0
     fi
 
-    local proto
+    local proto=""
     proto=$(get_proto "$url")
-    local ssl_flag=""
-    [[ "$proto" == "https" ]] && ssl_flag="-k"
+    local -a ssl_flag=()
+    [[ "$proto" == "https" ]] && ssl_flag=(-k)
 
     # Collect interesting endpoints from content phase to fuzz params on
     local endpoints=("${url%/}/")
@@ -695,32 +714,38 @@ PYEOF
 
     info "  Fuzzing GET parameters on ${#endpoints[@]} endpoint(s)"
 
+    local phase_ok=true
+    local safe_name=""
+    local baseline=""
     local i=0
     for endpoint in "${endpoints[@]}"; do
         (( i++ ))
-        local safe_name
         safe_name=$(echo "$endpoint" | sed 's|https\?://||;s|[/:]|_|g')
 
         # Get baseline to filter on
-        local baseline
         baseline=$(timeout "$CURL_TIMEOUT" curl -sk -o /dev/null -w "%{size_download}" \
             -A "Mozilla/5.0" "${endpoint}?nonexistent12345=test" 2>/dev/null || echo "0")
 
         info "  → param fuzzing: $endpoint ($i/${#endpoints[@]})"
+        # shellcheck disable=SC2054  # -mc all is not comma-separated — no SC2054 here anyway
         timeout "$PHASE_PARAM_TIMEOUT" ffuf \
             -t "$THREADS" -timeout "$FFUF_TIMEOUT" \
             -mc all -fs "$baseline" \
-            -c -noninteractive $ssl_flag \
+            -c -noninteractive "${ssl_flag[@]}" \
             -w "${WL_PARAMS}:FUZZ" \
             -u "${endpoint}?FUZZ=testvalue" \
             -o "$outdir/params_${safe_name}.json" -of json \
-            2>&1 | grep -E '\[.*\]|Finished' || true
+            2>&1 | grep -E '\[.*\]|Finished' || phase_ok=false
 
         ffuf_json_to_text "$outdir/params_${safe_name}.json" \
             > "$outdir/params_${safe_name}.txt" 2>/dev/null || true
     done
 
-    progress_log "$2" "DONE" "$phase_name" "endpoints=${#endpoints[@]}"
+    if [[ "$phase_ok" == "true" ]]; then
+        progress_log "$2" "DONE" "$phase_name" "endpoints=${#endpoints[@]}"
+    else
+        progress_log "$2" "FAIL" "$phase_name" "endpoints=${#endpoints[@]}"
+    fi
     success "Parameter discovery complete"
 }
 
@@ -809,11 +834,7 @@ generate_summary() {
 
     phase "Phase 6 — Generating Summary"
 
-    local host
-    host=$(get_host "$url")
-    local port
-    port=$(get_port "$url")
-    local proto
+    local proto=""
     proto=$(get_proto "$url")
 
     {
@@ -821,7 +842,7 @@ generate_summary() {
         echo ""
         echo "**Target:** \`${url}\`"
         echo "**Date:** $(date '+%Y-%m-%d %H:%M')"
-        echo "**Mode:** $(if $DEEP_MODE; then echo 'DEEP'; else echo 'STANDARD'; fi)"
+        echo "**Mode:** $(if [[ "$DEEP_MODE" == "true" ]]; then echo 'DEEP'; else echo 'STANDARD'; fi)"
         echo ""
         echo "---"
         echo ""
@@ -871,9 +892,9 @@ generate_summary() {
         # --- Directory Findings ---
         echo "## Directory / File Findings"
         echo ""
+        local count=""
         for f in "$work_dir/content/"*.txt; do
             [[ -f "$f" ]] || continue
-            local count
             count=$(grep -c '|' "$f" 2>/dev/null || echo "0")
             (( count > 0 )) || continue
             echo "### $(basename "$f") ($count results)"
@@ -889,7 +910,7 @@ generate_summary() {
 
         # --- VHost Findings ---
         if [[ -f "$work_dir/vhosts/vhosts.txt" ]]; then
-            local vhost_count
+            local vhost_count=""
             vhost_count=$(grep -c '|' "$work_dir/vhosts/vhosts.txt" 2>/dev/null || echo "0")
             if (( vhost_count > 0 )); then
                 echo "## VHosts Discovered ★"
@@ -905,7 +926,7 @@ generate_summary() {
 
         # --- Source Hints ---
         if [[ -f "$work_dir/fingerprint/source_hints.txt" ]]; then
-            local hints_content
+            local hints_content=""
             hints_content=$(grep -v '===\|^$' "$work_dir/fingerprint/source_hints.txt" | head -30)
             if [[ -n "$hints_content" ]]; then
                 echo "## Source Code Hints"
@@ -918,8 +939,9 @@ generate_summary() {
         fi
 
         # --- Recursive Findings ---
-        if $DEEP_MODE && [[ -d "$work_dir/content/recursive" ]]; then
+        if [[ "$DEEP_MODE" == "true" ]] && [[ -d "$work_dir/content/recursive" ]]; then
             local rec_total=0
+            local cnt=""
             for f in "$work_dir/content/recursive/"*.txt; do
                 [[ -f "$f" ]] || continue
                 rec_total=$(( rec_total + $(grep -c '|' "$f" 2>/dev/null || echo 0) ))
@@ -929,7 +951,6 @@ generate_summary() {
                 echo ""
                 for f in "$work_dir/content/recursive/"*.txt; do
                     [[ -f "$f" ]] || continue
-                    local cnt
                     cnt=$(grep -c '|' "$f" 2>/dev/null || echo "0")
                     (( cnt > 0 )) || continue
                     echo "### $(basename "$f") ($cnt)"
@@ -942,7 +963,7 @@ generate_summary() {
         fi
 
         # --- Param Findings ---
-        if $DEEP_MODE && [[ -d "$work_dir/params" ]]; then
+        if [[ "$DEEP_MODE" == "true" ]] && [[ -d "$work_dir/params" ]]; then
             local param_total=0
             for f in "$work_dir/params/"*.txt; do
                 [[ -f "$f" ]] || continue
@@ -967,7 +988,7 @@ generate_summary() {
         echo "3. Check redirect destinations — 301/302 may point to interesting paths"
         echo "4. Review source_hints.txt for hardcoded paths, version strings"
         echo "5. If vhosts found: add to /etc/hosts and run webenum per vhost"
-        if ! $DEEP_MODE; then
+        if [[ "$DEEP_MODE" != "true" ]]; then
             echo "6. If stuck: re-run with \`--deep\` for recursive + parameter fuzzing"
         fi
         echo ""
@@ -1162,7 +1183,7 @@ info "Target:   $TARGET_URL"
 info "Host:     $HOST"
 info "Port:     $PORT"
 info "Output:   $OUTPUT_DIR"
-info "Mode:     $(if $DEEP_MODE; then echo 'DEEP (recursive + params)'; else echo 'STANDARD'; fi)"
+info "Mode:     $(if [[ "$DEEP_MODE" == "true" ]]; then echo 'DEEP (recursive + params)'; else echo 'STANDARD'; fi)"
 info "Threads:  $THREADS"
 [[ -n "$VHOST_DOMAIN" ]] && info "VHosts:   *.${VHOST_DOMAIN}"
 echo ""
