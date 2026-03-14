@@ -21,7 +21,6 @@ HOSTNAME_INPUT=""
 FLAG_TYPE=""
 FLAG_PATH=""
 NON_INTERACTIVE=false
-PIVOT_MACHINE=false   # Fix 10: track pivot context for checklist
 OS_INPUT=""
 POINTS_INPUT=""
 CATEGORY_INPUT=""
@@ -48,9 +47,7 @@ PROOF_FLAG_VALUE="not collected"
 FLAG_COPY_NOTE="[not provided]"
 
 write_progress() { echo "$(date '+%Y-%m-%d %H:%M:%S') | $1 | $2 | $3" >> "$PROGRESS_LOG"; }
-# Fix 4: phase_done() was defined but never called; resume would require
-# re-parsing state from progress.log (hostname, OS, flags, etc.) which is
-# not implemented. Removed to avoid misleading dead code.
+phase_done()     { grep -q "| DONE | ${1} |" "$PROGRESS_LOG" 2>/dev/null; }
 
 cleanup() {
     echo ""
@@ -183,24 +180,29 @@ copy_flag_file_if_requested() {
         return 0
     fi
 
-    # Only copy once per run even if called multiple times (e.g. FLAG_TYPE=both)
-    if [[ "$FLAG_COPY_NOTE" != "[not provided]" ]]; then
-        return 0
-    fi
-
     if [[ -e "$FLAG_PATH" ]]; then
         dest="${FLAGS_DIR}/${flag_kind}_$(basename "$FLAG_PATH")_${RUN_EPOCH}"
-        # Fix 6: use 'if cp' directly so error output is not suppressed
-        # before the exit-status check
-        if cp "$FLAG_PATH" "$dest"; then
-            FLAG_COPY_NOTE="Copied: $dest"
+    if cp "$FLAG_PATH" "$dest"; then
+            if [[ "$FLAG_COPY_NOTE" == "[not provided]" ]]; then
+                FLAG_COPY_NOTE="Copied for ${flag_kind}: $dest"
+            else
+                FLAG_COPY_NOTE="${FLAG_COPY_NOTE}; Copied for ${flag_kind}: $dest"
+            fi
             success "Copied provided flag file to $dest"
         else
-            FLAG_COPY_NOTE="Copy failed: $FLAG_PATH"
+            if [[ "$FLAG_COPY_NOTE" == "[not provided]" ]]; then
+                FLAG_COPY_NOTE="Copy failed for ${flag_kind}: $FLAG_PATH"
+            else
+                FLAG_COPY_NOTE="${FLAG_COPY_NOTE}; Copy failed for ${flag_kind}: $FLAG_PATH"
+            fi
             warn "Failed to copy provided flag file: $FLAG_PATH"
         fi
     else
-        FLAG_COPY_NOTE="Missing local path: $FLAG_PATH"
+        if [[ "$FLAG_COPY_NOTE" == "[not provided]" ]]; then
+            FLAG_COPY_NOTE="Missing local path for ${flag_kind}: $FLAG_PATH"
+        else
+            FLAG_COPY_NOTE="${FLAG_COPY_NOTE}; Missing local path for ${flag_kind}: $FLAG_PATH"
+        fi
         warn "Provided flag path does not exist locally: $FLAG_PATH"
     fi
 }
@@ -245,11 +247,13 @@ record_flag_value() {
 generate_checklist_content() {
     local checklist_path="$1"
 
-    # Fix 1: explicit "both" case — previously fell into else (proof-only),
-    # silently omitting the local.txt screenshot requirement
-    # Fix 10: pivot note is only included when PIVOT_MACHINE=true
+    local pivot_note=""
 
-    local pivot_note=$'[ ] 6. network_position.png  (pivot — required)\n    Must show: your pivot setup confirming reachability\n'
+    case "$FLAG_TYPE" in
+        local) pivot_note=$'[ ] 3. network_position.png  (if pivoting was involved)\n    Must show: your pivot setup confirming reachability\n' ;;
+        proof) pivot_note=$'[ ] 5. network_position.png  (if pivoting was involved)\n    Must show: your pivot setup confirming reachability\n' ;;
+        both)  pivot_note=$'[ ] 6. network_position.png  (if pivoting was involved)\n    Must show: your pivot setup confirming reachability\n' ;;
+    esac
 
     if [[ "$TARGET_OS" == "Linux" ]]; then
         case "$FLAG_TYPE" in
@@ -265,7 +269,7 @@ generate_checklist_content() {
                     echo "[ ] 2. low_priv_shell.png"
                     echo "    Must show: your initial shell with target hostname visible"
                     echo ""
-                    [[ "$PIVOT_MACHINE" == "true" ]] && printf '%s\n' "$pivot_note"
+                    printf '%s\n' "$pivot_note"
                 } > "$checklist_path"
                 ;;
             proof)
@@ -286,7 +290,7 @@ generate_checklist_content() {
                     echo "[ ] 4. root_shell.png"
                     echo "    Must show: root shell with hostname and id output"
                     echo ""
-                    [[ "$PIVOT_MACHINE" == "true" ]] && printf '%s\n' "$pivot_note"
+                    printf '%s\n' "$pivot_note"
                 } > "$checklist_path"
                 ;;
             both)
@@ -311,7 +315,7 @@ generate_checklist_content() {
                     echo "[ ] 5. root_shell.png"
                     echo "    Must show: root shell with hostname and id output"
                     echo ""
-                    [[ "$PIVOT_MACHINE" == "true" ]] && printf '%s\n' "$pivot_note"
+                    printf '%s\n' "$pivot_note"
                 } > "$checklist_path"
                 ;;
         esac
@@ -329,7 +333,7 @@ generate_checklist_content() {
                     echo "[ ] 2. low_priv_shell.png"
                     echo "    Must show: your initial shell with target hostname visible"
                     echo ""
-                    [[ "$PIVOT_MACHINE" == "true" ]] && printf '%s\n' "$pivot_note"
+                    printf '%s\n' "$pivot_note"
                 } > "$checklist_path"
                 ;;
             proof)
@@ -350,7 +354,7 @@ generate_checklist_content() {
                     echo "[ ] 4. system_shell.png"
                     echo "    Must show: SYSTEM/Administrator shell with hostname and whoami output"
                     echo ""
-                    [[ "$PIVOT_MACHINE" == "true" ]] && printf '%s\n' "$pivot_note"
+                    printf '%s\n' "$pivot_note"
                 } > "$checklist_path"
                 ;;
             both)
@@ -375,7 +379,7 @@ generate_checklist_content() {
                     echo "[ ] 5. system_shell.png"
                     echo "    Must show: SYSTEM/Administrator shell with hostname and whoami output"
                     echo ""
-                    [[ "$PIVOT_MACHINE" == "true" ]] && printf '%s\n' "$pivot_note"
+                    printf '%s\n' "$pivot_note"
                 } > "$checklist_path"
                 ;;
         esac
@@ -390,8 +394,6 @@ collect_attack_chain() {
     local line=""
     local blank_count=0
 
-    # Fix 3: use >> (append) with a run separator so re-runs accumulate
-    # rather than silently overwriting previous chain notes
     if [[ "$NON_INTERACTIVE" == "true" ]]; then
         {
             echo "--- ${RUN_TS} ---"
@@ -429,8 +431,6 @@ collect_attack_chain() {
 build_summary_block() {
     local checklist_path="${SCREENSHOT_DIR}/checklist.txt"
     local chain_file="${CHAIN_DIR}/attack_chain.txt"
-    # Fix 9: guard cat calls so missing files produce a clear marker
-    # rather than a silently empty section
     cat <<EOF
 ============================================================
   EVIDENCE SUMMARY — ${TARGET_IP} (${HOSTNAME_INPUT})
@@ -445,7 +445,6 @@ build_summary_block() {
   OS:        ${TARGET_OS}
   Category:  ${MACHINE_CATEGORY}
   Points:    ${POINTS_VALUE}
-  Pivot:     ${PIVOT_MACHINE}
 
 [ FLAGS ]
   local.txt:  ${LOCAL_FLAG_VALUE}
@@ -509,18 +508,13 @@ preflight() {
     [[ -n "$TARGET_IP" ]] || { error "Target IP is required"; usage; exit 1; }
     is_valid_ipv4 "$TARGET_IP" || { error "Invalid IPv4 address: $TARGET_IP"; exit 1; }
 
-    # Fix 5: try tun0 then tun1; warn loudly rather than silently falling
-    # back to eth0 (which would record the LAN IP instead of the VPN IP)
-    VPN_IP=""
-    for VPN_IFACE in tun0 tun1; do
-        VPN_IP="$(ip -4 addr show "$VPN_IFACE" 2>/dev/null | grep -oP '(?<=inet\s)\d+(\.\d+){3}' | head -1)"
-        [[ -n "$VPN_IP" ]] && break
-    done
+    VPN_IFACE="tun0"
+    VPN_IP="$(ip -4 addr show tun0 2>/dev/null | grep -oP '(?<=inet\s)\d+(\.\d+){3}' | head -1)"
     if [[ -z "$VPN_IP" ]]; then
-        VPN_IFACE="none"
-        VPN_IP="unknown"
-        warn "No VPN interface (tun0/tun1) found — are you connected to the OffSec VPN?"
+        VPN_IFACE="eth0"
+        VPN_IP="$(ip -4 addr show eth0 2>/dev/null | grep -oP '(?<=inet\s)\d+(\.\d+){3}' | head -1)"
     fi
+    [[ -z "$VPN_IP" ]] && VPN_IP="unknown"
 
     info "Kali IP (${VPN_IFACE}): ${VPN_IP}"
 
@@ -538,8 +532,6 @@ preflight() {
     touch "$PROGRESS_LOG" || { error "Failed to create ${PROGRESS_LOG}"; exit 1; }
     touch "${IP_DIR}/summary.txt" || { error "Failed to create ${IP_DIR}/summary.txt"; exit 1; }
 
-    # Fix 2: use grep -F so dots in TARGET_IP are treated as literals,
-    # not regex metacharacters (192.168.1.1 would otherwise match 192X168Y1Z1)
     if grep -qF "| DONE | ${TARGET_IP} |" "$PROGRESS_LOG" 2>/dev/null; then
         warn "Machine ${TARGET_IP} already has a DONE entry in progress.log"
         if [[ "$NON_INTERACTIVE" != "true" ]] && ! confirm_yes "Continue and append another evidence run for ${TARGET_IP}?"; then
@@ -561,7 +553,7 @@ collect_machine_context() {
     HOSTNAME_INPUT="$(prompt_value "Hostname" "${HOSTNAME_INPUT:-unknown}")"
 
     if [[ "$NON_INTERACTIVE" == "true" ]]; then
-        TARGET_OS="${OS_INPUT:-Linux}"
+        TARGET_OS="${OS_INPUT:-unknown}"
         FLAG_TYPE="${FLAG_TYPE:-local}"
         POINTS_VALUE="${POINTS_INPUT:-[not provided]}"
         MACHINE_CATEGORY="${CATEGORY_INPUT:-[not provided]}"
@@ -572,18 +564,13 @@ collect_machine_context() {
         POINTS_VALUE="$(prompt_choice "Points value [10/20/25]" "${POINTS_INPUT:-20}" "10" "20" "25")"
         category_choice="$(prompt_choice "Machine category [standalone/AD-client/AD-DC]" "${CATEGORY_INPUT:-standalone}" "standalone" "AD-client" "AD-DC")"
         MACHINE_CATEGORY="$category_choice"
-        # Fix 10: prompt for pivot context so checklist only includes the
-        # network_position screenshot requirement when actually relevant
-        if confirm_yes "Is this machine accessed via a pivot/tunnel?"; then
-            PIVOT_MACHINE=true
-        fi
     fi
 
     case "$TARGET_OS" in
-        Linux|Windows) ;;
+        Linux|Windows|unknown) ;;
         *)
-            warn "Invalid OS '${TARGET_OS}' provided; defaulting to Linux"
-            TARGET_OS="Linux"
+            warn "Invalid OS '${TARGET_OS}' provided; defaulting to unknown"
+            TARGET_OS="unknown"
             ;;
     esac
 
@@ -618,7 +605,6 @@ OS:                ${TARGET_OS}
 Flag type:         ${FLAG_TYPE}
 Points value:      ${POINTS_VALUE}
 Machine category:  ${MACHINE_CATEGORY}
-Pivot machine:     ${PIVOT_MACHINE}
 EOF
 
     if [[ "$NON_INTERACTIVE" != "true" ]] && ! confirm_yes "Proceed with this machine context?"; then
@@ -626,7 +612,7 @@ EOF
         exit 1
     fi
 
-    write_progress "DONE" "context" "hostname=${HOSTNAME_INPUT} os=${TARGET_OS} flags=${FLAG_TYPE} pivot=${PIVOT_MACHINE}"
+    write_progress "DONE" "context" "hostname=${HOSTNAME_INPUT} os=${TARGET_OS} flags=${FLAG_TYPE}"
 }
 
 collect_flags() {
