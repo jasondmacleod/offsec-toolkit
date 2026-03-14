@@ -674,9 +674,16 @@ append_ledger() {
     phase "6 - LEDGER APPEND"
     write_progress "START" "ledger" "Appending evidence ledger"
 
-    # Fix 3 (continued): filter out the "--- timestamp ---" separator lines
-    # and blank lines added by the append-mode chain format
-    chain_lines="$(grep -vE '^(---|[[:space:]]*$)' "${CHAIN_DIR}/attack_chain.txt" 2>/dev/null | tr '\n' ';' | sed 's/;*$//')"
+    chain_lines="$(
+        awk '
+                /^--- / { block = ""; next }
+                { block = block $0 ORS }
+                END { printf "%s", block }
+            ' "${CHAIN_DIR}/attack_chain.txt" 2>/dev/null \
+            | sed '/^[[:space:]]*$/d' \
+            | tr '\n' ';' \
+            | sed 's/;*$//'
+    )"
     [[ -z "$chain_lines" ]] && chain_lines="[not recorded]"
 
     printf '%s\n' "${RUN_TS} | ${TARGET_IP} | ${HOSTNAME_INPUT} | ${TARGET_OS} | local=${LOCAL_FLAG_VALUE:-MISSING} | proof=${PROOF_FLAG_VALUE:-MISSING} | chain=${chain_lines} | dir=${IP_DIR}" >> "$LEDGER_FILE"
