@@ -775,11 +775,11 @@ main() {
     fi
 
     if [[ -n "$TARGETS_RAW" ]]; then
-        local IFS=','
-        local tgt
-        for tgt in $TARGETS_RAW; do
-            tgt="${tgt// /}"   # strip spaces
-            [[ -n "$tgt" ]] && echo "$tgt" >> "$RESOLVED_TARGETS_FILE"
+        local _tgt _tgts
+        IFS=',' read -ra _tgts <<< "$TARGETS_RAW"
+        for _tgt in "${_tgts[@]}"; do
+            _tgt="${_tgt// /}"   # strip spaces
+            [[ -n "$_tgt" ]] && echo "$_tgt" >> "$RESOLVED_TARGETS_FILE"
         done
     fi
 
@@ -802,9 +802,9 @@ main() {
     if [[ "$QUICK_MODE" == true ]]; then
         read -ra ACTIVE_PROTOS <<< "$QUICK_PROTOS"
     elif [[ -n "$PROTO_LIST" ]]; then
-        local IFS=','
-        local p
-        for p in $PROTO_LIST; do
+        local p _protos
+        IFS=',' read -ra _protos <<< "$PROTO_LIST"
+        for p in "${_protos[@]}"; do
             p="${p// /}"
             if [[ -z "${PROTO_PORTS[$p]+x}" ]]; then
                 error "Unknown protocol: ${p}. Valid: smb winrm ssh rdp ldap mssql ftp"
