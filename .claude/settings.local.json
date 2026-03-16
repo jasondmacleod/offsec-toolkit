@@ -1,0 +1,28 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(which shellcheck:*)",
+      "Bash(bash -n /home/jdoe/scripts/recon.sh 2>&1)",
+      "Bash(bash -n /home/jdoe/scripts/recon.sh 2>&1 && echo \"Syntax OK\")",
+      "Bash(grep -n 'bash -c \".*\\\\$ip\\\\|bash -c \".*\\\\$port\\\\|bash -c \".*\\\\$target/' /home/jdoe/scripts/recon.sh)",
+      "Bash(bash -n /home/jdoe/scripts/recon.sh 2>&1 && echo \"OK\" && wc -l /home/jdoe/scripts/recon.sh)",
+      "Bash(bash -n /home/jdoe/scripts/recon.sh && echo \"Syntax check passed\")",
+      "Bash(bash --version | head -1)",
+      "Bash(bash -n /home/jdoe/scripts/recon.sh 2>&1 && echo \"bash -n: OK\" && shellcheck /home/jdoe/scripts/recon.sh 2>&1 && echo \"shellcheck: OK\")",
+      "Bash(git add:*)",
+      "Bash(grep -n \"\\\\$2\\\\|\\\\$3\" /home/jdoe/scripts/escalatr.sh | head -40)",
+      "Bash(grep -n '\\\\$[A-Za-z_]' /home/jdoe/scripts/escalatr.sh | grep -v '\"\\\\$' | grep -v '\\\\\\\\\\\\$' | head -60)",
+      "Bash(grep -n 'for.*in.*\\\\$' /home/jdoe/scripts/escalatr.sh)",
+      "Bash(grep -n '^[[:space:]]*local [^=]*$' /home/jdoe/scripts/escalatr.sh)",
+      "Bash(shellcheck /home/jdoe/scripts/escalatr.sh 2>&1 | head -100)",
+      "Bash(grep -E \"shift 2|\"\"$2\"\"\")",
+      "Bash(bash -n /home/jdoe/scripts/escalatr.sh 2>&1 && echo \"bash -n: OK\" && shellcheck /home/jdoe/scripts/escalatr.sh 2>&1)",
+      "Bash(bash -n /home/jdoe/scripts/escalatr.sh 2>&1 && shellcheck /home/jdoe/scripts/escalatr.sh 2>&1 && echo \"shellcheck: OK\"\nbash -n /home/jdoe/scripts/recon.sh 2>&1 && shellcheck /home/jdoe/scripts/recon.sh 2>&1 && echo \"shellcheck: OK\")",
+      "Bash(bash -n /home/jdoe/scripts/escalatr.sh 2>&1 && echo \"bash -n: OK\" && shellcheck /home/jdoe/scripts/escalatr.sh 2>&1; echo \"shellcheck exit: $?\")",
+      "Bash(shellcheck -f json /home/jdoe/scripts/escalatr.sh 2>&1 | head -500)",
+      "Bash(grep -n \"if.*\\\\$?.*;\" /home/jdoe/scripts/escalatr.sh)",
+      "Bash(grep -n '\\\\$kali_ip:\\\\${HTTP_PORT}' /home/jdoe/scripts/escalatr.sh)",
+      "Bash(grep -n 'echo.*\\\\${.*}' /home/jdoe/scripts/escalatr.sh | head -20)"
+    ]
+  }
+}
