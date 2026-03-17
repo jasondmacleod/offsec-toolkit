@@ -195,7 +195,7 @@ build_nxc_auth() {
 build_rpc_auth() {
     # RPC_CRED: string for -U flag.  RPC_HASH_FLAG: optional --pw-nt-hash
     if [[ "$AUTH_TYPE" == "hash" ]]; then
-        RPC_CRED="${USER}%${NT_HASH}"
+        RPC_CRED="${DOMAIN}/${USER}%${NT_HASH}"
         RPC_HASH_FLAG=(--pw-nt-hash)
     else
         RPC_CRED="${DOMAIN}/${USER}%${PASS}"
