@@ -788,7 +788,8 @@ function Invoke-PhaseFile {
             if (-not (Test-Path $pd)) { continue }
             try {
                 $testFile = Join-Path $pd "lootr_test_$([System.IO.Path]::GetRandomFileName())"
-                $null = [System.IO.File]::Create($testFile)
+                $fs = [System.IO.File]::Create($testFile)
+                $fs.Close()
                 Remove-Item $testFile -ErrorAction SilentlyContinue
                 $writablePaths.Add("WRITABLE: $pd")
                 Write-Warn "PATH dir is writable: $pd"
@@ -939,7 +940,8 @@ function Invoke-PhaseFile {
             if (-not $checkedDirs.Add($procDir)) { continue }
             try {
                 $testFile = Join-Path $procDir "lootr_dlltest_$([System.IO.Path]::GetRandomFileName())"
-                $null = [System.IO.File]::Create($testFile)
+                $fs = [System.IO.File]::Create($testFile)
+                $fs.Close()
                 Remove-Item $testFile -ErrorAction SilentlyContinue
                 $dllHijack.Add("WRITABLE: $procDir (process: $($proc.Name))")
                 Write-Warn "Writable process dir (DLL hijack): $procDir"
