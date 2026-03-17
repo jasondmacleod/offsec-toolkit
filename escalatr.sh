@@ -805,7 +805,7 @@ parse_linux_output() {
 
         # 4. Writable files
         echo "=== WRITABLE CRITICAL FILES ==="
-        grep -iE "writable.*(passwd|shadow|sudoers|cron|systemd|service)" "$input_file" 2>/dev/null | head -10
+        grep -iE "(passwd|shadow|sudoers|cron|systemd|service).*(writable|is writable)|writable.*(passwd|shadow|sudoers|cron|systemd|service)" "$input_file" 2>/dev/null | head -10
         echo ""
 
         # 4b. Shared object hijacking
@@ -845,12 +845,10 @@ parse_linux_output() {
 
         # 11. linpeas RED/YELLOW highlights
         echo "=== LINPEAS HIGH-PRIORITY (RED/YELLOW) ==="
-        # linpeas uses ANSI color codes; grep for the escape sequences
-        grep -E "\[1;31m|\[1;33m|95%|99%" "$input_file" 2>/dev/null | \
-            sed 's/\x1B\[[0-9;]*m//g' | head -30
+        grep -E "\[1;31m|\[1;33m|95%|99%" "$input_file" 2>/dev/null | head -30
         echo ""
 
-    } > "$quickwins"
+    } | sed 's/\x1B\[[0-9;]*[mGKHF]//g' > "$quickwins"
 
     success "Quick-wins report: $quickwins"
     echo ""
@@ -927,11 +925,10 @@ parse_windows_output() {
 
         # 10. winPEAS highlights
         echo "=== WINPEAS HIGH-PRIORITY ==="
-        grep -iE "\[!\]|\[\+\]|interesting|writable" "$input_file" 2>/dev/null | \
-            sed 's/\x1B\[[0-9;]*m//g' | head -30
+        grep -iE "\[!\]|\[\+\]|interesting|writable" "$input_file" 2>/dev/null | head -30
         echo ""
 
-    } > "$quickwins"
+    } | sed 's/\x1B\[[0-9;]*[mGKHF]//g' > "$quickwins"
 
     success "Quick-wins report: $quickwins"
     echo ""
