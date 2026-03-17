@@ -36,7 +36,10 @@ success() { echo -e "${GREEN}[$(ts)] [+]${NC} $*"; }
 warn()    { echo -e "${YELLOW}[$(ts)] [!]${NC} $*"; }
 error()   { echo -e "${RED}[$(ts)] [-]${NC} $*" >&2; }
 phase()   { echo -e "\n${MAGENTA}[$(ts)] [PHASE]${NC} ${BOLD}$*${NC}"; }
-cmd_log() { echo -e "${CYAN}[$(ts)] [CMD]${NC} $*"; }
+cmd_log() {
+    echo -e "${CYAN}[$(ts)] [CMD]${NC} $*"
+    [[ -n "${OUTDIR:-}" ]] && echo "[$(date '+%Y-%m-%d %H:%M:%S')] CMD: $*" >> "${OUTDIR}/cmd_log.txt" 2>/dev/null || true
+}
 hit_admin() { echo -e "${GREEN}${BOLD}[$(ts)] [+] ★ ADMIN HIT:${NC}${GREEN}${BOLD} $*${NC}"; }
 
 #------------------------------------------------------------------------------

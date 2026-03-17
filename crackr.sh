@@ -339,6 +339,7 @@ log_cmd() {
     local cmd_str="$*"
     echo -e "${YELLOW}CMD: ${cmd_str}${NC}"
     echo "[$(date '+%H:%M:%S')] CMD: ${cmd_str}" >> "$LOG_FILE" 2>/dev/null || true
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] CMD: ${cmd_str}" >> "${OUTPUT_DIR}/cmd_log.txt" 2>/dev/null || true
 }
 
 is_positive_integer() {

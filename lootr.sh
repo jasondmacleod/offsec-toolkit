@@ -192,6 +192,16 @@ phase_proof() {
         cat -- "${f}"
         echo -e "${GREEN}${BOLD}══════════════════════════════════════════${NC}"
         echo ""
+        echo -e "\033[1;31m╔══════════════════════════════════════════════════════════════╗\033[0m"
+        echo -e "\033[1;31m║  STOP — TAKE YOUR SCREENSHOTS BEFORE DOING ANYTHING ELSE    ║\033[0m"
+        echo -e "\033[1;31m║                                                              ║\033[0m"
+        echo -e "\033[1;31m║  Run this on target NOW:                                     ║\033[0m"
+        echo -e "\033[1;31m║    cat ${fname} && hostname && whoami && id                   ║\033[0m"
+        echo -e "\033[1;31m║                                                              ║\033[0m"
+        echo -e "\033[1;31m║  Screenshot must show: flag + hostname + whoami + id          ║\033[0m"
+        echo -e "\033[1;31m║  ALL in the SAME terminal frame                              ║\033[0m"
+        echo -e "\033[1;31m╚══════════════════════════════════════════════════════════════╝\033[0m"
+        echo ""
         cp -- "${f}" "${proof_copy}" 2>/dev/null || true
         echo "source: ${f}" >> "${proof_copy}.meta"
         found_any=true
