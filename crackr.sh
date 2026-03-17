@@ -546,7 +546,8 @@ extract_hash() {
     log_info "Extracting hash from: $source_file"
     log_info "Using: ${tool_cmd[*]}"
 
-    if "${tool_cmd[@]}" "$source_file" > "$extracted_file" 2>/dev/null; then
+    local extract_err="${extracted_file}.err"
+    if "${tool_cmd[@]}" "$source_file" > "$extracted_file" 2>"$extract_err"; then
         if [[ -s "$extracted_file" ]]; then
             # KeePass: strip "Database:" prefix from keepass2john output
             if [[ "$extract_type" == "keepass" ]]; then
@@ -559,10 +560,12 @@ extract_hash() {
             INPUT_FILE="$extracted_file"
         else
             log_error "Extraction produced empty output"
+            [[ -s "$extract_err" ]] && log_error "Tool stderr:" && cat "$extract_err" >&2
             exit 1
         fi
     else
         log_error "Extraction failed"
+        [[ -s "$extract_err" ]] && log_error "Tool stderr:" && cat "$extract_err" >&2
         exit 1
     fi
 }
@@ -649,7 +652,11 @@ run_hashcat() {
     log_cmd "${cmd[*]}"
     echo ""
 
-    "${cmd[@]}" || true
+    local rc=0
+    "${cmd[@]}" || rc=$?
+    if (( rc > 1 )); then
+        log_warn "Hashcat exited with code $rc (check GPU/OpenCL backend)"
+    fi
 
     echo ""
     if [[ -f "$outfile" && -s "$outfile" ]]; then
@@ -683,7 +690,11 @@ run_hashcat_mask() {
     log_cmd "${cmd[*]}"
     echo ""
 
-    "${cmd[@]}" || true
+    local rc=0
+    "${cmd[@]}" || rc=$?
+    if (( rc > 1 )); then
+        log_warn "Hashcat exited with code $rc (check GPU/OpenCL backend)"
+    fi
 
     echo ""
     if [[ -f "$outfile" && -s "$outfile" ]]; then
@@ -722,7 +733,11 @@ run_hashcat_hybrid() {
     log_cmd "${cmd[*]}"
     echo ""
 
-    "${cmd[@]}" || true
+    local rc=0
+    "${cmd[@]}" || rc=$?
+    if (( rc > 1 )); then
+        log_warn "Hashcat exited with code $rc (check GPU/OpenCL backend)"
+    fi
 
     echo ""
     if [[ -f "$outfile" && -s "$outfile" ]]; then
@@ -915,10 +930,12 @@ run_cewl() {
     fi
 
     log_cmd "${cmd[*]}"
-    "${cmd[@]}" 2>/dev/null || true
+    local cewl_err="${output}.err"
+    "${cmd[@]}" 2>"$cewl_err" || true
 
     if [[ ! -s "$output" ]]; then
         log_error "CeWL produced no output"
+        [[ -s "$cewl_err" ]] && log_error "CeWL stderr:" && cat "$cewl_err" >&2
         return 1
     fi
 
