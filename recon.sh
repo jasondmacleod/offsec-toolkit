@@ -142,12 +142,12 @@ unregister_cleanup_pid() {
     local remove_pid="$1"
     local new_pids=()
     local pid=""
-    for pid in "${CLEANUP_ONLY_PIDS[@]}"; do
+    for pid in ${CLEANUP_ONLY_PIDS[@]+"${CLEANUP_ONLY_PIDS[@]}"}; do
         if [[ "$pid" != "$remove_pid" ]]; then
             new_pids+=("$pid")
         fi
     done
-    CLEANUP_ONLY_PIDS=("${new_pids[@]}")
+    CLEANUP_ONLY_PIDS=("${new_pids[@]+"${new_pids[@]}"}")
 }
 
 # Semaphore for limiting parallel jobs
@@ -157,7 +157,7 @@ wait_for_slot() {
     while (( RUNNING_JOBS >= MAX_PARALLEL_SERVICES )); do
         # Reap any finished children to avoid zombies
         local new_pids=()
-        for pid in "${CHILD_PIDS[@]}"; do
+        for pid in ${CHILD_PIDS[@]+"${CHILD_PIDS[@]}"}; do
             if kill -0 "$pid" 2>/dev/null; then
                 new_pids+=("$pid")
             else
@@ -165,7 +165,7 @@ wait_for_slot() {
                 (( RUNNING_JOBS-- )) || true
             fi
         done
-        CHILD_PIDS=("${new_pids[@]}")
+        CHILD_PIDS=("${new_pids[@]+"${new_pids[@]}"}")
         if (( RUNNING_JOBS >= MAX_PARALLEL_SERVICES )); then
             sleep 1
         fi
@@ -187,7 +187,7 @@ launch_enum() {
 wait_all_enum() {
     if (( ${#CHILD_PIDS[@]} > 0 )); then
         info "Waiting for ${#CHILD_PIDS[@]} background enumeration job(s)..."
-        for pid in "${CHILD_PIDS[@]}"; do
+        for pid in ${CHILD_PIDS[@]+"${CHILD_PIDS[@]}"}; do
             wait "$pid" 2>/dev/null
         done
     fi
@@ -202,14 +202,14 @@ cleanup() {
     echo ""
     warn "Caught interrupt — cleaning up background jobs..."
     local pid=""
-    for pid in "${CHILD_PIDS[@]}" "${CLEANUP_ONLY_PIDS[@]}"; do
+    for pid in ${CHILD_PIDS[@]+"${CHILD_PIDS[@]}"} ${CLEANUP_ONLY_PIDS[@]+"${CLEANUP_ONLY_PIDS[@]}"}; do
         if kill -0 "$pid" 2>/dev/null; then
             kill -TERM "$pid" 2>/dev/null
         fi
     done
     # Give them a moment, then force-kill
     sleep 1
-    for pid in "${CHILD_PIDS[@]}" "${CLEANUP_ONLY_PIDS[@]}"; do
+    for pid in ${CHILD_PIDS[@]+"${CHILD_PIDS[@]}"} ${CLEANUP_ONLY_PIDS[@]+"${CLEANUP_ONLY_PIDS[@]}"}; do
         if kill -0 "$pid" 2>/dev/null; then
             kill -9 "$pid" 2>/dev/null
         fi
@@ -703,27 +703,32 @@ enum_ftp() {
 
     info "FTP enumeration starting: $ip:$port"
 
-    # --- Banner grab ---
-    info "  → banner grab"
-    # shellcheck disable=SC2016
-    timeout "$FTP_TIMEOUT" bash -c 'printf "QUIT\r\n" | nc -w 5 "$1" "$2"' \
-        -- "$ip" "$port" > "$outdir/banner.txt" 2>&1 || true
+    if ! check_tool nc; then
+        warn "  nc (netcat) not found — FTP banner/anonymous checks will be skipped"
+    else
+        # --- Banner grab ---
+        info "  → banner grab"
+        # shellcheck disable=SC2016
+        timeout "$FTP_TIMEOUT" bash -c 'printf "QUIT\r\n" | nc -w 5 "$1" "$2"' \
+            -- "$ip" "$port" > "$outdir/banner.txt" 2>&1 || true
 
-    # --- Anonymous login check ---
-    info "  → anonymous login check"
-    # shellcheck disable=SC2016
-    timeout "$FTP_TIMEOUT" bash -c '
-        (
-            sleep 1; printf "USER anonymous\r\n";
-            sleep 1; printf "PASS anonymous@test.com\r\n";
-            sleep 1; printf "PASV\r\n";
-            sleep 1; printf "LIST\r\n";
-            sleep 2; printf "QUIT\r\n";
-        ) | nc -w 10 "$1" "$2"
-    ' -- "$ip" "$port" > "$outdir/anonymous_check.txt" 2>&1 || true
+        # --- Anonymous login check ---
+        info "  → anonymous login check"
+        # shellcheck disable=SC2016
+        timeout "$FTP_TIMEOUT" bash -c '
+            (
+                sleep 1; printf "USER anonymous\r\n";
+                sleep 1; printf "PASS anonymous@test.com\r\n";
+                sleep 1; printf "PASV\r\n";
+                sleep 1; printf "LIST\r\n";
+                sleep 2; printf "QUIT\r\n";
+            ) | nc -w 10 "$1" "$2"
+        ' -- "$ip" "$port" > "$outdir/anonymous_check.txt" 2>&1 || true
+    fi
 
     # Check if anonymous login succeeded — anchor ^230 to avoid false positive on version strings
-    if grep -qiE '^230 |Login successful|logged in' "$outdir/anonymous_check.txt" 2>/dev/null; then
+    if [[ -f "$outdir/anonymous_check.txt" ]] && \
+       grep -qiE '^230 |Login successful|logged in' "$outdir/anonymous_check.txt" 2>/dev/null; then
         success "  ★ ANONYMOUS FTP LOGIN SUCCESSFUL on $ip:$port ★"
         echo "ANONYMOUS FTP LOGIN SUCCESSFUL" > "$outdir/ANONYMOUS_ACCESS.txt"
         echo "ANONYMOUS FTP LOGIN SUCCESSFUL on $ip:$port" >> "$target_dir/loot/quick_wins.txt"
@@ -742,7 +747,7 @@ enum_ftp() {
 
     # --- Nmap FTP scripts for deeper checks ---
     info "  → nmap FTP scripts"
-    timeout 120 nmap --script=ftp-anon,ftp-bounce,ftp-syst,ftp-vsftpd-backdoor,ftp-proftpd-backdoor \
+    timeout 120 nmap --script=ftp-anon,ftp-bounce,ftp-syst \
         -p "$port" -oN "$outdir/nmap_ftp_scripts.txt" "$ip" 2>&1 | tail -5 || true
 
     success "FTP enumeration complete for $ip:$port"
@@ -766,10 +771,12 @@ enum_ssh() {
     info "SSH enumeration starting: $ip:$port"
 
     # --- Version/Banner grab ---
-    info "  → banner grab"
-    # shellcheck disable=SC2016
-    timeout 10 bash -c 'echo "" | nc -w 5 "$1" "$2"' \
-        -- "$ip" "$port" > "$outdir/banner.txt" 2>&1 || true
+    if check_tool nc; then
+        info "  → banner grab"
+        # shellcheck disable=SC2016
+        timeout 10 bash -c 'echo "" | nc -w 5 "$1" "$2"' \
+            -- "$ip" "$port" > "$outdir/banner.txt" 2>&1 || true
+    fi
 
     # --- Nmap SSH scripts ---
     info "  → nmap SSH scripts"
@@ -911,10 +918,12 @@ enum_mysql() {
     info "MySQL enumeration starting: $ip:$port"
 
     # --- Banner/version ---
-    info "  → banner grab"
-    # shellcheck disable=SC2016
-    timeout 10 bash -c 'echo "" | nc -w 5 "$1" "$2"' \
-        -- "$ip" "$port" > "$outdir/banner.txt" 2>&1 || true
+    if check_tool nc; then
+        info "  → banner grab"
+        # shellcheck disable=SC2016
+        timeout 10 bash -c 'echo "" | nc -w 5 "$1" "$2"' \
+            -- "$ip" "$port" > "$outdir/banner.txt" 2>&1 || true
+    fi
 
     # --- Nmap MySQL scripts ---
     info "  → nmap MySQL scripts"
@@ -1062,10 +1071,12 @@ enum_smtp() {
     info "SMTP enumeration starting: $ip:$port"
 
     # --- Banner ---
-    info "  → banner grab"
-    # shellcheck disable=SC2016
-    timeout 15 bash -c 'printf "QUIT\r\n" | nc -w 5 "$1" "$2"' \
-        -- "$ip" "$port" > "$outdir/banner.txt" 2>&1 || true
+    if check_tool nc; then
+        info "  → banner grab"
+        # shellcheck disable=SC2016
+        timeout 15 bash -c 'printf "QUIT\r\n" | nc -w 5 "$1" "$2"' \
+            -- "$ip" "$port" > "$outdir/banner.txt" 2>&1 || true
+    fi
 
     # --- Nmap SMTP scripts (VRFY, EXPN, relay check) ---
     info "  → nmap SMTP scripts"
@@ -1078,7 +1089,7 @@ enum_smtp() {
     if [[ ! -f "$users_file" ]]; then
         users_file="/usr/share/wordlists/metasploit/unix_users.txt"
     fi
-    if [[ -f "$users_file" ]]; then
+    if [[ -f "$users_file" ]] && check_tool nc; then
         # shellcheck disable=SC2016
         timeout 120 bash -c '
             ip="$1"; port="$2"; users_file="$3"
@@ -1215,22 +1226,24 @@ enum_redis() {
     info "Redis enumeration starting: $ip:$port"
 
     # --- Info command (no auth check) ---
-    info "  → Redis INFO (no-auth check)"
-    # shellcheck disable=SC2016
-    timeout 15 bash -c 'printf "INFO\r\nQUIT\r\n" | nc -w 5 "$1" "$2"' \
-        -- "$ip" "$port" > "$outdir/info_noauth.txt" 2>&1 || true
-
-    if grep -qi 'redis_version' "$outdir/info_noauth.txt" 2>/dev/null; then
-        success "  ★ Redis NO-AUTH ACCESS on $ip:$port ★"
-        echo "REDIS NO-AUTH on $ip:$port" >> "$target_dir/loot/quick_wins.txt"
-
-        # Get config and keys
+    if check_tool nc; then
+        info "  → Redis INFO (no-auth check)"
         # shellcheck disable=SC2016
-        timeout 15 bash -c 'printf "CONFIG GET *\r\nQUIT\r\n" | nc -w 5 "$1" "$2"' \
-            -- "$ip" "$port" > "$outdir/config.txt" 2>&1 || true
-        # shellcheck disable=SC2016
-        timeout 15 bash -c 'printf "KEYS *\r\nQUIT\r\n" | nc -w 5 "$1" "$2"' \
-            -- "$ip" "$port" > "$outdir/keys.txt" 2>&1 || true
+        timeout 15 bash -c 'printf "INFO\r\nQUIT\r\n" | nc -w 5 "$1" "$2"' \
+            -- "$ip" "$port" > "$outdir/info_noauth.txt" 2>&1 || true
+
+        if grep -qi 'redis_version' "$outdir/info_noauth.txt" 2>/dev/null; then
+            success "  ★ Redis NO-AUTH ACCESS on $ip:$port ★"
+            echo "REDIS NO-AUTH on $ip:$port" >> "$target_dir/loot/quick_wins.txt"
+
+            # Get config and keys
+            # shellcheck disable=SC2016
+            timeout 15 bash -c 'printf "CONFIG GET *\r\nQUIT\r\n" | nc -w 5 "$1" "$2"' \
+                -- "$ip" "$port" > "$outdir/config.txt" 2>&1 || true
+            # shellcheck disable=SC2016
+            timeout 15 bash -c 'printf "KEYS *\r\nQUIT\r\n" | nc -w 5 "$1" "$2"' \
+                -- "$ip" "$port" > "$outdir/keys.txt" 2>&1 || true
+        fi
     fi
 
     # --- Nmap scripts ---
@@ -1723,7 +1736,7 @@ header "OffSec RECON WRAPPER — Pre-Flight Check"
 # Check critical tools
 CRITICAL_TOOLS=(rustscan nmap)
 OPTIONAL_TOOLS=(gobuster nikto whatweb enum4linux-ng smbmap smbclient snmpwalk \
-                onesixtyone curl wget feroxbuster netexec \
+                onesixtyone curl wget feroxbuster netexec nc \
                 rpcclient showmount dig ldapsearch psql mysql)
 
 echo ""
