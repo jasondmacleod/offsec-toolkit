@@ -445,7 +445,8 @@ mode_ligolo() {
             warn "Windows agent binary not found. Install: sudo apt install ligolo-ng-common-binaries"
         fi
 
-        python3 -m http.server "$serve_port" --directory "$serve_dir" &>/dev/null &
+        local http_err="${STATE_DIR}/http_server.err"
+        python3 -m http.server "$serve_port" --directory "$serve_dir" >/dev/null 2>"$http_err" &
         local srv_pid=$!
         sleep 0.3
         if kill -0 "$srv_pid" 2>/dev/null; then
@@ -453,7 +454,8 @@ mode_ligolo() {
             serve_url="http://${kali_ip}:${serve_port}"
             success "File server running (PID ${srv_pid}): ${serve_url}"
         else
-            warn "http.server failed to start on port ${serve_port} (port in use?)"
+            warn "http.server failed to start on port ${serve_port}"
+            [[ -s "$http_err" ]] && warn "  $(head -1 "$http_err")"
         fi
     fi
 
