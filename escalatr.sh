@@ -306,11 +306,16 @@ serve_tools() {
     done
     echo -e "${BOLD}───────────────────────────────────────────────────${NC}"
 
-    # Start server in background
-    cd "$tools_dir" || return 1
-    python3 -m http.server "$HTTP_PORT" &>/dev/null &
+    # Start server in background (subshell avoids changing working directory)
+    (cd "$tools_dir" && exec python3 -m http.server "$HTTP_PORT") &>/dev/null &
     HTTP_SERVER_PID=$!
-    cd - >/dev/null || true
+    sleep 0.5
+    if ! kill -0 "$HTTP_SERVER_PID" 2>/dev/null; then
+        error "HTTP server failed to start on port $HTTP_PORT"
+        error "Check: Is python3 installed? Is port $HTTP_PORT already in use?"
+        HTTP_SERVER_PID=""
+        return 1
+    fi
 
     success "HTTP server running (PID: $HTTP_SERVER_PID) — will auto-stop after ${SERVE_TIMEOUT}s"
     info "Press Ctrl+C to stop manually"
