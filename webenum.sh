@@ -484,7 +484,7 @@ phase_recursive() {
             [[ "$path_part" == "/" || -z "$path_part" ]] && continue
             interesting_dirs+=("$dir_url")
         done < <(python3 << PYEOF
-import json
+import json, sys
 try:
     with open('$2/content/dirs_medium.json') as f:
         data = json.load(f)
@@ -492,8 +492,8 @@ try:
         status = r.get('status', 0)
         if status in (200, 301, 302):
             print(r.get('url', ''))
-except:
-    pass
+except Exception as e:
+    print(f'webenum: JSON parse error (dirs_medium): {e}', file=sys.stderr)
 PYEOF
         )
     fi
@@ -594,17 +594,25 @@ phase_vhosts() {
     local baseline_size=""
     baseline_size=$(timeout "$CURL_TIMEOUT" curl -sk -o /dev/null -w "%{size_download}" \
         -H "Host: nonexistent12345.${VHOST_DOMAIN}" \
-        -A "Mozilla/5.0" "$url" 2>/dev/null || echo "0")
-    info "  Baseline size: ${baseline_size} bytes (will filter this out)"
+        -A "Mozilla/5.0" "$url" 2>/dev/null || echo "")
+    if [[ -z "$baseline_size" || "$baseline_size" == "0" ]]; then
+        warn "  Baseline size is 0 or empty — vhost filtering may be unreliable"
+        warn "  If all vhosts are filtered out, re-run without -fs or check target manually"
+    fi
+    info "  Baseline size: ${baseline_size:-0} bytes (will filter this out)"
 
     # Step 2: Vhost fuzz with size filter
     info "  → ffuf vhost fuzzing (Host: FUZZ.${VHOST_DOMAIN})"
     local phase_ok=true
+    local -a fs_flag=()
+    if [[ -n "$baseline_size" && "$baseline_size" != "0" ]]; then
+        fs_flag=(-fs "$baseline_size")
+    fi
     # shellcheck disable=SC2054  # commas in -mc value are ffuf syntax, not array separators
     timeout "$PHASE_VHOST_TIMEOUT" ffuf \
         -t "$THREADS" -timeout "$FFUF_TIMEOUT" \
         -mc 200,201,204,301,302,307,401,403 \
-        -fs "$baseline_size" \
+        "${fs_flag[@]}" \
         -c -noninteractive "${ssl_flag[@]}" \
         -w "${wl}:FUZZ" \
         -u "$url" \
@@ -684,15 +692,15 @@ phase_params() {
             [[ -z "$ep_url" ]] && continue
             endpoints+=("$ep_url")
         done < <(python3 << PYEOF
-import json
+import json, sys
 try:
     with open('$2/content/dirs_medium.json') as f:
         data = json.load(f)
     for r in data.get('results', []):
         if r.get('status') == 200:
             print(r.get('url', ''))
-except:
-    pass
+except Exception as e:
+    print(f'webenum: JSON parse error (dirs_medium params): {e}', file=sys.stderr)
 PYEOF
         )
     fi
@@ -702,7 +710,7 @@ PYEOF
             [[ -z "$ep_url" ]] && continue
             endpoints+=("$ep_url")
         done < <(python3 << PYEOF
-import json
+import json, sys
 try:
     with open('$2/content/files_medium.json') as f:
         data = json.load(f)
@@ -712,8 +720,8 @@ try:
             # Only fuzz endpoints that look like scripts/pages, not static files
             if any(url.endswith(ext) for ext in ('.php','.asp','.aspx','.jsp','.do','.action','.cgi','.pl')):
                 print(url)
-except:
-    pass
+except Exception as e:
+    print(f'webenum: JSON parse error (files_medium): {e}', file=sys.stderr)
 PYEOF
         )
     fi
@@ -732,13 +740,18 @@ PYEOF
 
         # Get baseline to filter on
         baseline=$(timeout "$CURL_TIMEOUT" curl -sk -o /dev/null -w "%{size_download}" \
-            -A "Mozilla/5.0" "${endpoint}?nonexistent12345=test" 2>/dev/null || echo "0")
+            -A "Mozilla/5.0" "${endpoint}?nonexistent12345=test" 2>/dev/null || echo "")
+
+        local -a param_fs_flag=()
+        if [[ -n "$baseline" && "$baseline" != "0" ]]; then
+            param_fs_flag=(-fs "$baseline")
+        fi
 
         info "  → param fuzzing: $endpoint ($i/${#endpoints[@]})"
         # shellcheck disable=SC2054  # -mc all is not comma-separated — no SC2054 here anyway
         timeout "$PHASE_PARAM_TIMEOUT" ffuf \
             -t "$THREADS" -timeout "$FFUF_TIMEOUT" \
-            -mc all -fs "$baseline" \
+            -mc all "${param_fs_flag[@]}" \
             -c -noninteractive "${ssl_flag[@]}" \
             -w "${WL_PARAMS}:FUZZ" \
             -u "${endpoint}?FUZZ=testvalue" \
@@ -807,8 +820,8 @@ try:
         fuzz = r.get('input', {}).get('FUZZ', '')
         if fuzz:
             print(fuzz)
-except:
-    pass
+except Exception as e:
+    print(f'webenum: JSON parse error (fuzz_words): {e}', file=sys.stderr)
 PYEOF
 }
 
@@ -826,8 +839,8 @@ try:
         url = r.get('url', '')
         if url:
             print(url)
-except:
-    pass
+except Exception as e:
+    print(f'webenum: JSON parse error (urls): {e}', file=sys.stderr)
 PYEOF
 }
 
