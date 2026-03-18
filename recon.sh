@@ -284,6 +284,196 @@ is_ssl_port() {
 }
 
 #------------------------------------------------------------------------------
+# QUICK-WINS TRIAGE — 5-minute fast check per target
+#------------------------------------------------------------------------------
+QUICK_WINS_MODE=false
+QUICK_WINS_ONLY=false
+
+# Score tracking: associative array ip→score
+declare -A QW_SCORES=()
+declare -A QW_REASONS=()
+
+qw_triage_target() {
+    local ip="$1"
+    local target_dir="${RECON_DIR}/${ip}"
+    local qw_file="${target_dir}/loot/quick_wins.txt"
+    local score=0
+    local reasons=""
+
+    mkdir -p "$target_dir"/{scans,loot}
+
+    phase "Quick-Wins Triage → ${ip}"
+
+    # 1. Fast nmap scan (top 100 ports, version detect, 90s timeout)
+    local nmap_quick="${target_dir}/scans/nmap_quick.nmap"
+    if [[ ! -f "$nmap_quick" ]]; then
+        info "Fast port scan (top 100)..."
+        timeout 90 nmap -sV -sC --top-ports 100 -T4 --open -oN "$nmap_quick" "$ip" 2>/dev/null || true
+    fi
+
+    if [[ ! -s "$nmap_quick" ]]; then
+        warn "  No nmap output — target may be down"
+        echo "SCORE: 0 — no open ports or target down" > "$qw_file"
+        QW_SCORES["$ip"]=0
+        QW_REASONS["$ip"]="no response"
+        return
+    fi
+
+    # Count open ports (more ports = more attack surface)
+    local port_count
+    port_count=$(grep -cP '^\d+/tcp\s+open' "$nmap_quick" 2>/dev/null || echo 0)
+    (( score += port_count ))
+
+    # 2. Check anonymous FTP
+    if grep -qP '21/tcp\s+open' "$nmap_quick" 2>/dev/null; then
+        if grep -qi "Anonymous FTP login allowed" "$nmap_quick" 2>/dev/null; then
+            (( score += 5 ))
+            reasons+="ANON_FTP "
+            success "  ★ Anonymous FTP allowed!"
+        fi
+    fi
+
+    # 3. Check anonymous SMB
+    if grep -qP '445/tcp\s+open' "$nmap_quick" 2>/dev/null; then
+        local smb_out
+        smb_out=$(timeout 15 smbclient -L "//${ip}" -N 2>&1) || true
+        if echo "$smb_out" | grep -qiE 'Sharename|IPC\$'; then
+            local share_count
+            share_count=$(echo "$smb_out" | grep -c 'Disk' 2>/dev/null || echo 0)
+            if (( share_count > 0 )); then
+                (( score += 3 + share_count ))
+                reasons+="ANON_SMB(${share_count}_shares) "
+                success "  ★ Anonymous SMB — ${share_count} share(s) visible!"
+            fi
+        fi
+    fi
+
+    # 4. Check for HTTP services and probe for easy wins
+    local http_ports
+    http_ports=$(grep -oP '(\d+)/tcp\s+open\s+\S*http' "$nmap_quick" 2>/dev/null | grep -oP '^\d+' | head -5)
+    for hp in $http_ports; do
+        local proto="http"
+        (( hp == 443 || hp == 8443 )) && proto="https"
+
+        # robots.txt
+        local robots
+        robots=$(timeout 10 curl -sk "${proto}://${ip}:${hp}/robots.txt" 2>/dev/null) || true
+        if [[ -n "$robots" ]] && echo "$robots" | grep -qiE 'Disallow|Allow'; then
+            (( score += 2 ))
+            reasons+="ROBOTS(${hp}) "
+            echo "$robots" >> "$qw_file"
+            # Check for sensitive paths
+            if echo "$robots" | grep -qiE 'admin|backup|secret|password|private|config|database|upload'; then
+                (( score += 3 ))
+                reasons+="SENSITIVE_PATHS(${hp}) "
+                success "  ★ Sensitive paths in robots.txt on port ${hp}!"
+            fi
+        fi
+
+        # HTML comments with passwords
+        local index
+        index=$(timeout 10 curl -sk "${proto}://${ip}:${hp}/" 2>/dev/null) || true
+        if [[ -n "$index" ]]; then
+            local pw_comments
+            pw_comments=$(echo "$index" | grep -oP '<!--.*?-->' | grep -iE 'pass|pwd|cred|secret|login|admin|TODO|FIXME|hack' 2>/dev/null) || true
+            if [[ -n "$pw_comments" ]]; then
+                (( score += 5 ))
+                reasons+="HTML_COMMENT(${hp}) "
+                success "  ★ Interesting HTML comments on port ${hp}!"
+                echo "$pw_comments" >> "$qw_file"
+            fi
+        fi
+
+        # Default creds on common login pages
+        local login_page
+        for path in "/login" "/admin" "/wp-login.php" "/phpmyadmin/"; do
+            login_page=$(timeout 5 curl -sk -o /dev/null -w "%{http_code}" "${proto}://${ip}:${hp}${path}" 2>/dev/null) || true
+            if [[ "$login_page" == "200" || "$login_page" == "301" || "$login_page" == "302" ]]; then
+                (( score += 2 ))
+                reasons+="LOGIN_PAGE(${hp}${path}) "
+                info "  Login page found: ${proto}://${ip}:${hp}${path}"
+            fi
+        done
+    done
+
+    # 5. Searchsploit against service versions
+    if command -v searchsploit &>/dev/null; then
+        local services
+        services=$(grep -oP '\d+/tcp\s+open\s+\S+\s+\K.+' "$nmap_quick" 2>/dev/null | head -10)
+        if [[ -n "$services" ]]; then
+            local sploit_out
+            sploit_out=$(timeout 30 searchsploit --nmap "$nmap_quick" 2>/dev/null) || true
+            if [[ -n "$sploit_out" ]] && echo "$sploit_out" | grep -qvE '^$|No Results|Exploit Title'; then
+                local exploit_count
+                exploit_count=$(echo "$sploit_out" | grep -cP '\S+\s+\|' 2>/dev/null || echo 0)
+                if (( exploit_count > 0 )); then
+                    (( score += exploit_count * 3 ))
+                    reasons+="EXPLOITS(${exploit_count}) "
+                    success "  ★ ${exploit_count} potential exploit(s) found via searchsploit!"
+                    echo "$sploit_out" >> "$qw_file"
+                fi
+            fi
+        fi
+    fi
+
+    # Write results
+    {
+        echo "QUICK-WINS TRIAGE: ${ip}"
+        echo "Score: ${score}"
+        echo "Reasons: ${reasons:-none}"
+        echo "Open ports: ${port_count}"
+        echo ""
+    } >> "$qw_file"
+
+    QW_SCORES["$ip"]=$score
+    QW_REASONS["$ip"]="${reasons:-none}"
+    success "Triage score for ${ip}: ${BOLD}${score}${NC} [${reasons:-clean}]"
+}
+
+qw_rank_targets() {
+    local priority_file="${RECON_DIR}/target_priority.txt"
+
+    echo ""
+    echo -e "${BOLD}${CYAN}════════════════════════════════════════════════════════════${NC}"
+    echo -e "${BOLD}${CYAN}  TARGET PRIORITY — Attack easiest first${NC}"
+    echo -e "${BOLD}${CYAN}════════════════════════════════════════════════════════════${NC}"
+    echo ""
+
+    # Sort by score descending
+    local sorted
+    sorted=$(for ip in "${!QW_SCORES[@]}"; do
+        echo "${QW_SCORES[$ip]} $ip ${QW_REASONS[$ip]}"
+    done | sort -rn)
+
+    local rank=1
+    {
+        echo "TARGET PRIORITY — $(date)"
+        echo "═══════════════════════════════"
+        echo ""
+    } > "$priority_file"
+
+    while read -r score ip reasons; do
+        [[ -z "$ip" ]] && continue
+        local color="$NC"
+        if (( score >= 10 )); then
+            color="$GREEN"
+        elif (( score >= 5 )); then
+            color="$YELLOW"
+        else
+            color="$RED"
+        fi
+        echo -e "  ${BOLD}#${rank}${NC} ${color}${ip}${NC}  score=${score}  ${CYAN}[${reasons}]${NC}"
+        echo "#${rank}  ${ip}  score=${score}  [${reasons}]" >> "$priority_file"
+        (( rank++ ))
+    done <<< "$sorted"
+
+    echo ""
+    echo -e "${BOLD}Recommendation:${NC} Start with #1 (highest attack surface)"
+    echo -e "Priority file: ${CYAN}${priority_file}${NC}"
+    echo ""
+}
+
+#------------------------------------------------------------------------------
 # PHASE 1: RUSTSCAN — Fast TCP Port Discovery
 #------------------------------------------------------------------------------
 run_rustscan() {
@@ -1617,6 +1807,8 @@ OPTIONS:
   --max-parallel N      Max parallel service enumerations per target (default: 5)
   --max-parallel-targets N  Max simultaneous target scans (default: 3)
   --sequential          Process targets one at a time (default: parallel)
+  --quick-wins          Run 5-min triage per target BEFORE deep recon
+  --quick-wins-only     Run triage only, print priority list, then stop
   --no-color            Disable colored output
   -h, --help            Show this help message
 
@@ -1624,6 +1816,7 @@ EXAMPLES:
   ./recon.sh 10.10.10.1                    # Single target
   ./recon.sh 10.10.10.1 10.10.10.2         # Multiple targets (parallel)
   ./recon.sh --sequential 10.10.10.1 10.10.10.2  # One at a time
+  ./recon.sh --quick-wins-only 10.10.10.1 10.10.10.2 10.10.10.3  # Triage first
   ./recon.sh -f targets.txt                 # From file
   ./recon.sh --auto 10.10.10.1              # No prompts
   ./recon.sh --batch-size 3000 --auto 10.10.10.1  # Larger rustscan batches
@@ -1687,6 +1880,15 @@ while [[ $# -gt 0 ]]; do
             [[ $# -lt 2 ]] && { error "Option $1 requires an argument"; exit 1; }
             MAX_PARALLEL_TARGETS="$2"
             shift 2
+            ;;
+        --quick-wins)
+            QUICK_WINS_MODE=true
+            shift
+            ;;
+        --quick-wins-only)
+            QUICK_WINS_MODE=true
+            QUICK_WINS_ONLY=true
+            shift
             ;;
         --sequential)
             SEQUENTIAL_TARGETS=true
@@ -1892,6 +2094,25 @@ fi
 mkdir -p "$RECON_DIR"
 
 START_TIME=$(date +%s)
+
+# Quick-wins triage pass (runs before deep recon)
+if [[ "$QUICK_WINS_MODE" == true ]]; then
+    header "QUICK-WINS TRIAGE — 5 minutes per target"
+    for target in "${TARGETS[@]}"; do
+        qw_triage_target "$target"
+    done
+    qw_rank_targets
+    if [[ "$QUICK_WINS_ONLY" == true ]]; then
+        END_TIME=$(date +%s)
+        ELAPSED=$(( END_TIME - START_TIME ))
+        success "Quick-wins triage complete in ${ELAPSED}s"
+        success "Run without --quick-wins-only for full enumeration"
+        exit 0
+    fi
+    echo ""
+    info "Proceeding to full enumeration..."
+    echo ""
+fi
 
 if [[ "$SEQUENTIAL_TARGETS" == true ]]; then
     info "Sequential mode — scanning targets one at a time"

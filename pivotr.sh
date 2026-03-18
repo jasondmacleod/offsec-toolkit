@@ -420,6 +420,9 @@ mode_ligolo() {
     register_bg "$proxy_pid" "ligolo-proxy"
     success "Ligolo proxy listening on 0.0.0.0:${port}"
 
+    # Record tunnel config for reconnect
+    record_state "tunnel" "ligolo" "subnet=${subnet};port=${port};tun_name=${tun_name};kali_ip=${kali_ip};pivot_ip=${pivot_ip:-};serve=${serve};serve_port=${serve_port}"
+
     # 6. Optional file server
     local serve_url=""
     if [[ "$serve" == true ]]; then
@@ -849,6 +852,7 @@ mode_chisel() {
                 sleep 0.5
                 if kill -0 "$spid" 2>/dev/null; then
                     register_bg "$spid" "chisel-server"
+                    record_state "tunnel" "chisel" "type=socks;port=${port};kali_ip=${kali_ip};socks_port=${socks_port}"
                     success "Chisel server running (PID ${spid}) on port ${port}"
                     info "Press Ctrl+C to stop"
                     wait "$spid" 2>/dev/null || true
@@ -883,6 +887,7 @@ mode_chisel() {
                 sleep 0.5
                 if kill -0 "$spid" 2>/dev/null; then
                     register_bg "$spid" "chisel-server"
+                    record_state "tunnel" "chisel" "type=forward;port=${port};kali_ip=${kali_ip};target_ip=${target_ip};target_port=${target_port};local_port=${local_port}"
                     success "Chisel server running (PID ${spid}) on port ${port}"
                     info "Press Ctrl+C to stop"
                     wait "$spid" 2>/dev/null || true
@@ -1055,6 +1060,94 @@ mode_teardown() {
 }
 
 #==============================================================================
+# MODE: reconnect
+#==============================================================================
+mode_reconnect() {
+    phase "Reconnecting Last Tunnel"
+
+    if [[ ! -f "$STATE_FILE" ]]; then
+        error "No state file found at ${STATE_FILE}"
+        error "No previous tunnel to reconnect. Set one up first."
+        return 1
+    fi
+
+    # Get the last tunnel entry (most recent line with kind=tunnel)
+    local last_tunnel
+    last_tunnel=$(awk -F'\t' '$1 == "tunnel"' "$STATE_FILE" | tail -1)
+
+    if [[ -z "$last_tunnel" ]]; then
+        error "No tunnel config found in ${STATE_FILE}"
+        error "Have you run 'pivotr.sh ligolo' or 'pivotr.sh chisel' before?"
+        return 1
+    fi
+
+    local tunnel_mode tunnel_config
+    tunnel_mode=$(echo "$last_tunnel" | awk -F'\t' '{print $2}')
+    tunnel_config=$(echo "$last_tunnel" | awk -F'\t' '{print $3}')
+
+    info "Last tunnel: ${BOLD}${tunnel_mode}${NC}"
+    info "Config: ${tunnel_config}"
+
+    # Parse key=value;key=value config into local variables
+    local key val
+    while IFS='=' read -r key val; do
+        case "$key" in
+            subnet)       local rc_subnet="$val" ;;
+            port)         local rc_port="$val" ;;
+            tun_name)     local rc_tun_name="$val" ;;
+            kali_ip)      local rc_kali_ip="$val" ;;
+            pivot_ip)     local rc_pivot_ip="$val" ;;
+            serve)        local rc_serve="$val" ;;
+            serve_port)   local rc_serve_port="$val" ;;
+            type)         local rc_type="$val" ;;
+            socks_port)   local rc_socks_port="$val" ;;
+            target_ip)    local rc_target_ip="$val" ;;
+            target_port)  local rc_target_port="$val" ;;
+            local_port)   local rc_local_port="$val" ;;
+        esac
+    done < <(echo "$tunnel_config" | tr ';' '\n')
+
+    # Teardown stale state first
+    info "Tearing down stale infrastructure..."
+    mode_teardown --all 2>/dev/null || true
+
+    # Remove old tunnel entries from state
+    local tmp_state
+    tmp_state="$(mktemp)"
+    awk -F'\t' '$1 != "tunnel"' "$STATE_FILE" > "$tmp_state" 2>/dev/null || true
+    mv "$tmp_state" "$STATE_FILE"
+
+    # Rebuild args and dispatch
+    case "$tunnel_mode" in
+        ligolo)
+            local -a args=(--subnet "${rc_subnet}" --port "${rc_port}" --tun-name "${rc_tun_name}")
+            [[ -n "${rc_kali_ip:-}" ]]  && args+=(--kali-ip "$rc_kali_ip")
+            [[ -n "${rc_pivot_ip:-}" ]] && args+=(--pivot-ip "$rc_pivot_ip")
+            [[ "${rc_serve:-false}" == "true" ]] && args+=(--serve --serve-port "${rc_serve_port:-80}")
+            echo ""
+            success "Reconnecting ligolo tunnel..."
+            mode_ligolo "${args[@]}"
+            ;;
+        chisel)
+            local -a args=(--port "${rc_port}" --kali-ip "${rc_kali_ip}" --type "${rc_type}" --start-server)
+            [[ -n "${rc_socks_port:-}" ]]  && args+=(--socks-port "$rc_socks_port")
+            [[ -n "${rc_target_ip:-}" ]]   && args+=(--target-ip "$rc_target_ip")
+            [[ -n "${rc_target_port:-}" ]] && args+=(--target-port "$rc_target_port")
+            [[ -n "${rc_local_port:-}" ]]  && args+=(--local-port "$rc_local_port")
+            echo ""
+            success "Reconnecting chisel tunnel..."
+            mode_chisel "${args[@]}"
+            ;;
+        *)
+            error "Unknown tunnel type in state: ${tunnel_mode}"
+            error "Only ligolo and chisel tunnels support auto-reconnect."
+            error "For SSH tunnels, re-run the ssh command from your shell history."
+            return 1
+            ;;
+    esac
+}
+
+#==============================================================================
 # HELP
 #==============================================================================
 show_help() {
@@ -1088,6 +1181,8 @@ MODES:
            → Prints chisel server/client commands; optionally starts server
 
   status   → Show TUN interfaces, routes, running pivot processes
+
+  reconnect → Re-establish the last tunnel from saved state (one command)
 
   teardown [--tun-name ligolo] [--tun2-name ligolo2] [--subnet CIDR] [--all]
            → Kill proxy/chisel, remove routes and TUN interfaces
@@ -1138,6 +1233,7 @@ main() {
         ssh)           mode_ssh "$@" ;;
         chisel)        mode_chisel "$@" ;;
         status)        mode_status "$@" ;;
+        reconnect)     mode_reconnect "$@" ;;
         teardown)      mode_teardown "$@" ;;
         -h|--help|help) show_help ;;
         *)
