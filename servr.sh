@@ -22,6 +22,9 @@ MAGENTA='\033[0;35m'
 BOLD='\033[1m'
 NC='\033[0m'
 
+disable_colors() { RED='' GREEN='' YELLOW='' BLUE='' CYAN='' MAGENTA='' BOLD='' NC=''; }
+[[ "${NO_COLOR:-0}" == "1" ]] || [[ ! -t 1 ]] && disable_colors
+
 ts() { date '+%H:%M:%S'; }
 info()    { echo -e "${BLUE}[$(ts)] [*]${NC} $*"; }
 success() { echo -e "${GREEN}[$(ts)] [+]${NC} $*"; }
@@ -215,7 +218,7 @@ resolved_ip() {
     if [[ -n "$KALI_IP" ]]; then
         echo "$KALI_IP"
     else
-        echo "KALI_IP"
+        echo "<KALI_IP>"
     fi
 }
 
@@ -422,6 +425,10 @@ while [[ $# -gt 0 ]]; do
             SMB_ANON=true
             shift
             ;;
+        --no-color)
+            disable_colors
+            shift
+            ;;
         -h|--help)
             show_help
             exit 0
@@ -444,8 +451,8 @@ else
     if [[ -n "$KALI_IP" ]]; then
         info "Kali IP: ${KALI_IP} (auto-detected)"
     else
-        warn "Could not auto-detect Kali IP."
-        warn "Using literal placeholder KALI_IP in printed commands."
+        warn "Could not auto-detect Kali IP — printed commands will show <KALI_IP>"
+        warn "Fix: re-run with --ip <your-ip>  (e.g. --ip 192.168.45.200)"
     fi
 fi
 
@@ -462,6 +469,14 @@ case "$MODE" in
 esac
 
 is_valid_port "$LISTEN_PORT" || { error "Invalid port: ${LISTEN_PORT}"; exit 1; }
+
+if (( LISTEN_PORT < 1024 )) && (( EUID != 0 )); then
+    error "Port ${LISTEN_PORT} requires root privileges."
+    error "Options:"
+    error "  sudo ./servr.sh ${MODE} --port ${LISTEN_PORT} ..."
+    error "  ./servr.sh ${MODE} --port 8080 ...   (non-privileged port)"
+    exit 1
+fi
 
 case "$MODE" in
     http)

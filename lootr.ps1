@@ -25,17 +25,41 @@ param(
     [string]$OutDir = ".\loot",
     [switch]$Quick,
     [string]$Phase = "",
+    [switch]$NoColor,
     [switch]$Help
 )
 
 #==============================================================================
 # OUTPUT HELPERS
 #==============================================================================
-function Write-Info    { param($msg) Write-Host "[$(Get-Date -f HH:mm:ss)] [*] $msg" -ForegroundColor Cyan }
-function Write-Success { param($msg) Write-Host "[$(Get-Date -f HH:mm:ss)] [+] $msg" -ForegroundColor Green }
-function Write-Warn    { param($msg) Write-Host "[$(Get-Date -f HH:mm:ss)] [!] $msg" -ForegroundColor Yellow }
-function Write-Err     { param($msg) Write-Host "[$(Get-Date -f HH:mm:ss)] [-] $msg" -ForegroundColor Red }
-function Write-Phase   { param($msg) Write-Host "`n[$(Get-Date -f HH:mm:ss)] [PHASE] $msg`n" -ForegroundColor Magenta }
+# Auto-detect: disable color when not interactive or NoColor requested
+if ($NoColor -or ![Environment]::UserInteractive) { $script:UseColor = $false } else { $script:UseColor = $true }
+
+function Write-Info {
+    param($msg)
+    $ts = "[$(Get-Date -f HH:mm:ss)] [*] $msg"
+    if ($script:UseColor) { Write-Host $ts -ForegroundColor Cyan } else { Write-Host $ts }
+}
+function Write-Success {
+    param($msg)
+    $ts = "[$(Get-Date -f HH:mm:ss)] [+] $msg"
+    if ($script:UseColor) { Write-Host $ts -ForegroundColor Green } else { Write-Host $ts }
+}
+function Write-Warn {
+    param($msg)
+    $ts = "[$(Get-Date -f HH:mm:ss)] [!] $msg"
+    if ($script:UseColor) { Write-Host $ts -ForegroundColor Yellow } else { Write-Host $ts }
+}
+function Write-Err {
+    param($msg)
+    $ts = "[$(Get-Date -f HH:mm:ss)] [-] $msg"
+    if ($script:UseColor) { Write-Host $ts -ForegroundColor Red } else { Write-Host $ts }
+}
+function Write-Phase {
+    param($msg)
+    $ts = "`n[$(Get-Date -f HH:mm:ss)] [PHASE] $msg`n"
+    if ($script:UseColor) { Write-Host $ts -ForegroundColor Magenta } else { Write-Host $ts }
+}
 
 #==============================================================================
 # PROGRESS TRACKING

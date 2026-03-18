@@ -21,7 +21,9 @@
 #   - Added rockyou-30000 rule shortcut
 #=============================================================================
 
-set -euo pipefail
+set -o pipefail
+# NOT set -e: one tool failure must not abort the whole run
+# NOT set -u: optional variables must be safe to reference unset
 
 # ── Colors ──────────────────────────────────────────────────────────────────
 RED='\033[0;31m'
@@ -31,11 +33,15 @@ CYAN='\033[0;36m'
 BOLD='\033[1m'
 NC='\033[0m'
 
+disable_colors() { RED='' GREEN='' YELLOW='' CYAN='' BOLD='' NC=''; }
+[[ "${NO_COLOR:-0}" == "1" ]] || [[ ! -t 1 ]] && disable_colors
+
 # ── Defaults ────────────────────────────────────────────────────────────────
+TOOLKIT_ROOT="${TOOLKIT_ROOT:-${HOME}/offsec}"
 WORDLIST="/usr/share/wordlists/rockyou.txt"
 RULE=""
 TOOL="auto"
-OUTPUT_DIR="$HOME/crackr_output"
+OUTPUT_DIR="${TOOLKIT_ROOT}/crackr"
 EXTRACT_MODE=""
 INPUT_FILE=""
 SINGLE_HASH=""
@@ -262,22 +268,22 @@ ${BOLD}MASK / HYBRID OPTIONS:${NC}
   --hybrid-prepend <mask>    Mask + wordlist prepended (-a 7)
 
 ${BOLD}UNSHADOW:${NC}
-  --unshadow <passwd> <shadow>  Combine passwd + shadow, then crack
+  --unshadow <passwd> <shadow>  Combine passwd+shadow then crack
 
 ${BOLD}HYDRA OPTIONS:${NC}
-  --hydra <service>          Service: ssh,ftp,rdp,smb,http-get,http-post-form,...
-  --target <ip>              Target IP/hostname
-  --port <num>               Override default port
-  -u, --user <user>          Single username
-  -U, --userlist <file>      Username list
-  -p, --pass <pass>          Single password
-  -P, --passlist <file>      Password list (default: wordlist from -w)
-  -C, --combo <file>         Hydra combo file (user:pass per line)
-  --http-path <path>         HTTP path for http-get/http-head (e.g., /admin)
-  --http-form <spec>         HTTP form: "/login:user=^USER^&pass=^PASS^:F=fail_string"
-  --hydra-threads <num>      Threads (default: 16)
-  --hydra-extra <args>       Extra hydra arguments
-  --no-stop                  Don't stop on first valid cred (per user)
+  --hydra <service>            Service: ssh,ftp,rdp,smb,http-post-form,...
+  --target <ip>                Target host
+  --port <num>                 Override default port
+  -u, --user <name>            Single username
+  -U, --userlist <file>        File with usernames
+  -p, --pass <password>        Single password
+  -P, --passlist <file>        File with passwords
+  -C, --combo <file>           Combo file (user:pass per line) — replaces -u/-p/-w
+  --http-path <path>           Path for http-get/https-get (default: /)
+  --http-form <spec>           Form spec: "/path:params:fail_string"
+  --hydra-threads <num>        Threads (default: 16)
+  --hydra-extra <args>         Extra hydra arguments
+  --no-stop                    Don't stop on first valid cred (per user)
 
 ${BOLD}CEWL OPTIONS:${NC}
   --cewl <url>               Target URL to scrape for words
@@ -287,9 +293,10 @@ ${BOLD}CEWL OPTIONS:${NC}
   --cewl-output <file>       Custom output path for generated wordlist
 
 ${BOLD}GENERAL OPTIONS:${NC}
-  -o, --output <dir>         Output directory (default: ~/crackr_output)
+  -o, --output <dir>         Output directory (default: \$TOOLKIT_ROOT/crackr)
   -s, --show                 Show cracked results for a hash file
   -l, --list                 List available wordlists, rules, and tools
+  --no-color                 Disable colored output (also honors NO_COLOR=1 env var)
   -h, --help                 Show this help
 
 ${BOLD}EXAMPLES:${NC}
@@ -329,17 +336,27 @@ ${BOLD}EXTRACT TYPES:${NC}
 EOF
 }
 
-log_info()    { echo -e "${CYAN}[*]${NC} $1" | tee -a "$LOG_FILE" 2>/dev/null || echo -e "${CYAN}[*]${NC} $1"; }
-log_success() { echo -e "${GREEN}[+]${NC} $1" | tee -a "$LOG_FILE" 2>/dev/null || echo -e "${GREEN}[+]${NC} $1"; }
-log_warn()    { echo -e "${YELLOW}[!]${NC} $1" | tee -a "$LOG_FILE" 2>/dev/null || echo -e "${YELLOW}[!]${NC} $1"; }
-log_error()   { echo -e "${RED}[-]${NC} $1" | tee -a "$LOG_FILE" 2>/dev/null || echo -e "${RED}[-]${NC} $1"; }
+log_info()    { echo -e "${CYAN}[*]${NC} $1" | tee -a "${LOG_FILE:-/dev/null}" 2>/dev/null || echo -e "${CYAN}[*]${NC} $1"; }
+log_success() { echo -e "${GREEN}[+]${NC} $1" | tee -a "${LOG_FILE:-/dev/null}" 2>/dev/null || echo -e "${GREEN}[+]${NC} $1"; }
+log_warn()    { echo -e "${YELLOW}[!]${NC} $1" | tee -a "${LOG_FILE:-/dev/null}" 2>/dev/null || echo -e "${YELLOW}[!]${NC} $1"; }
+log_error()   { echo -e "${RED}[-]${NC} $1" | tee -a "${LOG_FILE:-/dev/null}" 2>/dev/null || echo -e "${RED}[-]${NC} $1"; }
 
 # Log a command before running it (for OffSec report reproducibility)
 log_cmd() {
     local cmd_str="$*"
     echo -e "${YELLOW}CMD: ${cmd_str}${NC}"
-    echo "[$(date '+%H:%M:%S')] CMD: ${cmd_str}" >> "$LOG_FILE" 2>/dev/null || true
+    echo "[$(date '+%H:%M:%S')] CMD: ${cmd_str}" >> "${LOG_FILE:-/dev/null}" 2>/dev/null || true
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] CMD: ${cmd_str}" >> "${OUTPUT_DIR}/cmd_log.txt" 2>/dev/null || true
+}
+
+creds_log() {
+    local creds_file="${TOOLKIT_ROOT}/creds.txt"
+    mkdir -p "$(dirname "$creds_file")" 2>/dev/null || true
+    if ! printf '%s | %-8s | %-15s | %-20s | %s | %s\n' \
+        "$(date '+%Y-%m-%d %H:%M:%S')" "$1" "$2" "$3" "$4" "$5" >> "$creds_file" 2>/dev/null; then
+        warn "CRED NOT LOGGED — cannot write to ${creds_file}"
+        warn "Credential: $3@$2 : $4 ($5)"
+    fi
 }
 
 is_positive_integer() {
@@ -580,7 +597,7 @@ setup_single_hash() {
     local hash_file
     hash_file="${OUTPUT_DIR}/single_hash_$(date +%s).hash"
     # printf avoids subshell expansion issues with special characters in hashes
-    printf '%s\n' "$hash" > "$hash_file"
+    printf '%s\n' "$hash" > "$hash_file" || { log_error "Cannot write hash file: $hash_file"; exit 1; }
     INPUT_FILE="$hash_file"
     log_info "Single hash saved → $hash_file"
 }
@@ -632,10 +649,14 @@ run_unshadow() {
 # ═══════════════════════════════════════════════════════════════════════════
 
 run_hashcat() {
+    if ! command -v hashcat &>/dev/null; then
+        log_error "hashcat not found — install: sudo apt install hashcat"
+        return 1
+    fi
     local hash_file="$1"
     local wordlist="$2"
     local mode="$3"
-    local rule="$4"
+    local rule="${4:-}"
     local potfile="${OUTPUT_DIR}/hashcat.potfile"
     local outfile
     outfile="${OUTPUT_DIR}/hashcat_cracked_$(date +%s).txt"
@@ -663,17 +684,34 @@ run_hashcat() {
     if [[ -f "$outfile" && -s "$outfile" ]]; then
         log_success "Cracked passwords:"
         cat "$outfile"
+        # Log cracked results to central creds log
+        while IFS= read -r line; do
+            [[ -z "$line" ]] && continue
+            creds_log "crackr" "offline" "${line%%:*}" "${line#*:}" "cracked"
+        done < "$outfile"
         echo ""
         log_success "Results saved → $outfile"
     else
         log_warn "No new cracks. Checking potfile..."
-        hashcat -m "$mode" "$hash_file" --potfile-path "$potfile" --show 2>/dev/null || true
+        local show_output
+        show_output=$(hashcat -m "$mode" "$hash_file" --potfile-path "$potfile" --show 2>/dev/null) || true
+        if [[ -n "${show_output:-}" ]]; then
+            echo "$show_output"
+            while IFS= read -r line; do
+                [[ -z "$line" ]] && continue
+                creds_log "crackr" "offline" "${line%%:*}" "${line#*:}" "cracked"
+            done <<< "$show_output"
+        fi
     fi
 }
 
 # ── Hashcat mask attack ────────────────────────────────────────────────────
 
 run_hashcat_mask() {
+    if ! command -v hashcat &>/dev/null; then
+        log_error "hashcat not found — install: sudo apt install hashcat"
+        return 1
+    fi
     local hash_file="$1"
     local mode="$2"
     local mask="$3"
@@ -701,6 +739,10 @@ run_hashcat_mask() {
     if [[ -f "$outfile" && -s "$outfile" ]]; then
         log_success "Cracked passwords:"
         cat "$outfile"
+        while IFS= read -r line; do
+            [[ -z "$line" ]] && continue
+            creds_log "crackr" "offline" "${line%%:*}" "${line#*:}" "cracked"
+        done < "$outfile"
         echo ""
         log_success "Results saved → $outfile"
     else
@@ -711,6 +753,10 @@ run_hashcat_mask() {
 # ── Hashcat hybrid attack ──────────────────────────────────────────────────
 
 run_hashcat_hybrid() {
+    if ! command -v hashcat &>/dev/null; then
+        log_error "hashcat not found — install: sudo apt install hashcat"
+        return 1
+    fi
     local hash_file="$1"
     local mode="$2"
     local wordlist="$3"
@@ -744,6 +790,10 @@ run_hashcat_hybrid() {
     if [[ -f "$outfile" && -s "$outfile" ]]; then
         log_success "Cracked passwords:"
         cat "$outfile"
+        while IFS= read -r line; do
+            [[ -z "$line" ]] && continue
+            creds_log "crackr" "offline" "${line%%:*}" "${line#*:}" "cracked"
+        done < "$outfile"
         echo ""
         log_success "Results saved → $outfile"
     else
@@ -756,10 +806,14 @@ run_hashcat_hybrid() {
 # ═══════════════════════════════════════════════════════════════════════════
 
 run_jtr() {
+    if ! command -v john &>/dev/null; then
+        log_error "john not found — install: sudo apt install john"
+        return 1
+    fi
     local hash_file="$1"
     local wordlist="$2"
-    local format="$3"
-    local rule="$4"
+    local format="${3:-}"
+    local rule="${4:-}"
 
     local -a cmd=(john "$hash_file" --wordlist="$wordlist")
 
@@ -779,10 +833,25 @@ run_jtr() {
 
     echo ""
     log_info "Cracked passwords:"
+    local show_output
     if [[ "$format" != "unknown" && -n "$format" ]]; then
-        john --show --format="$format" "$hash_file" 2>/dev/null || true
+        show_output=$(john --show --format="$format" "$hash_file" 2>/dev/null) || true
     else
-        john --show "$hash_file" 2>/dev/null || true
+        show_output=$(john --show "$hash_file" 2>/dev/null) || true
+    fi
+    if [[ -n "${show_output:-}" ]]; then
+        echo "$show_output"
+        # Log cracked lines (john --show format is user:password or hash:password)
+        while IFS= read -r line; do
+            [[ -z "$line" ]] && continue
+            # Skip the summary line ("N password hashes cracked, ...")
+            [[ "$line" == *" password hash"* ]] && continue
+            local jtr_user="${line%%:*}"
+            local jtr_pass="${line#*:}"
+            # Strip trailing fields after password (john --show can include extra : fields)
+            jtr_pass="${jtr_pass%%:*}"
+            [[ -n "$jtr_pass" ]] && creds_log "crackr" "offline" "$jtr_user" "$jtr_pass" "cracked"
+        done <<< "$show_output"
     fi
 }
 
@@ -857,7 +926,7 @@ run_quick_mode() {
 
         local wl_path
         wl_path=$(resolve_wordlist "$wl_name" 2>/dev/null) || true
-        if [[ ! -f "$wl_path" ]]; then
+        if [[ ! -f "${wl_path:-}" ]]; then
             log_warn "Skipping $wl_name (not found)"
             continue
         fi
@@ -883,7 +952,7 @@ run_quick_mode() {
                     continue
                 fi
             fi
-            run_hashcat "$hash_file" "$wl_path" "$hc_mode" "$rule_path"
+            run_hashcat "$hash_file" "$wl_path" "$hc_mode" "${rule_path:-}"
 
             # Early exit: check if all cracked
             if check_all_cracked_hashcat "$hash_file" "$hc_mode"; then
@@ -894,7 +963,7 @@ run_quick_mode() {
             if [[ -n "$rule_name" ]]; then
                 rule_path=$(resolve_rule "$rule_name" "jtr" 2>/dev/null) || rule_path=""
             fi
-            run_jtr "$hash_file" "$wl_path" "$jtr_fmt" "$rule_path"
+            run_jtr "$hash_file" "$wl_path" "$jtr_fmt" "${rule_path:-}"
 
             # Early exit: JTR
             local remaining
@@ -1114,7 +1183,7 @@ run_hydra() {
     fi
 
     # Extra args (these are intentionally unquoted to allow splitting)
-    if [[ -n "$HYDRA_EXTRA" ]]; then
+    if [[ -n "${HYDRA_EXTRA:-}" ]]; then
         # shellcheck disable=SC2206
         cmd+=($HYDRA_EXTRA)
     fi
@@ -1156,6 +1225,17 @@ run_hydra() {
     if [[ -f "$outfile" && -s "$outfile" ]]; then
         log_success "Valid credentials found:"
         cat "$outfile"
+        # Log hydra creds to central creds log
+        while IFS= read -r line; do
+            [[ -z "$line" ]] && continue
+            # Hydra output lines look like: [port][service] host login: user password: pass
+            local hydra_user hydra_pass
+            hydra_user=$(echo "$line" | grep -oP 'login:\s*\K\S+' || true)
+            hydra_pass=$(echo "$line" | grep -oP 'password:\s*\K\S+' || true)
+            if [[ -n "${hydra_user:-}" && -n "${hydra_pass:-}" ]]; then
+                creds_log "crackr" "online" "$hydra_user" "$hydra_pass" "hydra:${service}"
+            fi
+        done < "$outfile"
         echo ""
         log_success "Results saved → $outfile"
     else
@@ -1181,11 +1261,11 @@ crack() {
     log_info "Sample hash: ${sample_hash:0:80}..."
 
     local hc_mode jtr_fmt desc
-    if [[ -n "$FORCE_HASHCAT_MODE" ]]; then
+    if [[ -n "${FORCE_HASHCAT_MODE:-}" ]]; then
         hc_mode="$FORCE_HASHCAT_MODE"
         jtr_fmt="${FORCE_JTR_FORMAT:-unknown}"
         desc="User-specified (hashcat mode $hc_mode)"
-    elif [[ -n "$FORCE_JTR_FORMAT" ]]; then
+    elif [[ -n "${FORCE_JTR_FORMAT:-}" ]]; then
         hc_mode="unknown"
         jtr_fmt="$FORCE_JTR_FORMAT"
         desc="User-specified (JTR format $jtr_fmt)"
@@ -1200,7 +1280,7 @@ crack() {
 
     local selected_tool="$TOOL"
     if [[ "$selected_tool" == "auto" ]]; then
-        if [[ -n "$EXTRACT_MODE" || "$hc_mode" == "NA" ]]; then
+        if [[ -n "${EXTRACT_MODE:-}" || "$hc_mode" == "NA" ]]; then
             selected_tool="jtr"
         elif command -v hashcat &>/dev/null && [[ "$hc_mode" != "unknown" ]]; then
             # Verify hashcat can actually use a device before selecting it
@@ -1238,7 +1318,7 @@ crack() {
     log_info "Hashes: ${hash_count}"
 
     # ── Mask attack mode ──
-    if [[ -n "$MASK_PATTERN" ]]; then
+    if [[ -n "${MASK_PATTERN:-}" ]]; then
         if [[ "$hc_mode" == "unknown" || "$hc_mode" == "NA" ]]; then
             log_error "Cannot run mask attack without hashcat mode. Use -m to specify."
             exit 1
@@ -1248,14 +1328,14 @@ crack() {
     fi
 
     # ── Hybrid attack mode ──
-    if [[ -n "$HYBRID_APPEND" || -n "$HYBRID_PREPEND" ]]; then
+    if [[ -n "${HYBRID_APPEND:-}" || -n "${HYBRID_PREPEND:-}" ]]; then
         if [[ "$hc_mode" == "unknown" || "$hc_mode" == "NA" ]]; then
             log_error "Cannot run hybrid attack without hashcat mode. Use -m to specify."
             exit 1
         fi
         local wl_path
         wl_path=$(resolve_wordlist "$WORDLIST" 2>/dev/null || echo "$WORDLIST")
-        if [[ -n "$HYBRID_APPEND" ]]; then
+        if [[ -n "${HYBRID_APPEND:-}" ]]; then
             run_hashcat_hybrid "$hash_file" "$hc_mode" "$wl_path" "$HYBRID_APPEND" "6"
         else
             run_hashcat_hybrid "$hash_file" "$hc_mode" "$wl_path" "$HYBRID_PREPEND" "7"
@@ -1273,7 +1353,7 @@ crack() {
     wl_path=$(resolve_wordlist "$WORDLIST" 2>/dev/null || echo "$WORDLIST")
 
     local rule_path=""
-    if [[ -n "$RULE" ]]; then
+    if [[ -n "${RULE:-}" ]]; then
         rule_path=$(resolve_rule "$RULE" "$selected_tool" 2>/dev/null || echo "$RULE")
     fi
 
@@ -1282,9 +1362,9 @@ crack() {
             log_error "Cannot determine hashcat mode. Use -m to specify, or use -t jtr"
             exit 1
         fi
-        run_hashcat "$hash_file" "$wl_path" "$hc_mode" "$rule_path"
+        run_hashcat "$hash_file" "$wl_path" "$hc_mode" "${rule_path:-}"
     else
-        run_jtr "$hash_file" "$wl_path" "$jtr_fmt" "$rule_path"
+        run_jtr "$hash_file" "$wl_path" "$jtr_fmt" "${rule_path:-}"
     fi
 }
 
@@ -1415,6 +1495,8 @@ while [[ $# -gt 0 ]]; do
             SHOW_MODE=1; shift ;;
         -l|--list)
             list_resources; exit 0 ;;
+        --no-color)
+            disable_colors; shift ;;
         -h|--help)
             usage; exit 0 ;;
         *)
@@ -1429,22 +1511,22 @@ if [[ "$TOOL" != "auto" && "$TOOL" != "hashcat" && "$TOOL" != "jtr" ]]; then
     exit 1
 fi
 
-if [[ -n "$FORCE_HASHCAT_MODE" ]] && ! is_positive_integer "$FORCE_HASHCAT_MODE"; then
+if [[ -n "${FORCE_HASHCAT_MODE:-}" ]] && ! is_positive_integer "$FORCE_HASHCAT_MODE"; then
     log_error "Invalid hashcat mode: $FORCE_HASHCAT_MODE"
     exit 1
 fi
 
-if [[ -n "$HYDRA_MODE" && -z "${HYDRA_DEFAULT_PORTS[$HYDRA_MODE]+_}" ]]; then
+if [[ -n "${HYDRA_MODE:-}" && -z "${HYDRA_DEFAULT_PORTS[$HYDRA_MODE]+_}" ]]; then
     log_error "Unsupported hydra service: $HYDRA_MODE"
     exit 1
 fi
 
-if [[ -n "$HYDRA_TARGET" ]] && ! is_valid_hydra_target "$HYDRA_TARGET"; then
+if [[ -n "${HYDRA_TARGET:-}" ]] && ! is_valid_hydra_target "$HYDRA_TARGET"; then
     log_error "Invalid Hydra target: $HYDRA_TARGET"
     exit 1
 fi
 
-if [[ -n "$HYDRA_PORT" ]] && ! is_port_number "$HYDRA_PORT"; then
+if [[ -n "${HYDRA_PORT:-}" ]] && ! is_port_number "$HYDRA_PORT"; then
     log_error "Invalid port: $HYDRA_PORT"
     exit 1
 fi
@@ -1471,11 +1553,11 @@ fi
 banner
 
 # Create output directory
-mkdir -p "$OUTPUT_DIR"
+mkdir -p "$OUTPUT_DIR" || { log_error "Cannot create output directory: $OUTPUT_DIR"; exit 1; }
 
 # Initialize session log for OffSec reporting
 LOG_FILE="${OUTPUT_DIR}/crackr_session_$(date +%Y%m%d_%H%M%S).log"
-echo "# crackr v3 session log — $(date)" > "$LOG_FILE"
+echo "# crackr v3 session log — $(date)" > "$LOG_FILE" || { log_error "Cannot write session log: $LOG_FILE"; exit 1; }
 echo "# Command: $0 ${ORIGINAL_ARGS}" >> "$LOG_FILE" 2>/dev/null || true
 echo "" >> "$LOG_FILE"
 
@@ -1483,17 +1565,17 @@ log_info "Output directory: $OUTPUT_DIR"
 log_info "Session log: $LOG_FILE"
 
 # ── Unshadow mode ──
-if [[ -n "$UNSHADOW_PASSWD" ]]; then
+if [[ -n "${UNSHADOW_PASSWD:-}" ]]; then
     run_unshadow "$UNSHADOW_PASSWD" "$UNSHADOW_SHADOW"
     # Fall through to crack the unshadowed file
 fi
 
 # ── CeWL wordlist generation (runs first so wordlist is available) ──
-if [[ -n "$CEWL_URL" ]]; then
+if [[ -n "${CEWL_URL:-}" ]]; then
     run_cewl "$CEWL_URL"
 
     # If no hash file or hydra mode, we're done
-    if [[ -z "$INPUT_FILE" && -z "$SINGLE_HASH" && -z "$HYDRA_MODE" ]]; then
+    if [[ -z "${INPUT_FILE:-}" && -z "${SINGLE_HASH:-}" && -z "${HYDRA_MODE:-}" ]]; then
         echo ""
         log_info "Done. Wordlist ready for use."
         log_info "Use it: crackr -f <hashfile> -w '${WORDLIST}'"
@@ -1502,7 +1584,7 @@ if [[ -n "$CEWL_URL" ]]; then
 fi
 
 # ── Hydra online brute force ──
-if [[ -n "$HYDRA_MODE" ]]; then
+if [[ -n "${HYDRA_MODE:-}" ]]; then
     run_hydra
     exit 0
 fi
@@ -1510,12 +1592,12 @@ fi
 # ── Offline cracking ──
 
 # Handle single hash
-if [[ -n "$SINGLE_HASH" ]]; then
+if [[ -n "${SINGLE_HASH:-}" ]]; then
     setup_single_hash "$SINGLE_HASH"
 fi
 
 # Validate input
-if [[ -z "$INPUT_FILE" ]]; then
+if [[ -z "${INPUT_FILE:-}" ]]; then
     log_error "No input specified. Use -f <file>, -H <hash>, --hydra, --unshadow, or --cewl"
     exit 1
 fi
@@ -1532,7 +1614,7 @@ if [[ "$SHOW_MODE" -eq 1 ]]; then
 fi
 
 # Extract mode
-if [[ -n "$EXTRACT_MODE" ]]; then
+if [[ -n "${EXTRACT_MODE:-}" ]]; then
     extract_hash "$EXTRACT_MODE" "$INPUT_FILE"
 fi
 

@@ -47,7 +47,8 @@ set -o pipefail
 #------------------------------------------------------------------------------
 # CONFIGURATION
 #------------------------------------------------------------------------------
-PRIVESC_DIR="./privesc"                    # Base output directory
+TOOLKIT_ROOT="${TOOLKIT_ROOT:-${HOME}/offsec}"
+PRIVESC_DIR="${TOOLKIT_ROOT}/privesc"         # Base output directory
 TOOLS_CACHE="$HOME/.offsec_tools/privesc"    # Cached tool downloads
 HTTP_PORT=8888                             # HTTP server port for tool serving
 SERVE_TIMEOUT=1800                         # Auto-stop HTTP server after 30 min (plenty for engagement transfers)
@@ -81,6 +82,9 @@ CYAN='\033[0;36m'
 MAGENTA='\033[0;35m'
 BOLD='\033[1m'
 NC='\033[0m'
+
+disable_colors() { RED='' GREEN='' YELLOW='' BLUE='' CYAN='' MAGENTA='' BOLD='' NC=''; }
+[[ "${NO_COLOR:-0}" == "1" ]] || [[ ! -t 1 ]] && disable_colors
 
 ts() { date '+%H:%M:%S'; }
 
@@ -1223,6 +1227,10 @@ main() {
                 [[ $# -lt 2 ]] && { error "Option $1 requires an argument"; exit 1; }
                 HTTP_PORT="$2"
                 shift 2
+                ;;
+            --no-color)
+                disable_colors
+                shift
                 ;;
             -h|--help)
                 usage

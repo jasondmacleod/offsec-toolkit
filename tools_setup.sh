@@ -5,12 +5,28 @@
 # Linux binaries into ~/tools/ for engagement-day serving via python3 -m http.server
 #
 # Usage: sudo ./tools_setup.sh
+#        sudo ./tools_setup.sh --check     # verify without installing
 # Re-runnable: skips anything already present, retries failures.
 # =============================================================================
 
 set -uo pipefail
 # NOTE: -e intentionally omitted — we handle per-command errors manually
 # so one failed download doesn't abort the whole run.
+
+# ── Mode flags ────────────────────────────────────────────────────────────────
+CHECK_ONLY=false
+for arg in "$@"; do
+    case "$arg" in
+        --check)    CHECK_ONLY=true ;;
+        --no-color) NO_COLOR=1 ;;
+        -h|--help)
+            echo "Usage: sudo $0 [--check] [--no-color]"
+            echo "  --check     Verify installed tools without downloading"
+            echo "  --no-color  Disable colored output"
+            exit 0
+            ;;
+    esac
+done
 
 # ── Colors ────────────────────────────────────────────────────────────────────
 RED='\033[0;31m'
@@ -19,6 +35,12 @@ YELLOW='\033[1;33m'
 CYAN='\033[0;36m'
 BOLD='\033[1m'
 NC='\033[0m'
+
+USE_COLOR=true
+if [[ -n "${NO_COLOR:-}" ]] || [[ ! -t 1 ]]; then
+    USE_COLOR=false
+    RED='' GREEN='' YELLOW='' CYAN='' BOLD='' NC=''
+fi
 
 log_info()    { echo -e "${CYAN}[*]${NC} $1"; }
 log_success() { echo -e "${GREEN}[+]${NC} $1"; }
@@ -30,10 +52,15 @@ log_header()  {
     echo -e "${BOLD}${CYAN}══════════════════════════════════════════${NC}"
 }
 
-# ── Root check ────────────────────────────────────────────────────────────────
-if [[ $EUID -ne 0 ]]; then
+# ── Root check (skip for --check) ────────────────────────────────────────────
+if [[ "$CHECK_ONLY" == false ]] && [[ $EUID -ne 0 ]]; then
     log_error "Run with sudo: sudo $0"
     exit 1
+fi
+if [[ "$CHECK_ONLY" == true ]] && [[ $EUID -ne 0 ]]; then
+    # For check mode, resolve real user without sudo
+    REAL_USER="$USER"
+    REAL_HOME="$HOME"
 fi
 
 REAL_USER="${SUDO_USER:-$USER}"
@@ -68,6 +95,9 @@ gh_latest_url() {
     echo "$result"
 }
 
+# Cleanup temp files on interrupt
+trap 'rm -f /tmp/offsec_*.tar.gz /tmp/offsec_*.zip /tmp/offsec_*.gz 2>/dev/null; rm -rf /tmp/tmp.* 2>/dev/null' EXIT INT TERM
+
 # Simple direct download — skip if dest already exists
 download() {
     local url="$1"
@@ -97,7 +127,8 @@ download() {
 
 # Download a .tar.gz, extract named binary, place at dest
 dl_targz() {
-    local url="$1" dest="$2" binname="$3" label="${4:-$(basename "$dest")}"
+    local url="$1" dest="$2" binname="$3"
+    local label="${4:-$(basename "$dest")}"
     if [[ -f "$dest" ]]; then
         log_warn "  SKIP (exists): ${label}"; SKIPPED+=("$label"); return 0
     fi
@@ -129,7 +160,8 @@ dl_targz() {
 
 # Download a .zip, extract named binary, place at dest
 dl_zip() {
-    local url="$1" dest="$2" binname="$3" label="${4:-$(basename "$dest")}"
+    local url="$1" dest="$2" binname="$3"
+    local label="${4:-$(basename "$dest")}"
     if [[ -f "$dest" ]]; then
         log_warn "  SKIP (exists): ${label}"; SKIPPED+=("$label"); return 0
     fi
@@ -161,7 +193,8 @@ dl_zip() {
 
 # Download a gzip-compressed single binary, decompress to dest
 dl_gz() {
-    local url="$1" dest="$2" label="${3:-$(basename "$dest")}"
+    local url="$1" dest="$2"
+    local label="${3:-$(basename "$dest")}"
     if [[ -f "$dest" ]]; then
         log_warn "  SKIP (exists): ${label}"; SKIPPED+=("$label"); return 0
     fi
@@ -232,9 +265,110 @@ gem_install() {
     fi
 }
 
+# ── Check-mode helpers ───────────────────────────────────────────────────────
+CHECK_PRESENT=()
+CHECK_MISSING=()
+
+check_apt() {
+    local pkg="$1"
+    if dpkg -s "$pkg" &>/dev/null 2>&1; then
+        log_success "  ✓ apt: ${pkg}"; CHECK_PRESENT+=("apt:${pkg}")
+    else
+        log_error "  ✗ apt: ${pkg}"; CHECK_MISSING+=("apt:${pkg}")
+    fi
+}
+check_pip() {
+    local pkg="$1" import_name="${2:-}"
+    [[ -z "$import_name" ]] && { import_name="${pkg//-/_}"; import_name="${import_name%%[>=<]*}"; }
+    if python3 -c "import ${import_name}" &>/dev/null 2>&1; then
+        log_success "  ✓ pip: ${pkg}"; CHECK_PRESENT+=("pip:${pkg}")
+    else
+        log_error "  ✗ pip: ${pkg}"; CHECK_MISSING+=("pip:${pkg}")
+    fi
+}
+check_gem() {
+    local pkg="$1"
+    if gem list -i "^${pkg}$" &>/dev/null 2>&1; then
+        log_success "  ✓ gem: ${pkg}"; CHECK_PRESENT+=("gem:${pkg}")
+    else
+        log_error "  ✗ gem: ${pkg}"; CHECK_MISSING+=("gem:${pkg}")
+    fi
+}
+check_file() {
+    local path="$1" label="${2:-$(basename "$1")}"
+    if [[ -f "$path" ]]; then
+        log_success "  ✓ ${label}"; CHECK_PRESENT+=("$label")
+    else
+        log_error "  ✗ ${label}"; CHECK_MISSING+=("$label")
+    fi
+}
+
 # ══════════════════════════════════════════════════════════════════════════════
 # MAIN
 # ══════════════════════════════════════════════════════════════════════════════
+
+if [[ "$CHECK_ONLY" == true ]]; then
+    echo -e "\n${BOLD}${CYAN}══════════════════════════════════════════${NC}"
+    echo -e "${BOLD}  OffSec Tool Preflight Check${NC}"
+    echo -e "${BOLD}${CYAN}══════════════════════════════════════════${NC}\n"
+
+    log_header "apt Packages"
+    for pkg in \
+        rustscan nmap gobuster feroxbuster ffuf nikto whatweb \
+        smbclient smbmap onesixtyone snmp enum4linux \
+        ldap-utils dnsutils rpcbind nfs-common \
+        netexec responder impacket-scripts bloodhound \
+        john hashcat wordlists seclists cewl hydra \
+        rlwrap socat netcat-traditional curl wget python3-pip ruby-full unzip \
+        sqlmap proxychains4 ncat chisel; do
+        check_apt "$pkg"
+    done
+
+    log_header "pip Packages"
+    check_pip "certipy-ad"    "certipy"
+    check_pip "bloodhound"    "bloodhound"
+    check_pip "impacket"      "impacket"
+    check_pip "enum4linux-ng" "enum4linux_ng"
+
+    log_header "gem Packages"
+    check_gem "evil-winrm"
+
+    log_header "Downloaded Binaries"
+    check_file "${WIN_DIR}/SigmaPotato.exe"
+    check_file "${WIN_DIR}/GodPotato-NET4.exe"
+    check_file "${WIN_DIR}/PrintSpoofer64.exe"
+    check_file "${WIN_DIR}/JuicyPotato.exe"
+    check_file "${WIN_DIR}/winPEASx64.exe"
+    check_file "${WIN_DIR}/PowerUp.ps1"
+    check_file "${WIN_DIR}/PowerView.ps1"
+    check_file "${WIN_DIR}/Rubeus.exe"
+    check_file "${WIN_DIR}/SharpHound.exe"
+    check_file "${WIN_DIR}/mimikatz.exe"
+    check_file "${LIN_DIR}/linpeas.sh"
+    check_file "${LIN_DIR}/pspy64"
+    check_file "${LIGOLO_DIR}/proxy"      "ligolo proxy"
+    check_file "${LIGOLO_DIR}/agent"      "ligolo agent (linux)"
+    check_file "${LIGOLO_DIR}/agent.exe"  "ligolo agent (windows)"
+    check_file "${TOOLS_DIR}/chisel"      "chisel (linux)"
+    check_file "${WIN_DIR}/chisel.exe"    "chisel (windows)"
+    check_file "${TOOLS_DIR}/penelope.py"
+
+    # ── Summary ──────────────────────────────────────────────────────────────
+    echo ""
+    echo -e "${BOLD}${CYAN}══════════════════════════════════════════${NC}"
+    echo -e "${BOLD}  PREFLIGHT SUMMARY${NC}"
+    echo -e "${BOLD}${CYAN}══════════════════════════════════════════${NC}"
+    echo -e "\n${GREEN}✓ Present: ${#CHECK_PRESENT[@]}${NC}"
+    if (( ${#CHECK_MISSING[@]} > 0 )); then
+        echo -e "${RED}✗ Missing: ${#CHECK_MISSING[@]}${NC}"
+        for item in "${CHECK_MISSING[@]}"; do printf "    %s\n" "$item"; done
+        echo -e "\n${YELLOW}Run without --check to install missing tools.${NC}"
+        exit 1
+    else
+        echo -e "\n${GREEN}${BOLD}All tools present. Ready for engagement day.${NC}"
+    fi
+    exit 0
+fi
 
 echo -e "${BOLD}${CYAN}"
 cat << 'BANNER'

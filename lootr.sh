@@ -45,6 +45,9 @@ MAGENTA='\033[0;35m'
 BOLD='\033[1m'
 NC='\033[0m'
 
+disable_colors() { RED='' GREEN='' YELLOW='' BLUE='' CYAN='' MAGENTA='' BOLD='' NC=''; }
+[[ "${NO_COLOR:-0}" == "1" ]] || [[ ! -t 1 ]] && disable_colors
+
 ts()      { date '+%H:%M:%S'; }
 info()    { echo -e "${BLUE}[$(ts)] [*]${NC} $*"; }
 success() { echo -e "${GREEN}[$(ts)] [+]${NC} $*"; }
@@ -131,6 +134,8 @@ while [[ $# -gt 0 ]]; do
         --phase)
             [[ $# -lt 2 ]] && { error "--phase requires an argument"; exit 1; }
             SINGLE_PHASE="$2"; shift 2 ;;
+        --no-color)
+            disable_colors; shift ;;
         --help|-h)
             usage; exit 0 ;;
         *)
@@ -205,7 +210,7 @@ phase_proof() {
         cp -- "${f}" "${proof_copy}" 2>/dev/null || true
         echo "source: ${f}" >> "${proof_copy}.meta"
         found_any=true
-    done < <(timeout 30 find / -maxdepth 10 \( -name "local.txt" -o -name "proof.txt" \) -type f 2>/dev/null)
+    done < <(timeout 30 find / -maxdepth 10 \( -path /proc -o -path /sys -o -path /dev -o -path /run \) -prune -o \( -name "local.txt" -o -name "proof.txt" \) -type f -print 2>/dev/null)
 
     if [[ "${found_any}" == "false" ]]; then
         warn "No proof flags found (local.txt / proof.txt)"
@@ -516,7 +521,7 @@ phase_files() {
 
     # SUID binaries
     info "Searching for SUID binaries (timeout 30s)..."
-    timeout 30 find / -perm -4000 -type f 2>/dev/null | sort > "${fdir}/suid_binaries.txt" || true
+    timeout 30 find / \( -path /proc -o -path /sys -o -path /dev -o -path /run \) -prune -o -perm -4000 -type f -print 2>/dev/null | sort > "${fdir}/suid_binaries.txt" || true
     local suid_count=""
     suid_count="$(wc -l < "${fdir}/suid_binaries.txt" 2>/dev/null || echo 0)"
     success "Found ${suid_count} SUID binaries → ${fdir}/suid_binaries.txt"
@@ -565,11 +570,11 @@ phase_files() {
 
     # Backup and database files
     info "Searching for backup files (timeout 20s)..."
-    timeout 20 find / -maxdepth 8 \
+    timeout 20 find / -maxdepth 8 \( -path /proc -o -path /sys -o -path /dev -o -path /run \) -prune -o \
         \( -name "*.bak" -o -name "*.old" -o -name "*.backup" \
            -o -name "*.sql" -o -name "*.dump" \) \
-        -type f 2>/dev/null \
-        | grep -vE "^/proc|^/sys" | head -50 \
+        -type f -print 2>/dev/null \
+        | head -50 \
         > "${fdir}/backup_files.txt" || true
     if [[ -s "${fdir}/backup_files.txt" ]]; then
         local bak_count=""
@@ -578,10 +583,10 @@ phase_files() {
     fi
 
     info "Searching for database files (timeout 20s)..."
-    timeout 20 find / -maxdepth 8 \
+    timeout 20 find / -maxdepth 8 \( -path /proc -o -path /sys -o -path /dev -o -path /run \) -prune -o \
         \( -name "*.db" -o -name "*.sqlite" -o -name "*.sqlite3" \) \
-        -type f 2>/dev/null \
-        | grep -vE "^/proc|^/sys" | head -30 \
+        -type f -print 2>/dev/null \
+        | head -30 \
         > "${fdir}/database_files.txt" || true
     if [[ -s "${fdir}/database_files.txt" ]]; then
         success "Database files → ${fdir}/database_files.txt"
@@ -589,7 +594,7 @@ phase_files() {
 
     # Git repositories
     info "Searching for git repos (timeout 20s)..."
-    timeout 20 find / -maxdepth 6 -name ".git" -type d 2>/dev/null \
+    timeout 20 find / -maxdepth 6 \( -path /proc -o -path /sys -o -path /dev -o -path /run \) -prune -o -name ".git" -type d -print 2>/dev/null \
         > "${fdir}/git_repos.txt" || true
     if [[ -s "${fdir}/git_repos.txt" ]]; then
         success "Git repos found → ${fdir}/git_repos.txt"

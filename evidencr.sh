@@ -8,19 +8,26 @@
 
 set -o pipefail
 
+USE_COLOR=true
 ts()      { date '+%H:%M:%S'; }
 info()    { echo "[$(ts)] [*] $*"; }
-success() { echo -e "\e[32m[$(ts)] [+] $*\e[0m"; }
-warn()    { echo -e "\e[33m[$(ts)] [!] $*\e[0m"; }
-error()   { echo -e "\e[31m[$(ts)] [-] $*\e[0m"; }
-phase()   { echo -e "\n\e[35m[$(ts)] [EVIDENCE] $*\e[0m\n"; }
+success() { if [[ "$USE_COLOR" == true ]]; then echo -e "\e[32m[$(ts)] [+] $*\e[0m"; else echo "[$(ts)] [+] $*"; fi; }
+warn()    { if [[ "$USE_COLOR" == true ]]; then echo -e "\e[33m[$(ts)] [!] $*\e[0m"; else echo "[$(ts)] [!] $*"; fi; }
+error()   { if [[ "$USE_COLOR" == true ]]; then echo -e "\e[31m[$(ts)] [-] $*\e[0m"; else echo "[$(ts)] [-] $*"; fi; }
+phase()   { if [[ "$USE_COLOR" == true ]]; then echo -e "\n\e[35m[$(ts)] [EVIDENCE] $*\e[0m\n"; else echo -e "\n[$(ts)] [EVIDENCE] $*\n"; fi; }
 
-OUTDIR="${HOME}/evidence"
+disable_colors() { USE_COLOR=false; }
+[[ "${NO_COLOR:-0}" == "1" ]] || [[ ! -t 1 ]] && disable_colors
+
+TOOLKIT_ROOT="${TOOLKIT_ROOT:-${HOME}/offsec}"
+OUTDIR="${TOOLKIT_ROOT}/evidence"
 TARGET_IP=""
 HOSTNAME_INPUT=""
 FLAG_TYPE=""
 FLAG_PATH=""
 NON_INTERACTIVE=false
+LOCAL_FLAG_INPUT=""
+PROOF_FLAG_INPUT=""
 OS_INPUT=""
 POINTS_INPUT=""
 CATEGORY_INPUT=""
@@ -66,8 +73,11 @@ Required:
 
 Options:
   -n <hostname>        Target hostname (default: prompted interactively)
-  -f <flag_type>       Flag type: local|proof|both (default: prompted)
+  --flags <type>       Flag type: local|proof|both (default: prompted)
+  --local-flag VALUE   Provide local.txt flag value (for non-interactive use)
+  --proof-flag VALUE   Provide proof.txt flag value (for non-interactive use)
   -p <flag_path>       Full path to flag file on Kali for local copy
+  --no-color           Disable colored output
   --os <os>            Target OS: Linux|Windows
   --points <value>     Points value: 10|20|25
   --category <type>    Machine category: standalone|AD-client|AD-DC
@@ -218,8 +228,14 @@ record_flag_value() {
     flag_label="${flag_kind}.txt"
 
     if [[ "$NON_INTERACTIVE" == "true" ]]; then
-        flag_value="not collected"
-        warn "Non-interactive mode: ${flag_label} left as not collected"
+        if [[ "$flag_kind" == "local" && -n "${LOCAL_FLAG_INPUT:-}" ]]; then
+            flag_value="$LOCAL_FLAG_INPUT"
+        elif [[ "$flag_kind" == "proof" && -n "${PROOF_FLAG_INPUT:-}" ]]; then
+            flag_value="$PROOF_FLAG_INPUT"
+        else
+            flag_value="not collected"
+            warn "Non-interactive mode: ${flag_label} left as not collected (use --local-flag / --proof-flag)"
+        fi
     else
         # Fix 8: use silent read (-s) so the UUID is not visible in
         # terminal scrollback; echo "" restores the newline
@@ -472,9 +488,17 @@ parse_args() {
             -n)
                 [[ $# -lt 2 ]] && { error "-n requires an argument"; exit 1; }
                 HOSTNAME_INPUT="$2"; shift 2 ;;
-            -f)
-                [[ $# -lt 2 ]] && { error "-f requires an argument"; exit 1; }
+            --flags)
+                [[ $# -lt 2 ]] && { error "--flags requires an argument"; exit 1; }
                 FLAG_TYPE="$2"; shift 2 ;;
+            --local-flag)
+                [[ $# -lt 2 ]] && { error "--local-flag requires an argument"; exit 1; }
+                LOCAL_FLAG_INPUT="$2"; shift 2 ;;
+            --proof-flag)
+                [[ $# -lt 2 ]] && { error "--proof-flag requires an argument"; exit 1; }
+                PROOF_FLAG_INPUT="$2"; shift 2 ;;
+            --no-color)
+                disable_colors; shift ;;
             -p)
                 [[ $# -lt 2 ]] && { error "-p requires an argument"; exit 1; }
                 FLAG_PATH="$2"; shift 2 ;;

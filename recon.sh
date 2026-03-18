@@ -54,7 +54,8 @@ set -u
 #------------------------------------------------------------------------------
 # CONFIGURATION — Tune these for your environment / engagement needs
 #------------------------------------------------------------------------------
-RECON_DIR="./recon"                    # Base output directory
+TOOLKIT_ROOT="${TOOLKIT_ROOT:-${HOME}/offsec}"  # Unified output root (shared across toolkit)
+RECON_DIR="${TOOLKIT_ROOT}/recon"         # Base output directory
 RUSTSCAN_BATCH_SIZE=1500               # Rustscan batch size / concurrent sockets per batch
 RUSTSCAN_TIMEOUT=4000                  # Connection timeout in ms
 NMAP_TCP_TIMEOUT=600                   # Seconds for TCP service scan
@@ -72,6 +73,8 @@ FTP_TIMEOUT=30                         # Seconds
 MYSQL_TIMEOUT=30                       # Seconds
 GENERIC_TIMEOUT=120                    # Fallback timeout for misc tools
 MAX_PARALLEL_SERVICES=5                # Max concurrent service enumerations per target
+MAX_PARALLEL_TARGETS=3                 # Max targets scanned simultaneously
+SEQUENTIAL_TARGETS=false               # Process targets one at a time
 AUTO_MODE=false                        # Skip confirmation prompts
 UDP_FULL=false                         # Scan all 65535 UDP ports (slow but thorough)
 SNMP_COMMUNITY_STRINGS=("public" "private" "manager" "community")
@@ -87,6 +90,9 @@ CYAN='\033[0;36m'
 MAGENTA='\033[0;35m'
 BOLD='\033[1m'
 NC='\033[0m' # No Color
+
+disable_colors() { RED='' GREEN='' YELLOW='' BLUE='' CYAN='' MAGENTA='' BOLD='' NC=''; }
+[[ "${NO_COLOR:-0}" == "1" ]] || [[ ! -t 1 ]] && disable_colors
 
 # Timestamp for log entries
 ts() { date '+%H:%M:%S'; }
@@ -1608,12 +1614,16 @@ OPTIONS:
   --batch-size N        Rustscan batch size (default: 1500)
   --rate N              Deprecated alias for --batch-size
   --outdir DIR          Output directory (default: ./recon)
-  --max-parallel N      Max parallel service enumerations (default: 5)
+  --max-parallel N      Max parallel service enumerations per target (default: 5)
+  --max-parallel-targets N  Max simultaneous target scans (default: 3)
+  --sequential          Process targets one at a time (default: parallel)
+  --no-color            Disable colored output
   -h, --help            Show this help message
 
 EXAMPLES:
   ./recon.sh 10.10.10.1                    # Single target
-  ./recon.sh 10.10.10.1 10.10.10.2         # Multiple targets
+  ./recon.sh 10.10.10.1 10.10.10.2         # Multiple targets (parallel)
+  ./recon.sh --sequential 10.10.10.1 10.10.10.2  # One at a time
   ./recon.sh -f targets.txt                 # From file
   ./recon.sh --auto 10.10.10.1              # No prompts
   ./recon.sh --batch-size 3000 --auto 10.10.10.1  # Larger rustscan batches
@@ -1623,7 +1633,8 @@ NOTES:
   - Run as root for UDP scanning; non-root mode skips UDP scans safely
   - Re-run safely: completed phases are skipped (delete progress.log to redo)
   - Ctrl+C cleanly kills all background jobs
-  - Results in ./recon/<IP>/summary.txt
+  - Results in ~/toolkit/recon/<IP>/summary.txt
+  - Set TOOLKIT_ROOT env var to change output base (default: ~/toolkit)
 EOF
 }
 
@@ -1671,6 +1682,19 @@ while [[ $# -gt 0 ]]; do
             [[ $# -lt 2 ]] && { error "Option $1 requires an argument"; exit 1; }
             MAX_PARALLEL_SERVICES="$2"
             shift 2
+            ;;
+        --max-parallel-targets)
+            [[ $# -lt 2 ]] && { error "Option $1 requires an argument"; exit 1; }
+            MAX_PARALLEL_TARGETS="$2"
+            shift 2
+            ;;
+        --sequential)
+            SEQUENTIAL_TARGETS=true
+            shift
+            ;;
+        --no-color)
+            disable_colors
+            shift
             ;;
         -*)
             error "Unknown option: $1"
@@ -1804,6 +1828,26 @@ else
     warn "  Recommended: sudo $0 $*"  # $* in double quotes is intentional (display only)
 fi
 
+# Tool dependency check
+echo ""
+info "Checking required tools..."
+MISSING_TOOLS=()
+for tool in nmap rustscan gobuster nikto whatweb smbclient enum4linux; do
+    if command -v "$tool" &>/dev/null; then
+        success "  $tool"
+    else
+        warn "  $tool — NOT FOUND (apt install $tool)"
+        MISSING_TOOLS+=("$tool")
+    fi
+done
+if [[ " ${MISSING_TOOLS[*]} " == *" nmap "* ]]; then
+    error "nmap is required. Install: sudo apt install nmap"
+    exit 1
+fi
+if (( ${#MISSING_TOOLS[@]} > 0 )); then
+    warn "Some optional tools missing — related phases will be skipped"
+fi
+
 # Target reachability
 echo ""
 info "Checking target reachability..."
@@ -1849,9 +1893,21 @@ mkdir -p "$RECON_DIR"
 
 START_TIME=$(date +%s)
 
-for target in "${TARGETS[@]}"; do
-    recon_target "$target"
-done
+if [[ "$SEQUENTIAL_TARGETS" == true ]]; then
+    info "Sequential mode — scanning targets one at a time"
+    for target in "${TARGETS[@]}"; do
+        recon_target "$target"
+    done
+else
+    info "Parallel mode — max ${MAX_PARALLEL_TARGETS} target(s) at once"
+    for target in "${TARGETS[@]}"; do
+        while (( $(jobs -rp | wc -l) >= MAX_PARALLEL_TARGETS )); do
+            wait -n 2>/dev/null || true
+        done
+        recon_target "$target" &
+    done
+    wait
+fi
 
 END_TIME=$(date +%s)
 ELAPSED=$(( END_TIME - START_TIME ))

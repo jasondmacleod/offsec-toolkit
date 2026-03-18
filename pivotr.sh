@@ -35,6 +35,11 @@ MAGENTA='\033[0;35m'
 BOLD='\033[1m'
 NC='\033[0m'
 
+disable_colors() { RED='' GREEN='' YELLOW='' BLUE='' CYAN='' MAGENTA='' BOLD='' NC=''; }
+[[ "${NO_COLOR:-0}" == "1" ]] || [[ ! -t 1 ]] && disable_colors
+
+TOOLKIT_ROOT="${TOOLKIT_ROOT:-${HOME}/offsec}"
+
 ts()      { date '+%H:%M:%S'; }
 info()    { echo -e "${BLUE}[$(ts)] [*]${NC} $*"; }
 success() { echo -e "${GREEN}[$(ts)] [+]${NC} $*"; }
@@ -42,7 +47,7 @@ warn()    { echo -e "${YELLOW}[$(ts)] [!]${NC} $*"; }
 error()   { echo -e "${RED}[$(ts)] [-]${NC} $*" >&2; }
 phase()   { echo -e "\n${MAGENTA}[$(ts)] [PHASE]${NC} ${BOLD}$*${NC}"; }
 
-STATE_DIR="${HOME}/.pivotr"
+STATE_DIR="${TOOLKIT_ROOT}/pivots"
 STATE_FILE="${STATE_DIR}/state.tsv"
 
 #------------------------------------------------------------------------------
@@ -1110,6 +1115,14 @@ EOF
 # MAIN
 #==============================================================================
 main() {
+    # Parse global flags before mode dispatch
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --no-color) disable_colors; shift ;;
+            *)          break ;;
+        esac
+    done
+
     if [[ $# -eq 0 ]]; then
         show_help
         exit 0

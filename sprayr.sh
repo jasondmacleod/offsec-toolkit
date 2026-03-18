@@ -42,6 +42,21 @@ cmd_log() {
 }
 hit_admin() { echo -e "${GREEN}${BOLD}[$(ts)] [+] ★ ADMIN HIT:${NC}${GREEN}${BOLD} $*${NC}"; }
 
+disable_colors() { RED='' GREEN='' YELLOW='' BLUE='' CYAN='' MAGENTA='' BOLD='' NC=''; }
+[[ "${NO_COLOR:-0}" == "1" ]] || [[ ! -t 1 ]] && disable_colors
+
+TOOLKIT_ROOT="${TOOLKIT_ROOT:-${HOME}/offsec}"
+
+creds_log() {
+    local creds_file="${TOOLKIT_ROOT}/creds.txt"
+    mkdir -p "$(dirname "$creds_file")" 2>/dev/null || true
+    if ! printf '%s | %-8s | %-15s | %-20s | %s | %s\n' \
+        "$(date '+%Y-%m-%d %H:%M:%S')" "$1" "$2" "$3" "$4" "$5" >> "$creds_file" 2>/dev/null; then
+        warn "CRED NOT LOGGED — cannot write to ${creds_file}"
+        warn "Credential: $3@$2 : $4 ($5)"
+    fi
+}
+
 #------------------------------------------------------------------------------
 # GLOBAL STATE
 #------------------------------------------------------------------------------
@@ -184,9 +199,11 @@ record_hit() {
     if [[ "$is_pwnd" == "pwnd" ]]; then
         echo "${proto}|${target}|${cred}|PWND" >> "${OUTDIR}/hits.txt"
         echo "${proto}|${target}|${cred}|PWND" >> "${OUTDIR}/pwnd.txt"
+        creds_log "sprayr" "$target" "$cred" "" "pwnd"
         hit_admin "${display} (Pwn3d!)"
     else
         echo "${proto}|${target}|${cred}|HIT" >> "${OUTDIR}/hits.txt"
+        creds_log "sprayr" "$target" "$cred" "" "hit"
         success "HIT: ${display}"
     fi
 }
@@ -710,6 +727,8 @@ main() {
             --outdir)
                 [[ $# -lt 2 ]] && { error "--outdir requires an argument"; exit 1; }
                 OUTDIR="$2"; shift 2 ;;
+            --no-color)
+                disable_colors; shift ;;
             -h|--help)
                 show_help; exit 0 ;;
             *)
@@ -821,7 +840,7 @@ main() {
 
     #--- Set output directory --------------------------------------------------
     if [[ -z "$OUTDIR" ]]; then
-        OUTDIR="./spray/$(date '+%Y%m%d_%H%M%S')"
+        OUTDIR="${TOOLKIT_ROOT}/spray/$(date '+%Y%m%d_%H%M%S')"
     fi
     mkdir -p -- "${OUTDIR}/raw" || { error "Cannot create output directory: ${OUTDIR}"; exit 1; }
 

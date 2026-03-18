@@ -47,7 +47,8 @@ set -o pipefail
 #==============================================================================
 # CONFIGURATION
 #==============================================================================
-OUTPUT_ROOT="./webenum"
+TOOLKIT_ROOT="${TOOLKIT_ROOT:-${HOME}/offsec}"
+OUTPUT_ROOT="${TOOLKIT_ROOT}/web"
 THREADS=40
 FFUF_TIMEOUT=30                      # per-request timeout (seconds)
 FFUF_RATE=0                          # 0 = no rate limit; set to e.g. 100 to throttle
@@ -89,6 +90,9 @@ CYAN='\033[0;36m'
 MAGENTA='\033[0;35m'
 BOLD='\033[1m'
 NC='\033[0m'
+
+disable_colors() { RED='' GREEN='' YELLOW='' BLUE='' CYAN='' MAGENTA='' BOLD='' NC=''; }
+[[ "${NO_COLOR:-0}" == "1" ]] || [[ ! -t 1 ]] && disable_colors
 
 ts()      { date '+%H:%M:%S'; }
 info()    { echo -e "${BLUE}[$(ts)] [*]${NC} $*"; }
@@ -1130,6 +1134,7 @@ EOF
 # ARGUMENT PARSING
 #==============================================================================
 TARGET_URL=""
+FROM_RECON_IP=""
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -1141,6 +1146,15 @@ while [[ $# -gt 0 ]]; do
             [[ $# -lt 2 ]] && { error "Option $1 requires an argument"; exit 1; }
             TARGET_URL="$2"
             shift 2
+            ;;
+        --from-recon)
+            [[ $# -lt 2 ]] && { error "Option $1 requires an argument"; exit 1; }
+            FROM_RECON_IP="$2"
+            shift 2
+            ;;
+        --no-color)
+            disable_colors
+            shift
             ;;
         --deep)
             DEEP_MODE=true
@@ -1179,8 +1193,52 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
+# --from-recon: auto-detect HTTP URLs from recon.sh output
+if [[ -n "$FROM_RECON_IP" && -z "$TARGET_URL" ]]; then
+    recon_dir="${TOOLKIT_ROOT}/recon/${FROM_RECON_IP}"
+    if [[ ! -d "$recon_dir" ]]; then
+        error "No recon data at ${recon_dir}. Run: ./recon.sh ${FROM_RECON_IP}"
+        exit 1
+    fi
+    declare -a found_urls=()
+    for nmap_file in "${recon_dir}/scans/"*nmap*; do
+        [[ -f "$nmap_file" ]] || continue
+        while IFS= read -r line; do
+            port=$(echo "$line" | grep -oP '\d+(?=/tcp.*http)' | head -1)
+            [[ -z "$port" ]] && continue
+            if echo "$line" | grep -qi "ssl\|https"; then
+                proto="https"
+            else
+                proto="http"
+            fi
+            url="${proto}://${FROM_RECON_IP}"
+            [[ "$port" != "80" && "$port" != "443" ]] && url="${url}:${port}"
+            # Deduplicate
+            dup=false
+            for u in "${found_urls[@]+"${found_urls[@]}"}"; do
+                [[ "$u" == "$url" ]] && dup=true
+            done
+            [[ "$dup" == false ]] && found_urls+=("$url")
+        done < <(grep -iE 'open.*http' "$nmap_file" 2>/dev/null || true)
+    done
+    if (( ${#found_urls[@]} == 0 )); then
+        error "No HTTP services found in recon data for ${FROM_RECON_IP}"
+        exit 1
+    elif (( ${#found_urls[@]} == 1 )); then
+        TARGET_URL="${found_urls[0]}"
+        info "Auto-detected from recon: ${TARGET_URL}"
+    else
+        info "Multiple HTTP services found for ${FROM_RECON_IP}:"
+        for i in "${!found_urls[@]}"; do
+            echo "  $((i+1)). ${found_urls[$i]}"
+        done
+        TARGET_URL="${found_urls[0]}"
+        info "Using first URL: ${TARGET_URL} (run again with --url for others)"
+    fi
+fi
+
 if [[ -z "$TARGET_URL" ]]; then
-    error "No URL specified"
+    error "No URL specified. Use --url or --from-recon."
     usage
     exit 1
 fi

