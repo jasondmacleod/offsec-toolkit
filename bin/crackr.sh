@@ -122,7 +122,9 @@ HASH_SIGNATURES=(
     # Net-NTLMv2 (Responder captures) — broad pattern after NTLMv1
     '.*::.*:.*:.*:[a-fA-F0-9]+$|5600|netntlmv2|NTLMv2 (Net-NTLMv2)'
     # Kerberos
-    '^\$krb5tgs\$|13100|krb5tgs|Kerberos TGS-REP (Kerberoast)'
+    '^\$krb5tgs\$17\$|19600|krb5tgs-aes128|Kerberos TGS-REP AES-128 (Kerberoast)'
+    '^\$krb5tgs\$18\$|19700|krb5tgs-aes256|Kerberos TGS-REP AES-256 (Kerberoast)'
+    '^\$krb5tgs\$23\$|13100|krb5tgs|Kerberos TGS-REP RC4 (Kerberoast)'
     '^\$krb5asrep\$|18200|krb5asrep|Kerberos AS-REP (AS-REP Roast)'
     '^\$krb5pa\$23\$|7500|krb5pa-md5|Kerberos Pre-Auth'
     # Linux crypt formats
@@ -869,7 +871,7 @@ show_cracked() {
     log_info "Checking hashcat pot..."
     local potfile="${OUTPUT_DIR}/hashcat.potfile"
     if [[ -f "$potfile" ]]; then
-        for mode in 0 100 300 400 500 1000 1400 1600 1700 1800 2100 3200 5500 5600 7400 7500 13100 13400 18200; do
+        for mode in 0 100 300 400 500 1000 1400 1600 1700 1800 2100 3200 5500 5600 7400 7500 13100 13400 18200 19600 19700; do
             local result=""
             result=$(hashcat -m "$mode" "$hash_file" --potfile-path "$potfile" --show 2>/dev/null) || true
             if [[ -n "$result" ]]; then

@@ -1088,6 +1088,22 @@ enum_snmp() {
                 timeout 30 snmpwalk -v2c -c "$community" "$ip" \
                     1.3.6.1.2.1.4.22.1.2 > "$outdir/arp_table.txt" 2>&1 || true
 
+                # Process command-line arguments (may contain cleartext creds like mysql -u root -pSecret)
+                timeout 60 snmpwalk -v2c -c "$community" "$ip" \
+                    1.3.6.1.2.1.25.4.2.1.5 > "$outdir/process_args.txt" 2>&1 || true
+
+                # Windows user accounts via SNMP
+                timeout 30 snmpwalk -v2c -c "$community" "$ip" \
+                    1.3.6.1.4.1.77.1.2.25 > "$outdir/windows_users.txt" 2>&1 || true
+
+                # Flag process args containing potential credentials
+                if [[ -s "$outdir/process_args.txt" ]] && \
+                   grep -qiE 'pass|pwd|secret|key|token|cred' "$outdir/process_args.txt" 2>/dev/null; then
+                    success "  ★ Process command-line args may contain credentials!"
+                    echo "SNMP process args may contain credentials on $ip — see $outdir/process_args.txt" \
+                        >> "$target_dir/loot/quick_wins.txt"
+                fi
+
                 break  # Found working string, don't need to try more
             fi
         done
