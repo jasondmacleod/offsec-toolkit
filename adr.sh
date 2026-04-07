@@ -800,7 +800,7 @@ phase6_bloodhound() {
 
     local bh_dir="${OUTDIR}/bloodhound"
     local bh_prefix="bh"
-    local -a bh_args=(-c All -d "$DOMAIN" -u "$USER" -ns "$DC_IP" --zip -op "$bh_prefix")
+    local -a bh_args=(-c All -d "$DOMAIN" -u "$USER" -ns "$DC_IP" --dns-timeout 30 --zip -op "$bh_prefix")
     [[ -n "$DC_HOST" ]] && bh_args+=(-dc "$DC_HOST")
 
     if [[ "$AUTH_TYPE" == "hash" ]]; then
