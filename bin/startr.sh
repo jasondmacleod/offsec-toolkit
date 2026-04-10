@@ -30,7 +30,7 @@ TOOLKIT_ROOT="${TOOLKIT_ROOT:-${HOME}/offsec}"
 EXAM_DATE="$(date +%F)"
 EXAM_DIR="${TOOLKIT_ROOT}/exam_${EXAM_DATE}"
 SESSION_NAME="engagement"
-TOOLKIT_DIR="${HOME}/toolkit"
+TOOLKIT_DIR="${HOME}/tools"
 RECON_SCRIPT="${HOME}/scripts/bin/recon.sh"
 
 #------------------------------------------------------------------------------
