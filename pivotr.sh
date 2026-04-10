@@ -109,7 +109,7 @@ cleanup() {
 }
 
 trap 'cleanup 130' INT TERM
-trap 'cleanup 0'   EXIT
+trap 'cleanup $?'  EXIT
 
 #------------------------------------------------------------------------------
 # KALI IP AUTO-DETECTION

@@ -592,7 +592,7 @@ phase3_kerberos() {
         local asrep_count=0
         if [[ -s "$asrep_file" ]]; then
             # shellcheck disable=SC2016  # $ is a literal regex anchor/char, not a variable
-            asrep_count=$(grep -c '^\$krb5asrep' "$asrep_file" 2>/dev/null || echo 0)
+            asrep_count=$(grep -c '^\$krb5asrep' "$asrep_file" 2>/dev/null); asrep_count=${asrep_count:-0}
             success "*** AS-REP ROASTABLE: ${asrep_count} account(s) → hashes/asreproast.txt ***"
             echo "ASREP_COUNT=${asrep_count}" >> "${OUTDIR}/summary_notes.txt"
             creds_log "adr" "$DC_IP" "${asrep_count}_users" "see ${asrep_file}" "asrep"
@@ -635,7 +635,7 @@ phase3_kerberos() {
         local kerb_count=0
         if [[ -s "$kerb_file" ]]; then
             # shellcheck disable=SC2016  # $ is literal regex anchor, not a variable
-            kerb_count=$(grep -c '^\$krb5tgs' "$kerb_file" 2>/dev/null || echo 0)
+            kerb_count=$(grep -c '^\$krb5tgs' "$kerb_file" 2>/dev/null); kerb_count=${kerb_count:-0}
             success "*** KERBEROASTABLE: ${kerb_count} account(s) → hashes/kerberoast.txt ***"
             echo "KERB_COUNT=${kerb_count}" >> "${OUTDIR}/summary_notes.txt"
             creds_log "adr" "$DC_IP" "${kerb_count}_users" "see ${kerb_file}" "kerberoast"

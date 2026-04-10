@@ -324,7 +324,7 @@ qw_triage_target() {
 
     # Count open ports (more ports = more attack surface)
     local port_count
-    port_count=$(grep -cP '^\d+/tcp\s+open' "$nmap_quick" 2>/dev/null || echo 0)
+    port_count=$(grep -cP '^\d+/tcp\s+open' "$nmap_quick" 2>/dev/null); port_count=${port_count:-0}
     (( score += port_count ))
 
     # 2. Check anonymous FTP
@@ -342,7 +342,7 @@ qw_triage_target() {
         smb_out=$(timeout 15 smbclient -L "//${ip}" -N 2>&1) || true
         if echo "$smb_out" | grep -qiE 'Sharename|IPC\$'; then
             local share_count
-            share_count=$(echo "$smb_out" | grep -c 'Disk' 2>/dev/null || echo 0)
+            share_count=$(echo "$smb_out" | grep -c 'Disk' 2>/dev/null); share_count=${share_count:-0}
             if (( share_count > 0 )); then
                 (( score += 3 + share_count ))
                 reasons+="ANON_SMB(${share_count}_shares) "
@@ -408,7 +408,7 @@ qw_triage_target() {
             sploit_out=$(timeout 30 searchsploit --nmap "$nmap_quick" 2>/dev/null) || true
             if [[ -n "$sploit_out" ]] && echo "$sploit_out" | grep -qvE '^$|No Results|Exploit Title'; then
                 local exploit_count
-                exploit_count=$(echo "$sploit_out" | grep -cP '\S+\s+\|' 2>/dev/null || echo 0)
+                exploit_count=$(echo "$sploit_out" | grep -cP '\S+\s+\|' 2>/dev/null); exploit_count=${exploit_count:-0}
                 if (( exploit_count > 0 )); then
                     (( score += exploit_count * 3 ))
                     reasons+="EXPLOITS(${exploit_count}) "
@@ -768,7 +768,7 @@ enum_http() {
     if check_tool feroxbuster; then
         local gobuster_hits=""
         # Count only actual result lines (start with /) — wc -l is unreliable due to gobuster headers
-        gobuster_hits=$(grep -c '^/' "$outdir/gobuster_dir.txt" 2>/dev/null || echo "0")
+        gobuster_hits=$(grep -c '^/' "$outdir/gobuster_dir.txt" 2>/dev/null); gobuster_hits=${gobuster_hits:-0}
         if (( gobuster_hits < 5 )); then
             info "  → feroxbuster $url (gobuster found <5 results, trying recursive)"
             local ferox_flags=(-u "$url" -w "$GOBUSTER_WORDLIST" \
@@ -797,7 +797,7 @@ enum_http() {
                     vhost_count=$(jq '.results | length' "$outdir/ffuf_vhosts.json" 2>/dev/null || echo "0")
                 else
                     # Count result objects by their unique "url" field (one per result)
-                    vhost_count=$(grep -c '"url"' "$outdir/ffuf_vhosts.json" 2>/dev/null || echo "0")
+                    vhost_count=$(grep -c '"url"' "$outdir/ffuf_vhosts.json" 2>/dev/null); vhost_count=${vhost_count:-0}
                 fi
                 if (( vhost_count > 0 )); then
                     success "  ★ ffuf found $vhost_count potential vhost(s) → $outdir/ffuf_vhosts.json"
@@ -1317,7 +1317,7 @@ enum_smtp() {
         ' -- "$ip" "$port" "$users_file" > "$outdir/vrfy_users.txt" 2>&1 || true
 
         local valid_count=""
-        valid_count=$(grep -c "^VALID:" "$outdir/vrfy_users.txt" 2>/dev/null || echo "0")
+        valid_count=$(grep -c "^VALID:" "$outdir/vrfy_users.txt" 2>/dev/null); valid_count=${valid_count:-0}
         if (( valid_count > 0 )); then
             success "  ★ Found $valid_count valid SMTP user(s)"
             echo "SMTP VRFY found $valid_count valid users on $ip:$port" \
@@ -1411,7 +1411,7 @@ enum_ldap() {
             timeout 120 ldapsearch -x -H "ldap://${ip}:${port}" -b "$base_dn" \
                 > "$outdir/ldap_full_dump.txt" 2>&1 || true
             local entry_count=""
-            entry_count=$(grep -c '^dn:' "$outdir/ldap_full_dump.txt" 2>/dev/null || echo "0")
+            entry_count=$(grep -c '^dn:' "$outdir/ldap_full_dump.txt" 2>/dev/null); entry_count=${entry_count:-0}
             if (( entry_count > 0 )); then
                 success "  ★ LDAP anonymous bind: $entry_count entries found"
                 echo "LDAP anonymous bind on $ip: $entry_count entries" \
@@ -1669,7 +1669,7 @@ generate_summary() {
             fi
             if [[ -f "$httpdir/gobuster_dir.txt" ]]; then
                 local hits=""
-                hits=$(grep -c '^/' "$httpdir/gobuster_dir.txt" 2>/dev/null || echo "0")
+                hits=$(grep -c '^/' "$httpdir/gobuster_dir.txt" 2>/dev/null); hits=${hits:-0}
                 echo "  Gobuster: $hits directories/files found"
                 # Show top interesting hits
                 grep -iE '/admin|/login|/upload|/config|/backup|/shell|/api|/console|/phpmyadmin|/wp-|/cgi' \

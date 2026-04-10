@@ -286,7 +286,7 @@ phase_system() {
     info "Collecting environment variables (redacting secrets)..."
     env 2>/dev/null | grep -viE "PASSWORD|SECRET|TOKEN|API_KEY" > "${sdir}/environment.txt" || true
     local redacted_count=""
-    redacted_count="$(env 2>/dev/null | grep -ciE "PASSWORD|SECRET|TOKEN|API_KEY" || echo 0)"
+    redacted_count="$(env 2>/dev/null | grep -ciE "PASSWORD|SECRET|TOKEN|API_KEY")"; redacted_count=${redacted_count:-0}
     if [[ "${redacted_count}" -gt 0 ]]; then
         warn "Redacted ${redacted_count} sensitive env var(s) from environment.txt"
     fi

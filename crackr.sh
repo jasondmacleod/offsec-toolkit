@@ -897,9 +897,9 @@ check_all_cracked_hashcat() {
     fi
 
     local total
-    total=$(grep -vE '^\s*#' "$hash_file" | grep -cv '^\s*$' 2>/dev/null || echo "0")
+    total=$(grep -vE '^\s*#' "$hash_file" | grep -cv '^\s*$' 2>/dev/null); total=${total:-0}
     local cracked
-    cracked=$(hashcat -m "$mode" "$hash_file" --potfile-path "$potfile" --show 2>/dev/null | grep -c ':' || echo "0")
+    cracked=$(hashcat -m "$mode" "$hash_file" --potfile-path "$potfile" --show 2>/dev/null | grep -c ':'); cracked=${cracked:-0}
 
     if [[ "$cracked" -ge "$total" && "$total" -gt 0 ]]; then
         return 0
@@ -1224,13 +1224,18 @@ run_hydra() {
     "${cmd[@]}" || true
 
     echo ""
+    # Only claim success if the outfile contains at least one parseable cred line.
+    # Hydra writes a header comment to -o even on failure, so `-s` alone is not proof.
+    local hydra_hits=0
     if [[ -f "$outfile" && -s "$outfile" ]]; then
+        hydra_hits=$(grep -cE 'login:\s*\S+\s+password:\s*\S+' "$outfile" 2>/dev/null || true)
+        hydra_hits=${hydra_hits:-0}
+    fi
+    if (( hydra_hits > 0 )); then
         log_success "Valid credentials found:"
-        cat "$outfile"
-        # Log hydra creds to central creds log
+        grep -E 'login:\s*\S+\s+password:\s*\S+' "$outfile"
         while IFS= read -r line; do
             [[ -z "$line" ]] && continue
-            # Hydra output lines look like: [port][service] host login: user password: pass
             local hydra_user hydra_pass
             hydra_user=$(echo "$line" | grep -oP 'login:\s*\K\S+' || true)
             hydra_pass=$(echo "$line" | grep -oP 'password:\s*\K\S+' || true)
@@ -1275,6 +1280,15 @@ crack() {
         local detected
         detected=$(identify_hash "$sample_hash")
         IFS='|' read -r hc_mode jtr_fmt desc <<< "$detected"
+    fi
+
+    # Reject fully unknown hashes rather than silently running with no format
+    if [[ "$hc_mode" == "unknown" && ( "$jtr_fmt" == "unknown" || -z "$jtr_fmt" ) ]]; then
+        log_error "Could not identify hash type for: ${sample_hash:0:64}"
+        log_error "Specify manually: -m <hashcat_mode> (e.g. -m 1000 for NTLM)"
+        log_error "                   -j <jtr_format>   (e.g. -j nt for NTLM)"
+        log_error "See: hashcat --example-hashes | less   OR   john --list=formats"
+        exit 1
     fi
 
     log_info "Hash type: ${BOLD}${desc}${NC}"

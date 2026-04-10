@@ -332,66 +332,75 @@ build_tmux() {
         return 0
     fi
 
+    # Run a tmux command and abort the whole build if it fails. Without this,
+    # a failed split/send-keys is invisible and the script falsely claims success.
+    tx() {
+        local out rc=0
+        out=$("$@" 2>&1) || rc=$?
+        if (( rc != 0 )); then
+            error "tmux command failed (rc=$rc): $*"
+            [[ -n "$out" ]] && error "  → $out"
+            tmux kill-session -t "$SESSION_NAME" 2>/dev/null || true
+            exit 1
+        fi
+    }
+
     local env_file="${EXAM_DIR}/env.sh"
     local src_cmd="source ${env_file} 2>/dev/null"
 
-    # Detect pane base index (portable: works with base-index 0 or 1)
-    local pbi
-    pbi="$(tmux show-option -gv pane-base-index 2>/dev/null || echo 0)"
-    local P0="$pbi"                      # first pane (top / left)
-    local P1="$(( pbi + 1 ))"            # second pane (bottom / right)
+    # Pane-base-index is read from ~/.tmux.conf by the server, but
+    # `show-option -gv` before any session exists can print empty even when
+    # the user's config sets it non-zero. Create the session first, then
+    # query the actual pane index from the live window.
+    local pbi P0 P1
+    tx tmux new-session -d -s "$SESSION_NAME" -n "SA-1" -x 200 -y 50
+    pbi=$(tmux list-panes -t "${SESSION_NAME}:SA-1" -F '#{pane_index}' 2>/dev/null | head -1)
+    [[ "$pbi" =~ ^[0-9]+$ ]] || pbi=0
+    P0="$pbi"
+    P1="$(( pbi + 1 ))"
 
-    # Helper: set up a target window with 70/30 split
     setup_target_window() {
         local win="$1" dir="$2" label="$3" ip_info="$4"
-        tmux send-keys -t "${SESSION_NAME}:${win}" "$src_cmd" C-m
-        tmux send-keys -t "${SESSION_NAME}:${win}" "cd ${dir}" C-m
-        tmux send-keys -t "${SESSION_NAME}:${win}" "clear && echo -e '${BOLD}${CYAN}${label}${NC}'" C-m
-        tmux split-window -v -t "${SESSION_NAME}:${win}" -p 30
-        tmux send-keys -t "${SESSION_NAME}:${win}.${P1}" "$src_cmd" C-m
-        tmux send-keys -t "${SESSION_NAME}:${win}.${P1}" "cd ${dir}" C-m
-        tmux select-pane -t "${SESSION_NAME}:${win}.${P0}"
+        tx tmux send-keys -t "${SESSION_NAME}:${win}.${P0}" "$src_cmd" C-m
+        tx tmux send-keys -t "${SESSION_NAME}:${win}.${P0}" "cd ${dir}" C-m
+        tx tmux send-keys -t "${SESSION_NAME}:${win}.${P0}" "clear && echo -e '${BOLD}${CYAN}${label}${NC}'" C-m
+        tx tmux split-window -v -t "${SESSION_NAME}:${win}.${P0}" -p 30
+        tx tmux send-keys -t "${SESSION_NAME}:${win}.${P1}" "$src_cmd" C-m
+        tx tmux send-keys -t "${SESSION_NAME}:${win}.${P1}" "cd ${dir}" C-m
+        tx tmux select-pane -t "${SESSION_NAME}:${win}.${P0}"
     }
 
-    # Window: SA-1 (standalone 1)
-    tmux new-session -d -s "$SESSION_NAME" -n "SA-1" -x 200 -y 50
     setup_target_window "SA-1" "${EXAM_DIR}/target1" "[SA-1] ${SA1} — Standalone 1" "$SA1"
 
-    # Window: SA-2 (standalone 2)
-    tmux new-window -t "${SESSION_NAME}" -n "SA-2"
+    tx tmux new-window -t "${SESSION_NAME}" -n "SA-2"
     setup_target_window "SA-2" "${EXAM_DIR}/target2" "[SA-2] ${SA2} — Standalone 2" "$SA2"
 
-    # Window: SA-3 (standalone 3)
-    tmux new-window -t "${SESSION_NAME}" -n "SA-3"
+    tx tmux new-window -t "${SESSION_NAME}" -n "SA-3"
     setup_target_window "SA-3" "${EXAM_DIR}/target3" "[SA-3] ${SA3} — Standalone 3" "$SA3"
 
-    # Window: AD (Active Directory set)
-    tmux new-window -t "${SESSION_NAME}" -n "AD"
+    tx tmux new-window -t "${SESSION_NAME}" -n "AD"
     setup_target_window "AD" "${EXAM_DIR}/ad" "[AD] ${DOMAIN} — DC:${DC} M1:${AD1} M2:${AD2} — ${ADUSER}:${ADPASS}" ""
 
-    # Window: staging (file server + listener staging)
-    tmux new-window -t "${SESSION_NAME}" -n "staging"
-    tmux send-keys -t "${SESSION_NAME}:staging" "$src_cmd" C-m
+    tx tmux new-window -t "${SESSION_NAME}" -n "staging"
+    tx tmux send-keys -t "${SESSION_NAME}:staging.${P0}" "$src_cmd" C-m
     if [[ -d "$TOOLKIT_DIR" ]]; then
-        tmux send-keys -t "${SESSION_NAME}:staging" "cd ${TOOLKIT_DIR} && python3 -m http.server 8000" C-m
+        tx tmux send-keys -t "${SESSION_NAME}:staging.${P0}" "cd ${TOOLKIT_DIR} && python3 -m http.server 8000" C-m
     else
-        tmux send-keys -t "${SESSION_NAME}:staging" "echo 'Toolkit dir not found — start file server manually'" C-m
+        tx tmux send-keys -t "${SESSION_NAME}:staging.${P0}" "echo 'Toolkit dir not found — start file server manually'" C-m
     fi
-    tmux split-window -h -t "${SESSION_NAME}:staging"
-    tmux send-keys -t "${SESSION_NAME}:staging.${P1}" "$src_cmd" C-m
-    tmux send-keys -t "${SESSION_NAME}:staging.${P1}" "echo -e '${BOLD}${YELLOW}Ready for Penelope:${NC}'" C-m
-    tmux send-keys -t "${SESSION_NAME}:staging.${P1}" "echo -e '  penelope -0 ${KALI_IP} 443'" C-m
-    tmux send-keys -t "${SESSION_NAME}:staging.${P1}" "echo -e '  penelope -0 ${KALI_IP} 4444'" C-m
-    tmux send-keys -t "${SESSION_NAME}:staging.${P1}" "echo ''" C-m
+    tx tmux split-window -h -t "${SESSION_NAME}:staging.${P0}"
+    tx tmux send-keys -t "${SESSION_NAME}:staging.${P1}" "$src_cmd" C-m
+    tx tmux send-keys -t "${SESSION_NAME}:staging.${P1}" "echo -e '${BOLD}${YELLOW}Ready for Penelope:${NC}'" C-m
+    tx tmux send-keys -t "${SESSION_NAME}:staging.${P1}" "echo -e '  penelope -0 ${KALI_IP} 443'" C-m
+    tx tmux send-keys -t "${SESSION_NAME}:staging.${P1}" "echo -e '  penelope -0 ${KALI_IP} 4444'" C-m
+    tx tmux send-keys -t "${SESSION_NAME}:staging.${P1}" "echo ''" C-m
 
-    # Window: notes
-    tmux new-window -t "${SESSION_NAME}" -n "notes"
-    tmux send-keys -t "${SESSION_NAME}:notes" "$src_cmd" C-m
-    tmux send-keys -t "${SESSION_NAME}:notes" "cd ${EXAM_DIR}" C-m
-    tmux send-keys -t "${SESSION_NAME}:notes" "cat ${EXAM_DIR}/creds.txt" C-m
+    tx tmux new-window -t "${SESSION_NAME}" -n "notes"
+    tx tmux send-keys -t "${SESSION_NAME}:notes.${P0}" "$src_cmd" C-m
+    tx tmux send-keys -t "${SESSION_NAME}:notes.${P0}" "cd ${EXAM_DIR}" C-m
+    tx tmux send-keys -t "${SESSION_NAME}:notes.${P0}" "cat ${EXAM_DIR}/creds.txt" C-m
 
-    # Select first window
-    tmux select-window -t "${SESSION_NAME}:SA-1"
+    tx tmux select-window -t "${SESSION_NAME}:SA-1"
 
     success "tmux session '$SESSION_NAME' created with 6 windows"
 }

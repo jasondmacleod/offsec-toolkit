@@ -631,7 +631,7 @@ phase_vhosts() {
     local found_vhosts=""
     found_vhosts=$(ffuf_json_fuzz_words "$outdir/vhosts.json" 2>/dev/null)
     local found_count=""
-    found_count=$(echo "$found_vhosts" | grep -c '.' 2>/dev/null || echo "0")
+    found_count=$(echo "$found_vhosts" | grep -c '.' 2>/dev/null); found_count=${found_count:-0}
 
     if (( found_count > 0 )); then
         local ip=""
@@ -920,7 +920,7 @@ generate_summary() {
         local count=""
         for f in "$work_dir/content/"*.txt; do
             [[ -f "$f" ]] || continue
-            count=$(grep -c '|' "$f" 2>/dev/null || echo "0")
+            count=$(grep -c '|' "$f" 2>/dev/null); count=${count:-0}
             (( count > 0 )) || continue
             echo "### $(basename "$f") ($count results)"
             echo ""
@@ -936,7 +936,7 @@ generate_summary() {
         # --- VHost Findings ---
         if [[ -f "$work_dir/vhosts/vhosts.txt" ]]; then
             local vhost_count=""
-            vhost_count=$(grep -c '|' "$work_dir/vhosts/vhosts.txt" 2>/dev/null || echo "0")
+            vhost_count=$(grep -c '|' "$work_dir/vhosts/vhosts.txt" 2>/dev/null); vhost_count=${vhost_count:-0}
             if (( vhost_count > 0 )); then
                 echo "## VHosts Discovered ★"
                 echo ""
@@ -969,14 +969,15 @@ generate_summary() {
             local cnt=""
             for f in "$work_dir/content/recursive/"*.txt; do
                 [[ -f "$f" ]] || continue
-                rec_total=$(( rec_total + $(grep -c '|' "$f" 2>/dev/null || echo 0) ))
+                cnt=$(grep -c '|' "$f" 2>/dev/null); cnt=${cnt:-0}
+                rec_total=$(( rec_total + cnt ))
             done
             if (( rec_total > 0 )); then
                 echo "## Recursive Findings ($rec_total total)"
                 echo ""
                 for f in "$work_dir/content/recursive/"*.txt; do
                     [[ -f "$f" ]] || continue
-                    cnt=$(grep -c '|' "$f" 2>/dev/null || echo "0")
+                    cnt=$(grep -c '|' "$f" 2>/dev/null); cnt=${cnt:-0}
                     (( cnt > 0 )) || continue
                     echo "### $(basename "$f") ($cnt)"
                     echo '```'
@@ -990,9 +991,11 @@ generate_summary() {
         # --- Param Findings ---
         if [[ "$DEEP_MODE" == "true" ]] && [[ -d "$work_dir/params" ]]; then
             local param_total=0
+            local pcnt=""
             for f in "$work_dir/params/"*.txt; do
                 [[ -f "$f" ]] || continue
-                param_total=$(( param_total + $(grep -c '|' "$f" 2>/dev/null || echo 0) ))
+                pcnt=$(grep -c '|' "$f" 2>/dev/null); pcnt=${pcnt:-0}
+                param_total=$(( param_total + pcnt ))
             done
             if (( param_total > 0 )); then
                 echo "## Parameter Discovery ($param_total found)"
