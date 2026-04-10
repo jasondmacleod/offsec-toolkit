@@ -15,6 +15,9 @@ A Kali-side evidence capture script for OffSec engagement reporting. Records fla
 ## When To Use
 **At every flag.** Run it immediately after capturing `local.txt` or `proof.txt`, before moving to the next machine. Do not wait until the end of the engagement — you will forget details.
 
+> [!warning] Do Not Leave The Host Until This Is Done
+> Evidence capture is part of the exploitation, not a separate phase you come back to. Before you move on: evidencr has run, screenshots are taken, attack chain is entered. Skipping this under time pressure is how people lose points on reporting with a passing technical score.
+
 > [!important] Kali-Side Only
 > evidencr never touches the target. It records what **you** tell it. All flag values, hostnames, and attack chains are operator-entered.
 
@@ -43,31 +46,6 @@ A Kali-side evidence capture script for OffSec engagement reporting. Records fla
 
 ---
 
-## All Options
-
-```bash
-./evidencr.sh -t <IP> [OPTIONS]
-
-Required:
-  -t <IP>              Target IP address
-
-Options:
-  -n <hostname>        Hostname (prompted if omitted)
-  --flags <type>       Flag type: local | proof | both (prompted if omitted)
-  --local-flag VALUE   Pre-fill local.txt flag value (skips silent prompt)
-  --proof-flag VALUE   Pre-fill proof.txt flag value (skips silent prompt)
-  -p <path>            Local path to flag file — copies it into evidence dir
-  --os <os>            Target OS: Linux | Windows
-  --points <value>     Points value: 10 | 20 | 25
-  --category <type>    standalone | AD-client | AD-DC
-  -o <outdir>          Output dir (default: $TOOLKIT_ROOT/evidence)
-  --non-interactive    Skip all prompts; use flags only
-  --no-color           Disable colored output
-  -h, --help           Show help
-```
-
----
-
 ## engagement Day Workflow
 
 ### 1. Get a flag → run evidencr immediately
@@ -77,6 +55,8 @@ Options:
 ./evidencr.sh -t 10.10.10.5 -n victim01 --os Linux --flags both \
   --points 20 --category standalone
 ```
+
+Flag values are entered silently (no terminal echo). Paste the UUID — the script accepts both `a1b2c3d4e5f6...` (32 hex) and `a1b2c3d4-e5f6-...` (dashed UUID) formats.
 
 ### 2. Script prints the screenshot checklist in green — take those screenshots now
 
@@ -113,10 +93,54 @@ Enter your attack chain (press ENTER twice when done):
 > (blank line)
 ```
 
-### 4. At end of engagement, review the cross-machine ledger
+### 4. Update Creds Tracker
+
+Copy the flag UUIDs into `Creds_Tracker.md` now while they're fresh. Do not defer this.
+
+### 5. Confirm and move on
+
+All three must be true before switching to the next target:
+- `summary.txt` exists for this IP
+- All checklist screenshots are saved
+- Attack chain is recorded
+
+### 6. At end of engagement, review the cross-machine ledger
 
 ```bash
 cat $TOOLKIT_ROOT/evidence/evidence_ledger.txt
+```
+
+---
+
+## AD Machine Notes
+
+Use `--category AD-client` or `--category AD-DC` to tag machines correctly. The AD set is graded as a chain — your attack chain entries must show how each machine's access enabled the next.
+
+```bash
+# Client machine — first in the AD chain
+./evidencr.sh -t 10.10.10.8 -n MS01 --os Windows --flags both \
+  --points 10 --category AD-client
+
+# DC — reference how you got here from the client
+./evidencr.sh -t 10.10.10.10 -n DC01 --os Windows --flags proof \
+  --points 40 --category AD-DC
+```
+
+**AD chain entries must link machines.** Standalone chains describe one host. AD chains describe movement:
+
+```
+# Standalone chain example (one host, self-contained)
+> Initial foothold: anonymous FTP → writable webroot → PHP shell
+> Privesc: SeImpersonatePrivilege → PrintSpoofer → SYSTEM
+
+# AD chain example for MS01 (AD-client)
+> Initial foothold: assumed-breach creds (joe:Password1) → RDP to MS01
+> Local privesc: SeImpersonatePrivilege → GodPotato → SYSTEM
+> Credential harvest: Mimikatz → domain admin hash (svc_admin)
+
+# AD chain example for DC01 (AD-DC) — references MS01
+> Lateral movement: used svc_admin NTLM hash from MS01 → psexec to DC01
+> Domain escalation: DCSync → Administrator NTLM hash
 ```
 
 ---
@@ -140,20 +164,6 @@ $TOOLKIT_ROOT/evidence/
 
 ---
 
-## Flag Value Entry
-
-Flag values are entered **silently** (no terminal echo) to keep UUIDs out of scrollback. The script validates UUID format and warns — but does not block — if the value doesn't match.
-
-```
-Enter flag value for proof.txt (paste the UUID): [silent input]
-```
-
-Valid formats accepted:
-- `a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4` (32 hex chars)
-- `a1b2c3d4-e5f6-a1b2-c3d4-e5f6a1b2c3d4` (UUID with dashes)
-
----
-
 ## Re-Running for the Same IP
 
 Safe. The script warns you, asks for confirmation (skipped with `--non-interactive`), then appends a new evidence block. The ledger and summary both accumulate entries by timestamp.
@@ -166,14 +176,27 @@ Safe. The script warns you, asks for confirmation (skipped with `--non-interacti
 
 ---
 
-## AD Machine Notes
-
-Use `--category AD-client` or `--category AD-DC` to tag machines correctly. The AD set is graded as a chain — make sure your attack chain entries reflect lateral movement and how each machine connects to the next.
+## All Options
 
 ```bash
-# DC with assumed-breach credentials
-./evidencr.sh -t 10.10.10.10 -n DC01 --os Windows --flags proof \
-  --points 40 --category AD-DC
+./evidencr.sh -t <IP> [OPTIONS]
+
+Required:
+  -t <IP>              Target IP address
+
+Options:
+  -n <hostname>        Hostname (prompted if omitted)
+  --flags <type>       Flag type: local | proof | both (prompted if omitted)
+  --local-flag VALUE   Pre-fill local.txt flag value (skips silent prompt)
+  --proof-flag VALUE   Pre-fill proof.txt flag value (skips silent prompt)
+  -p <path>            Local path to flag file — copies it into evidence dir
+  --os <os>            Target OS: Linux | Windows
+  --points <value>     Points value: 10 | 20 | 25
+  --category <type>    standalone | AD-client | AD-DC
+  -o <outdir>          Output dir (default: $TOOLKIT_ROOT/evidence)
+  --non-interactive    Skip all prompts; use flags only
+  --no-color           Disable colored output
+  -h, --help           Show help
 ```
 
 ---
@@ -191,7 +214,6 @@ Use `--category AD-client` or `--category AD-DC` to tag machines correctly. The 
 
 ## Related Tools
 
-- `lootr.sh` — Run on the Linux target to collect raw loot **before** running evidencr
-- `lootr.ps1` — Run on the Windows target. Flag files will be in `loot/<hostname>/proof/`
-- `Creds_Tracker.md` — Copy flag UUIDs here manually after evidencr completes
+- `lootr.sh` / `lootr.ps1` — Run on the target to collect raw loot **before** running evidencr. Flag files will be in `loot/<hostname>/proof/`
+- `Creds_Tracker.md` — Update with flag UUIDs as part of step 4 above
 - `OffSec_Exam_Methodology_Complete.md` — Phase 18 covers the full flag → evidence → report workflow

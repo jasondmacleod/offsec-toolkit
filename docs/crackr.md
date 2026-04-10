@@ -36,7 +36,18 @@ crackr --hydra ssh --target 10.10.10.5 -C creds.txt  # combo file
 
 # Custom wordlist from target site
 crackr --cewl http://target.htb --cewl-mutate -q -f hashes.txt
+
+# Cracked passwords auto-append to $TOOLKIT_ROOT/creds.txt → feed to sprayr.sh --from-creds
 ```
+
+> [!important] **AD engagement Crack Loop**
+> ```bash
+> 1. crackr -q -f $TOOLKIT_ROOT/ad/DOMAIN/hashes/asreproast.txt    # AS-REP (mode 18200)
+> 2. crackr -q -f $TOOLKIT_ROOT/ad/DOMAIN/hashes/kerberoast.txt    # Kerberoast (mode 13100)
+> 3. # Cracked creds auto-saved to $TOOLKIT_ROOT/creds.txt
+> 4. sprayr.sh --from-creds                                      # spray everything → check next_steps.txt
+> 5. # REPEAT after every new hash source (secretsdump, mimikatz, Responder, etc.)
+> ```
 
 ---
 
@@ -240,6 +251,8 @@ crackr --cewl http://target.htb --cewl-depth 3 --cewl-min 6
 ---
 
 ## Hash Identification
+
+> [!tip] Looking for **Hydra** (online brute force) or **CeWL** (custom wordlists)? Jump up — they're above this table.
 
 Auto-detected from pattern matching. Handles SAM dump format (`user:rid:lm:ntlm:::`) and `/etc/shadow` format (`user:$X$...`) automatically.
 

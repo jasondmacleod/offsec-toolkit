@@ -19,6 +19,9 @@ Active Directory enumeration and attack-prep script. OffSec-focused, Kali-side o
 
 ---
 
+> [!tip] Don't know the domain name yet?
+> Quick null-session check: `nxc smb TARGET_IP` — the output shows the domain name.
+
 ## Usage
 
 ```bash
@@ -125,7 +128,7 @@ $TOOLKIT_ROOT/ad/<DOMAIN>/
 | 6 | BloodHound collection | Standard | bloodhound-ce-python `-c All`, produces zip for CE upload |
 | 7 | Share enumeration | Standard | nxc `--shares`, SYSVOL + NETLOGON browse, GPP/Groups.xml detection |
 | 8 | Session enumeration | Standard | nxc `--smb-sessions` + `--loggedon-users`, flags privileged sessions |
-| 9 | Spray cracked passwords | `--chain` | PTH spray with cracked hashes against all users × all hosts |
+| 9 | Spray cracked passwords | `--chain` | PTH spray with cracked hashes against all users × all hosts (standard mode: use `sprayr.sh --from-creds` instead) |
 
 > [!tip] `--quick` runs phases 1–3 only — use it for a fast initial sweep then decide whether to go deeper.
 
@@ -292,6 +295,16 @@ pip install bloodhound-ce
 
 ---
 
+## Related
+
+- [[Active_Directory]] — manual AD attack techniques
+- [[OffSec_AD_Operational_Addendum]] — engagement-day AD reference
+- [[OffSec_AD_Mental_Model_Bus_Review]] — decision-tree for AD attack paths
+- [[crackr]] — crack the hashes from `hashes/asreproast.txt` and `hashes/kerberoast.txt`
+- [[Active_Directory_PtH_PtT]] — use cracked hashes for lateral movement
+- [[Tunneling_Pivoting]] — pivot to reach internal DC
+
+
 ## `--chain` — Interactive AD Kill Chain
 
 Guided walkthrough mode. Presents each step with a Proceed/Skip/Quit prompt. Logs every step to `chain_log.txt` so you have a timestamped record for your report.
@@ -321,12 +334,3 @@ chain_log.txt entry format:
 ```
 
 ---
-
-## Related
-
-- [[Active_Directory]] — manual AD attack techniques
-- [[OffSec_AD_Operational_Addendum]] — engagement-day AD reference
-- [[OffSec_AD_Mental_Model_Bus_Review]] — decision-tree for AD attack paths
-- [[crackr]] — crack the hashes from `hashes/asreproast.txt` and `hashes/kerberoast.txt`
-- [[PtH_PtT]] — use cracked hashes for lateral movement
-- [[Tunneling_Pivoting]] — pivot to reach internal DC

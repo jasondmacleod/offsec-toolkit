@@ -1,285 +1,433 @@
 ---
 tags:
   - phase/enumeration
-  - phase/web
+  - topic/web
   - tool/webenum
   - tool/ffuf
-  - tool/whatweb
   - type/tool-docs
 ---
 
-# webenum.sh
+# webenum.sh — Usage Guide
 
-## What It Is
-Deep web enumeration wrapper designed to run **after** `recon.sh`. Where recon does a quick HTTP pass (gobuster with dirbuster-medium, nikto, whatweb), webenum goes deeper: larger wordlists, recursive fuzzing, vhost fuzzing, parameter discovery, and a structured summary report.
+Deep web enumeration wrapper that runs **after** `recon.sh`. Where recon does a quick HTTP pass (whatweb, gobuster with dirbuster-medium), webenum goes deeper: aggressive fingerprinting, larger wordlists, tech-stack-targeted extensions, recursive fuzzing, vhost discovery, and parameter fuzzing.
 
-> [!important] Enumeration only — no exploitation
-> OffSec compliant. Resume-safe — re-running skips completed phases.
+**Enumeration only — no exploitation. OffSec compliant.**
 
 ---
 
-## When to Use
-
-```
-recon.sh  →  found HTTP/HTTPS ports
-webenum.sh     →  go deeper on each one
-```
-
-Run webenum on every HTTP/HTTPS endpoint recon surfaces. If you hit a wall, re-run with `--deep`.
-
----
-
-## Usage
+## Setup (Do This Before engagement Day)
 
 ```bash
-# Standard run — covers 80% of cases
-./webenum.sh --url http://10.10.10.5
+chmod +x webenum.sh
+sudo mv webenum.sh /usr/local/bin/webenum
 
-# Pull URL directly from recon.sh output (auto-detects HTTP ports)
-./webenum.sh --from-recon 10.10.10.5
+# Verify required tools
+webenum --help
 
-# Non-standard port / HTTPS
-./webenum.sh --url http://10.10.10.5:8080
-./webenum.sh --url https://10.10.10.5:8443
+# Install dependencies if missing
+sudo apt install ffuf whatweb curl python3 seclists
+```
 
-# With vhost fuzzing (requires knowing the domain name)
-./webenum.sh --url http://10.10.10.5 --vhost target.htb
+**Required:** ffuf, curl, python3
+**Recommended:** whatweb (fingerprinting), seclists (better wordlists)
+**Graceful degradation:** Script continues if whatweb is missing. ffuf is the only hard requirement.
 
-# Deep mode — adds recursive fuzzing, parameter discovery, raft-large wordlist
-./webenum.sh --url http://10.10.10.5 --deep
+### Wordlist Check
 
-# Full — deep + vhost (use when stuck)
-./webenum.sh --url http://10.10.10.5 --deep --vhost target.htb
+The script auto-selects the best available wordlist with fallback:
 
-# Custom output root
-./webenum.sh --url http://10.10.10.5 --root ~/pg
+| Priority | Wordlist | Lines | Source |
+|----------|----------|-------|--------|
+| 1st | `raft-medium-directories.txt` | ~30k | seclists |
+| 2nd | `directory-list-2.3-medium.txt` | ~220k | dirbuster |
+| 3rd | `common.txt` | ~4.6k | dirb (always on Kali) |
 
-# Throttle on unstable targets
-./webenum.sh --url http://10.10.10.5 --threads 20 --rate 50
+If seclists isn't installed: `sudo apt install seclists`
+
+---
+
+## engagement Day Workflow
+
+### Step 1: recon.sh Finds HTTP → Run Webenum
+
+```bash
+# Fastest: auto-detect URL from recon output
+webenum --from-recon 192.168.50.100
+
+# Or specify URL directly
+webenum --url http://192.168.50.100
+
+# Non-standard port
+webenum --url http://192.168.50.100:8080
+
+# HTTPS
+webenum --url https://192.168.50.100
+
+# HTTPS non-standard port
+webenum --url https://192.168.50.100:8443
+```
+
+This runs Phases 1, 2, 4 (if vhost specified), and 6 (summary).
+
+Before scanning, the script **automatically checks HTTP connectivity** — it curls the target URL and reports the response code and size. If the target isn't responding (code `000`), you'll see an error with troubleshooting hints before any scans run. If it returns a 4xx/5xx, you'll get a warning that the URL might be wrong but scanning will proceed.
+
+### Step 2: Read the Summary First
+
+```bash
+cat $TOOLKIT_ROOT/web/192.168.50.100/artifacts/web/summary/summary.md
+cat $TOOLKIT_ROOT/web/192.168.50.100/artifacts/web/summary/quick_wins.txt
+```
+
+`summary.md` is structured: tech stack → headers → sensitive paths → directory findings → vhosts → source hints. `quick_wins.txt` gives you just the high-value lines grouped by category.
+
+### Step 3: Found a Domain Name? → Vhost Fuzz
+
+If you discover a domain name (e.g. from a redirect, certificate, or HTML source), re-run with vhost fuzzing:
+
+```bash
+# Add the domain to /etc/hosts first
+echo "192.168.50.100 target.htb" | sudo tee -a /etc/hosts
+
+# Fuzz for virtual hosts
+webenum --url http://192.168.50.100 --vhost target.htb
+```
+
+If vhosts are found, the script prints `/etc/hosts` entries to add. Then run webenum again for each discovered vhost:
+
+```bash
+echo "192.168.50.100 dev.target.htb" | sudo tee -a /etc/hosts
+webenum --url http://dev.target.htb
+```
+
+### Step 4: Stuck? → Go Deep
+
+```bash
+webenum --url http://192.168.50.100 --deep
+```
+
+Deep mode adds:
+- **Phase 3:** Recursive fuzzing on every 200/301/302 directory found in Phase 2
+- **Phase 5:** GET parameter discovery on found endpoints (root + script-like files)
+- **Phase 2 extra:** Also runs `raft-large-directories.txt` (~120k entries)
+
+### Step 5: Combine with Vhost + Deep
+
+```bash
+# The full kitchen sink — use when standard + deep haven't cracked it
+webenum --url http://192.168.50.100 --deep --vhost target.htb
 ```
 
 ---
 
-## Options
+## Quick Reference — All Options
 
-| Flag | Default | Description |
-|------|---------|-------------|
-| `--url URL` | required* | Target URL including scheme |
-| `--from-recon IP` | — | Auto-detect HTTP URLs from `$TOOLKIT_ROOT/recon/<IP>/` |
-| `--deep` | off | Recursive fuzzing + parameter discovery + raft-large |
-| `--vhost DOMAIN` | off | Vhost fuzzing against base domain (e.g. `target.htb`) |
-| `--root DIR` | `$TOOLKIT_ROOT/web` | Output root directory |
-| `--threads N` | 40 | ffuf thread count |
-| `--rate N` | 0 (unlimited) | Max ffuf requests/sec — throttle for unstable targets |
+| Flag | Purpose | Example |
+|------|---------|---------|
+| `--url URL` | Target URL (required*) | `--url http://10.10.10.5:8080` |
+| `--from-recon IP` | Auto-detect URL from recon output | `--from-recon 10.10.10.5` |
+| `--deep` | Enable recursive fuzzing + parameter discovery | `--deep` |
+| `--vhost DOMAIN` | Enable vhost fuzzing | `--vhost target.htb` |
+| `--root DIR` | Custom output root (default: `$TOOLKIT_ROOT/web`) | `--root ~/pg` |
+| `--threads N` | ffuf thread count (default: 40) | `--threads 20` |
+| `--rate N` | Max requests/sec, 0=unlimited (default: 0) | `--rate 100` |
+| `-h, --help` | Show help | |
 
 *`--url` or `--from-recon` required.
 
-> [!note] No scheme in URL? Script assumes `http://` and warns you.
+**Bare URL also works:** `webenum http://10.10.10.5` (auto-adds `http://` if no scheme)
+
+---
+
+## What Each Phase Does
+
+### Phase 1 — Fingerprinting
+
+| Check | Output File | What to Look For |
+|-------|-------------|------------------|
+| whatweb aggressive (-a 3) | `fingerprint/whatweb.txt` | CMS, language, framework, OS |
+| whatweb verbose | `fingerprint/whatweb_verbose.txt` | Plugin details, version strings |
+| HTTP headers (follows redirects) | `fingerprint/headers.txt` | Server, X-Powered-By, cookies, auth type |
+| Homepage source (first 500 lines) | `fingerprint/homepage_source.html` | Comments, hidden paths, JS files |
+| Source hint extraction | `fingerprint/source_hints.txt` | HTML comments, relative paths, emails, versions |
+| robots.txt | `fingerprint/robots.txt` | Disallowed paths = interesting paths |
+| sitemap.xml | `fingerprint/sitemap.xml` | Endpoint discovery |
+| security.txt | `fingerprint/security_txt.txt` | Contact info, scope hints |
+| 27 sensitive path probes | `fingerprint/sensitive_paths.txt` | .git, .env, phpinfo, admin panels, APIs |
+
+**Sensitive paths probed:** `.git/HEAD`, `.git/config`, `.env`, `.htaccess`, `.htpasswd`, `web.config`, `config.php`, `wp-config.php`, `phpinfo.php`, `.DS_Store`, `backup.zip`, `backup.tar.gz`, `/admin`, `/administrator`, `/login`, `/wp-admin`, `/manager`, `/phpmyadmin`, `/adminer`, `/console`, `/api`, `/api/v1`, `/swagger.json`, `/swagger-ui`, `/openapi.json`, `/_profiler`, `/debug`
+
+### Phase 2 — Directory & File Fuzzing
+
+**Auto-detects tech stack** from whatweb output and selects extensions:
+
+| Detected Stack | Extensions Fuzzed |
+|---------------|-------------------|
+| Windows (IIS/ASP.NET) | asp, aspx, ashx, asmx, config, txt, bak |
+| Java (Tomcat/Spring/Jenkins) | jsp, jspx, do, action, xml, properties, war |
+| PHP (WordPress/Joomla/Drupal) | php, html, txt, bak, old, conf, xml, json, sql, log, zip |
+| Generic (unknown) | php, html, txt, js, json, xml, conf, bak, old, zip, tar, gz, sql, log, env |
+
+Runs:
+- **2a:** Directory fuzzing with raft-medium (or fallback)
+- **2b:** File fuzzing with tech-targeted extensions
+- **2c:** (deep only) Directory fuzzing with raft-large
+
+Output: `content/dirs_medium.json`, `content/dirs_medium.txt`, `content/files_medium.json`, `content/files_medium.txt`
+
+**ffuf match codes:** 200, 201, 204, 301, 302, 307, 401, 403, 405
+**No `-ac` (autocalibrate):** Intentionally omitted — it silently drops valid results on some targets by over-filtering. Uses explicit `-mc` instead.
+
+### Phase 3 — Recursive Fuzzing (--deep only)
+
+Parses Phase 2 JSON for 200/301/302 results, then fuzzes inside each discovered directory with the same wordlist + extensions. Capped at 20 directories.
+
+Output: `content/recursive/<dir_name>.json` + `.txt`
+
+### Phase 4 — VHost Fuzzing (--vhost only)
+
+Gets a baseline response size from a nonexistent host (`nonexistent12345.domain`), then fuzzes `Host: FUZZ.domain` headers, filtering out responses matching the baseline size.
+
+Output: `vhosts/vhosts.json`, `vhosts/vhosts.txt`, `vhosts/hosts_entries.txt`
+
+### Phase 5 — Parameter Discovery (--deep only)
+
+Fuzzes `?FUZZ=testvalue` on discovered endpoints (root + 200-status script files like `.php`, `.asp`, `.jsp`). Filters by baseline response size. Uses burp-parameter-names.txt wordlist. Capped at 15 endpoints.
+
+Output: `params/params_<endpoint>.json` + `.txt`
+
+### Phase 6 — Summary Generation
+
+Aggregates everything into `summary/summary.md` (structured report) and `summary/quick_wins.txt` (high-value lines only, grouped by category).
 
 ---
 
 ## Output Structure
 
 ```
-$TOOLKIT_ROOT/web/<host>_<port>_<proto>/artifacts/web/
+$TOOLKIT_ROOT/web/<host>/artifacts/web/
 ├── fingerprint/
-│   ├── whatweb.txt              # WhatWeb aggressive scan
-│   ├── whatweb_verbose.txt      # WhatWeb verbose plugin output
-│   ├── headers.txt              # Full HTTP headers (follows redirects)
+│   ├── whatweb.txt              # Tech stack identification
+│   ├── whatweb_verbose.txt      # Detailed plugin output
+│   ├── headers.txt              # Full HTTP response headers
 │   ├── homepage_source.html     # First 500 lines of homepage
-│   ├── source_hints.txt         # HTML comments, relative paths, emails, version strings
-│   ├── robots.txt               # robots.txt (or note if absent)
-│   ├── sitemap.xml              # sitemap.xml (or note if absent)
-│   ├── security_txt.txt         # /.well-known/security.txt
-│   └── sensitive_paths.txt      # Probe results for common sensitive paths
+│   ├── source_hints.txt         # Comments, paths, emails, versions
+│   ├── robots.txt               # Disallowed paths
+│   ├── sitemap.xml              # Endpoint map
+│   ├── security_txt.txt         # Security contact info
+│   └── sensitive_paths.txt      # ★ Probe results for 27 common paths
 ├── content/
-│   ├── dirs_medium.json/.txt    # raft-medium directory fuzzing
-│   ├── files_medium.json/.txt   # raft-medium file fuzzing (with extensions)
-│   ├── dirs_large.json/.txt     # raft-large directories (--deep only)
-│   └── recursive/               # Per-directory recursive fuzzing (--deep only)
-├── vhosts/
-│   ├── vhosts.json/.txt         # Vhost fuzzing results
-│   └── hosts_entries.txt        # Ready-to-paste /etc/hosts entries
-├── params/                      # GET parameter discovery per endpoint (--deep only)
+│   ├── dirs_medium.json         # ffuf raw JSON (for tooling)
+│   ├── dirs_medium.txt          # ★ Human-readable directory findings
+│   ├── files_medium.json
+│   ├── files_medium.txt         # ★ Human-readable file findings
+│   ├── dirs_large.json/txt      # (deep mode only)
+│   └── recursive/               # (deep mode only)
+│       └── <dirname>.json/txt
+├── vhosts/                      # (--vhost only)
+│   ├── vhosts.json/txt
+│   └── hosts_entries.txt        # ★ Copy-paste into /etc/hosts
+├── params/                      # (deep mode only)
+│   └── params_<endpoint>.json/txt
 ├── summary/
-│   ├── summary.md               # ★ Read this first — structured findings report
-│   └── quick_wins.txt           # High-value lines only (sensitive paths, 200s, auth, vhosts)
-└── progress.log                 # Phase tracking (START/DONE/FAIL/SKIP)
+│   ├── summary.md               # ★ READ THIS FIRST
+│   └── quick_wins.txt           # ★ High-value lines, grouped
+└── progress.log                 # Phase completion tracking
+```
+
+**Files marked ★ are your primary engagement-day reads.**
+
+> [!warning] After webenum completes — do NOT:
+> - Re-run gobuster or ffuf manually with the same wordlist — webenum already did this
+> - Re-run whatweb or curl headers — already in `fingerprint/`
+> - Re-probe sensitive paths — already in `sensitive_paths.txt`
+>
+> **Only go manual when:**
+> - Results suggest a specific exploit path (login page → SQLi, param → LFI)
+> - You need authenticated fuzzing (webenum has no creds)
+> - You need to filter soft 404s with `-fs` that webenum couldn't auto-detect
+> - `--deep` mode hasn't been tried yet
+
+---
+
+## engagement Decision Tree
+
+```
+recon.sh found HTTP?
+│
+├── Run: webenum --url http://TARGET
+│   └── Read summary/summary.md + quick_wins.txt
+│
+├── Found domain name? (redirect, cert, source)
+│   ├── Add to /etc/hosts
+│   └── Run: webenum --url http://TARGET --vhost domain.htb
+│       └── Found vhosts? Add each to /etc/hosts, run webenum per vhost
+│
+├── Nothing obvious from standard run?
+│   └── Run: webenum --url http://TARGET --deep
+│       ├── Check recursive findings for hidden paths
+│       └── Check param findings for injectable parameters
+│
+├── Target seems slow / rate-limited?
+│   └── Run: webenum --url http://TARGET --threads 10 --rate 50
+│
+└── Multiple HTTP ports on same target?
+    └── Run webenum separately for each:
+        webenum --url http://TARGET:80
+        webenum --url http://TARGET:8080
+        webenum --url https://TARGET:443
 ```
 
 ---
 
-## Key Output Files (Check in This Order)
+## Interpreting Results
+
+### sensitive_paths.txt — What Each Code Means
+
+| Code | Meaning | Action |
+|------|---------|--------|
+| `[200]` | Page exists and accessible | Open in browser, investigate immediately |
+| `[301/302]` | Redirect | Follow with `curl -L`, check destination |
+| `[401]` | Auth required | Try default creds, check for bypass |
+| `[403]` | Forbidden | Try different extensions, case variations, path traversal |
+
+### High-Value Sensitive Path Hits
+
+| Path | Why It Matters |
+|------|---------------|
+| `/.git/HEAD` | Full source code download via git-dumper |
+| `/.env` | Cleartext credentials, API keys, DB connection strings |
+| `/phpinfo.php` | Full PHP config, file paths, loaded modules |
+| `/wp-config.php` | WordPress DB credentials |
+| `/backup.zip` | Source code leak |
+| `/swagger.json` | Full API endpoint map |
+| `/console` | Python Werkzeug debugger (RCE if PIN bypass) |
+| `/adminer` | Database admin panel |
+
+### ffuf Output Columns
+
+```
+URL                                    | Status |     Size |  Words | Lines
+http://10.10.10.5/admin               |    200 |     1234 |     56 |    12
+```
+
+- **Size/Words/Lines:** Use to distinguish real pages from custom 404s. If many results have the same size, they're likely false positives — re-run with `-fs <size>` to filter.
+
+---
+
+## Common engagement Patterns
+
+### WordPress Detected
+```bash
+# webenum Phase 1 whatweb shows WordPress
+# Follow up with:
+wpscan --url http://TARGET --enumerate ap,at,u --plugins-detection aggressive
+```
+
+### Login Page Found
+```bash
+# Check for default creds, then look for:
+# - SQL injection in login form
+# - Password reset functionality
+# - User enumeration via error messages
+# - Timing-based user enumeration
+```
+
+### API Endpoint Found (/api, /swagger.json)
+```bash
+# Manually explore the API:
+curl -s http://TARGET/api/ | python3 -m json.tool
+curl -s http://TARGET/swagger.json | python3 -m json.tool
+# Look for unauthenticated endpoints, IDOR, parameter manipulation
+```
+
+### .git Exposed
+```bash
+# Dump the entire repository:
+git-dumper http://TARGET/.git/ ./git-dump
+cd git-dump && git log --oneline
+git diff HEAD~5  # check recent changes for creds
+```
+
+---
+
+## Resume & Re-run Behavior
+
+The script tracks completed phases in `progress.log`. Re-running safely skips finished work:
 
 ```bash
-# Always start here
-cat $TOOLKIT_ROOT/web/<target>/artifacts/web/summary/summary.md
-cat $TOOLKIT_ROOT/web/<target>/artifacts/web/summary/quick_wins.txt
+# First run — completes phases 1, 2, 6
+webenum --url http://TARGET
 
-# Sensitive path probes (200/301/302/401/403)
-cat $TOOLKIT_ROOT/web/<target>/artifacts/web/fingerprint/sensitive_paths.txt
+# Later — add vhost fuzzing (phases 1, 2 skipped, phase 4 runs, 6 regenerates)
+webenum --url http://TARGET --vhost target.htb
 
-# Directory/file hits
-cat $TOOLKIT_ROOT/web/<target>/artifacts/web/content/dirs_medium.txt
-cat $TOOLKIT_ROOT/web/<target>/artifacts/web/content/files_medium.txt
-
-# Vhosts (add to /etc/hosts)
-cat $TOOLKIT_ROOT/web/<target>/artifacts/web/vhosts/hosts_entries.txt
-
-# Source code clues
-cat $TOOLKIT_ROOT/web/<target>/artifacts/web/fingerprint/source_hints.txt
-cat $TOOLKIT_ROOT/web/<target>/artifacts/web/fingerprint/robots.txt
-
-# Technology stack
-cat $TOOLKIT_ROOT/web/<target>/artifacts/web/fingerprint/whatweb.txt
-cat $TOOLKIT_ROOT/web/<target>/artifacts/web/fingerprint/headers.txt
+# Later — go deep (phases 1, 2 skipped, phases 3, 5 run, 6 regenerates)
+webenum --url http://TARGET --deep
 ```
 
----
-
-## Phases
-
-| Phase | Name | Mode | What It Does |
-|-------|------|------|-------------|
-| 1 | Fingerprinting | Standard | whatweb (aggressive + verbose), full headers, homepage source, source hints (comments/paths/emails/versions), robots.txt, sitemap.xml, security.txt, sensitive path probes |
-| 2 | Content fuzzing | Standard | ffuf dir fuzzing (raft-medium), ffuf file fuzzing with tech-matched extensions, raft-large dirs (deep only) |
-| 3 | Recursive fuzzing | Deep only | ffuf on every 200/301/302 directory from phase 2, capped at 20 dirs |
-| 4 | Vhost fuzzing | `--vhost` only | Baseline-filtered ffuf, outputs ready-to-paste /etc/hosts entries |
-| 5 | Parameter discovery | Deep only | GET param fuzzing on 200 OK endpoints (scripts/pages only), baseline-filtered |
-| 6 | Summary | Always | summary.md + quick_wins.txt |
-
----
-
-## Tech-Stack Extension Selection
-
-Script auto-detects from whatweb output and picks extensions accordingly:
-
-| Detected Stack | Extensions Used |
-|----------------|----------------|
-| Windows / IIS / ASP.NET | `asp, aspx, ashx, asmx, config, txt, bak` |
-| Java / Tomcat / Spring / Jenkins | `jsp, jspx, do, action, xml, properties, war` |
-| PHP / WordPress / Joomla | `php, html, txt, bak, old, conf, xml, json, sql, log, zip` |
-| Generic / unknown | `php, html, txt, js, json, xml, conf, bak, old, zip, tar, gz, sql, log, env` |
-
----
-
-## Sensitive Paths Probed (Phase 1)
-
-These are hit directly before any fuzzing — fast wins:
-
-```
-/.git/HEAD  /.git/config  /.env  /.htaccess  /.htpasswd
-/web.config  /config.php  /configuration.php  /wp-config.php
-/phpinfo.php  /.DS_Store  /backup.zip  /backup.tar.gz
-/admin  /administrator  /login  /wp-admin  /manager
-/phpmyadmin  /adminer  /console  /api  /api/v1
-/swagger.json  /swagger-ui  /openapi.json
-/_profiler  /debug  /.well-known
-```
-
-> [!tip] 401/403 on `/admin` or `/console` is still a finding — flag it for auth bypass attempts.
-
----
-
-## Vhost Workflow
+To force a full re-run, delete the output directory:
 
 ```bash
-# 1. Run with --vhost
-./webenum.sh --url http://10.10.10.5 --vhost target.htb
-
-# 2. Check discovered vhosts
-cat $TOOLKIT_ROOT/web/.../vhosts/hosts_entries.txt
-# Output: 10.10.10.5  dev.target.htb
-
-# 3. Add to /etc/hosts
-echo "10.10.10.5  dev.target.htb" >> /etc/hosts
-
-# 4. Re-run webenum on each discovered vhost
-./webenum.sh --url http://dev.target.htb --vhost target.htb
-```
-
-Baseline filtering: script requests a random nonexistent vhost first, measures response size, then filters that size out of results. Avoids false positives from catch-all responses.
-
----
-
-## ffuf Design Decisions
-
-**`-ac` (autocalibration) is intentionally disabled.** It silently drops valid results on some targets by over-filtering. The script uses explicit `-mc 200,201,204,301,302,307,401,403,405` instead.
-
-**`-v` (verbose) is intentionally disabled.** It floods output and breaks grep pipelines.
-
-**JSON output + Python parser.** All ffuf runs save `.json` alongside `.txt`. The Python converter produces a clean sortable table (status / size / words / lines). Recursive and parameter phases read the JSON directly for reliable URL extraction.
-
----
-
-## Resume / Re-run
-
-```bash
-# Safe re-run — skips completed phases
-./webenum.sh --url http://10.10.10.5
-
-# Force full re-run
-rm $TOOLKIT_ROOT/web/<target>/artifacts/web/progress.log
-./webenum.sh --url http://10.10.10.5
+rm -rf $TOOLKIT_ROOT/web/192.168.50.100/
+webenum --url http://192.168.50.100
 ```
 
 ---
 
 ## Troubleshooting
 
+**ffuf returns thousands of results (false positives):**
+The target is returning the same response for everything. Find the common response size from the output, then manually re-run ffuf with a size filter:
 ```bash
-# Target not responding
-curl -sk http://10.10.10.5        # sanity check — does curl see anything?
-curl -skIL http://10.10.10.5      # check redirect chain
+ffuf -u http://TARGET/FUZZ -w /path/to/wordlist -mc 200,301,302 -fs 1234 -t 40
+```
 
-# Getting no results from ffuf — check baseline
-# Possible soft 404: everything returns 200 with same size
-# → ffuf's -ac would help here, but may also over-filter
-# → Manually check: curl -sk http://IP/nonexistentXXX | wc -c
+**Scan is too slow over VPN:**
+Lower threads and add rate limit:
+```bash
+webenum --url http://TARGET --threads 10 --rate 50
+```
 
-# Rate-limiting / connection resets
-./webenum.sh --url http://10.10.10.5 --threads 10 --rate 30
+**SecLists not installed:**
+```bash
+sudo apt install seclists
+```
+The script falls back to `/usr/share/wordlists/dirb/common.txt` (always on Kali) but coverage is much lower.
 
-# Stuck — go deeper
-./webenum.sh --url http://10.10.10.5 --deep
+**VHost fuzzing finds nothing:**
+The baseline filtering may be too aggressive. Check `vhosts/vhosts.json` manually, or re-run ffuf with different filters:
+```bash
+ffuf -u http://TARGET -H "Host: FUZZ.target.htb" -w /usr/share/seclists/Discovery/DNS/subdomains-top1million-5000.txt -mc 200 -t 40
+```
 
-# Check what ran
-cat $TOOLKIT_ROOT/web/<target>/artifacts/web/progress.log
-grep 'FAIL' webenum/<target>/artifacts/web/progress.log
+**Phase skipped (already done):**
+Delete `progress.log` or the specific output directory:
+```bash
+rm $TOOLKIT_ROOT/web/TARGET/artifacts/web/progress.log
 ```
 
 ---
 
-## Required Tools
+## Configuration (Edit in Script)
 
-```bash
-# Required (script exits if missing)
-sudo apt install ffuf curl python3
-
-# Strongly recommended
-sudo apt install whatweb seclists
-```
-
-**Wordlists used:**
-
-| Wordlist | Used For |
-|----------|----------|
-| `/usr/share/seclists/Discovery/Web-Content/raft-medium-directories.txt` | Directory fuzzing (primary) |
-| `/usr/share/seclists/Discovery/Web-Content/raft-medium-files.txt` | File fuzzing |
-| `/usr/share/seclists/Discovery/Web-Content/raft-large-directories.txt` | Deep dir fuzzing (`--deep`) |
-| `/usr/share/wordlists/dirbuster/directory-list-2.3-medium.txt` | Dir fuzzing fallback |
-| `/usr/share/wordlists/dirb/common.txt` | Fast fallback |
-| `/usr/share/seclists/Discovery/DNS/subdomains-top1million-5000.txt` | Vhost fuzzing |
-| `/usr/share/seclists/Discovery/Web-Content/burp-parameter-names.txt` | Parameter discovery (`--deep`) |
-
-> [!warning] If raft-medium is missing, script falls back to dirbuster-medium then dirb/common.txt. Install seclists for best results: `sudo apt install seclists`
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `OUTPUT_ROOT` | `$TOOLKIT_ROOT/web` | Base output directory |
+| `THREADS` | `40` | ffuf thread count |
+| `FFUF_TIMEOUT` | `30` | Per-request timeout (seconds) |
+| `FFUF_RATE` | `0` | Requests/sec limit (0 = unlimited) |
+| `PHASE_CONTENT_TIMEOUT` | `900` (15 min) | Max time per ffuf wordlist run |
+| `PHASE_RECURSIVE_TIMEOUT` | `600` (10 min) | Max time per recursive directory |
+| `PHASE_VHOST_TIMEOUT` | `600` (10 min) | Max time for vhost fuzzing |
+| `PHASE_FINGERPRINT_TIMEOUT` | `120` (2 min) | Max time for sensitive path probes |
 
 ---
 
 ## Related
 
-- [[recon]] — run first; webenum goes deeper on what recon finds
-- [[Web_App]] — manual web exploitation techniques
-- [[Burp_Suite]] — manual testing of findings from webenum
-- [[SQL_Injection]] — parameter discovery findings → test for SQLi
-- [[Active_Recon]] — if vhosts found, DNS enumeration to find more
+- [[recon_usage]] — run this first to find HTTP services
+- [[Web_App]] — web attack vectors after enumeration
+- [[SQL_Injection]] — if webenum finds login/search forms
+- [[Burp_Suite]] — manual testing after webenum finds endpoints
+- [[OffSec_Methodology]] — where web enum fits in the attack chain
+- [[Reverse_Shells]] — use Penelope with -O flag after exploitation

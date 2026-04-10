@@ -114,184 +114,34 @@ loot\<hostname>\
 | `files` | Yes | Yes | Surface privesc vectors, writable paths, backups, scripts, and interesting files |
 | `procs` | Yes | No | Linux-only deeper process/service pass for manual follow-up |
 
-## What Each Script Actually Collects
+## What Each Phase Produces
+
+The scripts handle all collection logic. This section tells you **what to look for in the output**, not what the scripts do internally.
 
 ### Linux — `lootr.sh`
 
-### `proof`
+| Phase | Key output files | What you're looking for |
+|-------|-----------------|------------------------|
+| `proof` | `proof/local.txt`, `proof/proof.txt` | Flags — `cat`, screenshot, note path |
+| `system` | `system/sudo_rights.txt`, `system/whoami.txt`, `system/id.txt` | sudo rights, group memberships, privilege context |
+| `creds` | `creds/shadow_hashes.txt`, `creds/key_*`, `creds/config_files_with_creds.txt`, `creds/kerberos.txt` | Hashes to crack, SSH keys to reuse, cleartext creds, ticket material |
+| `network` | `network/internal_listeners.txt`, `network/reachable_subnets.txt`, `network/hosts.txt` | 127.x services to tunnel, new subnets/hosts to target |
+| `files` | `files/suid_binaries.txt`, `files/capabilities.txt`, `files/cron_jobs.txt`, `files/recently_modified.txt` | GTFOBins candidates, cap_setuid, writable cron scripts, fresh changes |
+| `procs` | `procs/root_processes.txt`, `procs/services.txt` | Root-owned services to abuse, pspy candidates |
 
-```bash
-# Finds and copies proof material while also printing it to screen
-local.txt
-proof.txt
-```
-
-### `system`
-
-```bash
-# Gives host and privilege context for immediate manual follow-up
-whoami
-id
-groups
-sudo -ln
-uname -a
-/os-release
-users with shells
-logged-in users
-installed packages
-environment variables
-```
-
-### `creds`
-
-```bash
-# Prioritizes reusable auth material and files likely to contain credentials
-/etc/passwd
-/etc/shadow
-shadow_hashes.txt
-SSH private keys
-authorized_keys locations
-.bash_history / .zsh_history / .sh_history
-.env files
-wp-config.php
-.netrc
-.pgpass
-.my.cnf
-.aws/credentials
-.docker/config.json
-NetworkManager PSKs
-Kerberos ticket data
-config files matching password/secret/token patterns
-```
-
-### `network`
-
-```bash
-# Builds pivot picture and internal exposure view
-ip addr / ifconfig
-ip route / route -n
-ip neigh / arp -a
-ss -tlnp / netstat -tlnp
-127.x internal listeners
-/etc/hosts
-/etc/resolv.conf
-iptables
-reachable subnets from routes
-```
-
-### `files`
-
-```bash
-# Focuses on classic Linux privesc and juicy file discovery
-SUID binaries
-world-writable files in sensitive dirs
-recently modified files
-cron jobs
-file capabilities
-backup files
-database files
-git repositories
-```
-
-### `procs`
-
-```bash
-# Slower but useful for privilege and service context
-ps aux
-root-owned processes
-running services
-root-owned world-writable tmp files
-pspy reminder only
-```
+> For exploitation steps on SUID, capabilities, cron, and other Linux privesc vectors → [[Linux_PrivEsc]]
 
 ### Windows — `lootr.ps1`
 
-### `proof`
+| Phase | Key output files | What you're looking for |
+|-------|-----------------|------------------------|
+| `proof` | `proof\local.txt`, `proof\proof.txt` | Flags — `type`, screenshot, note path |
+| `system` | `system\systeminfo.txt`, `system\whoami.txt`, `system\admins.txt` | Patch level, admin group membership, installed software |
+| `creds` | `creds\privileges.txt`, `creds\cmdkey.txt`, `creds\autologon.txt`, `creds\wifi_passwords.txt`, `creds\putty_sessions.txt` | SeImpersonate → potato, stored creds → runas, cleartext passwords |
+| `network` | `network\internal_listeners.txt`, `network\shares.txt`, `network\mapped_drives.txt`, `network\hosts.txt` | 127.0.0.1 services to tunnel, SMB shares to loot, lateral targets |
+| `files` | `files\always_install_elevated.txt`, `files\unquoted_service_paths.txt`, `files\writable_service_binaries.txt`, `files\writable_path_dirs.txt`, `files\dll_hijack_candidates.txt` | Direct privesc vectors — each maps to a known technique |
 
-```powershell
-# Checks common OffSec-relevant proof locations first, then falls back to deeper search
-C:\Users\*\Desktop\local.txt
-C:\Users\*\Desktop\proof.txt
-C:\local.txt
-C:\proof.txt
-C:\xampp\htdocs\local.txt
-C:\inetpub\wwwroot\proof.txt
-```
-
-### `system`
-
-```powershell
-# Builds host, user, admin, software, process, and task context
-systeminfo
-whoami /all
-Get-LocalUser
-Get-LocalGroup
-Administrators group membership
-installed software from registry hives
-Get-Process
-non-Microsoft scheduled tasks
-running services
-startup items
-hotfixes
-drives / volumes
-```
-
-### `creds`
-
-```powershell
-# Mix of direct credential collection and privilege checks that often drive Windows escalation
-PowerShell history files
-cmdkey /list
-registry AutoLogon values
-unattend.xml and sysprep files
-web.config / app.config / .ini / .txt pattern searches
-SAM / SYSTEM / SECURITY hive access checks
-RDCMan settings
-WinSCP.ini
-FileZilla configs
-PuTTY sessions
-.git-credentials
-AWS credentials
-Azure token/profile files
-.ovpn files
-Wi-Fi profiles with key material
-browser credential path notes
-whoami /priv export
-SeImpersonatePrivilege
-SeAssignPrimaryTokenPrivilege
-SeBackupPrivilege
-SeDebugPrivilege
-```
-
-### `network`
-
-```powershell
-# Focuses on host networking, local-only listeners, and pivot clues
-Get-NetIPAddress / ipconfig
-Get-NetRoute / route print
-Get-NetNeighbor / arp -a
-Get-NetTCPConnection / netstat -ano
-127.0.0.1 listeners
-hosts file
-DNS servers
-firewall profiles
-PSDrives and mapped drives
-SMB shares
-```
-
-### `files`
-
-```powershell
-# Focuses on high-value Windows privesc checks
-AlwaysInstallElevated
-writable PATH directories
-writable service binaries
-unquoted service paths
-recently modified files
-backup / DB files
-scripts in key locations
-DLL hijack candidates via writable process dirs
-```
+> For exploitation steps on AlwaysInstallElevated, service abuse, potato attacks, and other Windows privesc vectors → [[Windows_PrivEsc]]
 
 ## Review Order After Execution
 
@@ -358,6 +208,29 @@ Get-Content "$ROOT\network\mapped_drives.txt"
 Get-Content "$ROOT\network\hosts.txt"
 ```
 
+## Post-Collection Action Loop
+
+> [!important] Do Not Let Findings Sit
+> Every lootr finding maps to an immediate next action. If you finish reviewing and haven't acted on anything yet, you wasted the collection.
+
+| Finding | Immediate action |
+|---------|-----------------|
+| Flags found | `cat`/`type`, screenshot with `whoami` and path, note in report — **do this first** |
+| Shadow hashes | Feed to `crackr.sh` now |
+| SSH keys | Test against every other known host now |
+| Stored creds (cmdkey, autologon, wifi, cleartext) | Test reuse now — feed to `sprayr.sh` if AD context |
+| Kerberos tickets | Import and test with `impacket` tools now |
+| SeImpersonatePrivilege | Potato attack now → [[Windows_PrivEsc]] |
+| SeBackupPrivilege / SeDebugPrivilege | Exploit via known paths now → [[Windows_PrivEsc]] |
+| AlwaysInstallElevated | MSI payload now → [[Windows_PrivEsc]] |
+| Unquoted service paths / writable service binaries | Service abuse now → [[Windows_PrivEsc]] |
+| SUID / capabilities hits | Check GTFOBins now → [[Linux_PrivEsc]] |
+| Writable cron jobs | Inject payload now → [[Linux_PrivEsc]] |
+| sudo rights | Check GTFOBins / sudo abuse now → [[Linux_PrivEsc]] |
+| Internal listeners on 127.x | Tunnel with `pivotr.sh` now |
+| New subnets / hosts discovered | Add to target list, scan with `recon.sh` now |
+| SMB shares / mapped drives | Enumerate for creds and data now |
+
 ## When To Use Which Mode
 
 | Situation | Linux | Windows |
@@ -368,9 +241,6 @@ Get-Content "$ROOT\network\hosts.txt"
 | Need pivot data | `--phase network` | `-Phase network` |
 | Need privesc vectors | `--phase files` and maybe `--phase procs` | `-Phase files` |
 | Want full host picture for note-taking | full run | full run |
-
-> [!tip] Workflow
-> Every new credential found should feed directly into your credential reuse workflow. For AD or multi-host situations, that means immediate validation/spraying with your normal process. Do not let harvested creds sit untested.
 
 ## Common Operator Patterns
 
@@ -415,16 +285,6 @@ powershell -ep bypass -File .\lootr.ps1 -OutDir C:\Windows\Temp\loot
 > The first files worth reviewing are usually:
 > Linux: `summary.txt`, `shadow_hashes.txt`, SSH keys, `sudo_rights.txt`, `capabilities.txt`, `internal_listeners.txt`.
 > Windows: `summary.txt`, `always_install_elevated.txt`, `privileges.txt`, `autologon.txt`, `cmdkey.txt`, `wifi_passwords.txt`, `unquoted_service_paths.txt`.
-
-## Quick Reference
-
-| Goal | Best phase | High-value files |
-|------|------|------|
-| Get flags fast | `proof` | `proof/*` |
-| Find creds to reuse | `creds` | Linux: `shadow_hashes.txt`, `key_*`; Windows: `cmdkey.txt`, `autologon.txt`, `wifi_passwords.txt` |
-| Find local privesc | `files` | Linux: `suid_binaries.txt`, `capabilities.txt`, `cron_jobs.txt`; Windows: `always_install_elevated.txt`, `unquoted_service_paths.txt`, `writable_service_binaries.txt` |
-| Find pivot paths | `network` | `internal_listeners.txt`, routes, shares, mapped drives, hosts |
-| Build host notes | `system` | user/group/process/service/software context |
 
 ## Related
 
