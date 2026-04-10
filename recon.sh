@@ -240,8 +240,11 @@ is_valid_ip() {
         done
         return 0
     elif [[ "$ip" =~ ^[a-zA-Z0-9]([a-zA-Z0-9\-]*[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9\-]*[a-zA-Z0-9])?)*$ ]]; then
-        # Hostname format — allow it
-        return 0
+        # Hostname format — must resolve via DNS or /etc/hosts
+        if getent hosts "$ip" >/dev/null 2>&1; then
+            return 0
+        fi
+        return 1
     fi
     return 1
 }

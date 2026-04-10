@@ -31,7 +31,8 @@ EXAM_DATE="$(date +%F)"
 EXAM_DIR="${TOOLKIT_ROOT}/exam_${EXAM_DATE}"
 SESSION_NAME="engagement"
 TOOLKIT_DIR="${HOME}/tools"
-RECON_SCRIPT="${HOME}/scripts/bin/recon.sh"
+RECON_SCRIPT="${HOME}/scripts/recon.sh"
+[[ -x "$RECON_SCRIPT" ]] || RECON_SCRIPT="${HOME}/scripts/bin/recon.sh"
 
 #------------------------------------------------------------------------------
 # COLORS & OUTPUT HELPERS
@@ -105,16 +106,16 @@ parse_args() {
 
     while [[ $# -gt 0 ]]; do
         case "$1" in
-            --sa1)      SA1="$2";      shift 2 ;;
-            --sa2)      SA2="$2";      shift 2 ;;
-            --sa3)      SA3="$2";      shift 2 ;;
-            --ad1)      AD1="$2";      shift 2 ;;
-            --ad2)      AD2="$2";      shift 2 ;;
-            --dc)       DC="$2";       shift 2 ;;
-            --domain)   DOMAIN="$2";   shift 2 ;;
-            --aduser)   ADUSER="$2";   shift 2 ;;
-            --adpass)   ADPASS="$2";   shift 2 ;;
-            -f|--file)  TARGETS_FILE="$2"; shift 2 ;;
+            --sa1)      [[ $# -lt 2 ]] && { error "--sa1 requires a value"; exit 1; };      SA1="$2";      shift 2 ;;
+            --sa2)      [[ $# -lt 2 ]] && { error "--sa2 requires a value"; exit 1; };      SA2="$2";      shift 2 ;;
+            --sa3)      [[ $# -lt 2 ]] && { error "--sa3 requires a value"; exit 1; };      SA3="$2";      shift 2 ;;
+            --ad1)      [[ $# -lt 2 ]] && { error "--ad1 requires a value"; exit 1; };      AD1="$2";      shift 2 ;;
+            --ad2)      [[ $# -lt 2 ]] && { error "--ad2 requires a value"; exit 1; };      AD2="$2";      shift 2 ;;
+            --dc)       [[ $# -lt 2 ]] && { error "--dc requires a value"; exit 1; };       DC="$2";       shift 2 ;;
+            --domain)   [[ $# -lt 2 ]] && { error "--domain requires a value"; exit 1; };   DOMAIN="$2";   shift 2 ;;
+            --aduser)   [[ $# -lt 2 ]] && { error "--aduser requires a value"; exit 1; };   ADUSER="$2";   shift 2 ;;
+            --adpass)   [[ $# -lt 2 ]] && { error "--adpass requires a value"; exit 1; };   ADPASS="$2";   shift 2 ;;
+            -f|--file)  [[ $# -lt 2 ]] && { error "-f requires a value"; exit 1; };         TARGETS_FILE="$2"; shift 2 ;;
             --recon)    AUTO_RECON=true; shift ;;
             --attach)   ATTACH_ONLY=true; shift ;;
             -h|--help)  usage ;;
@@ -205,7 +206,7 @@ preflight() {
         warn "Continuing anyway, but env \$KALI will be empty"
         KALI_IP="NOT_CONNECTED"
     else
-        KALI_IP="$(ip -4 addr show tun0 | grep -oP '(?<=inet\s)\d+[^\s/]+')"
+        KALI_IP="$(ip -4 addr show tun0 | grep -oP '(?<=inet\s)\d+(\.\d+){3}')"
         success "VPN connected — Kali IP: $KALI_IP"
     fi
 
@@ -372,7 +373,7 @@ build_tmux() {
     tmux new-window -t "${SESSION_NAME}" -n "staging"
     tmux send-keys -t "${SESSION_NAME}:staging" "$src_cmd" C-m
     if [[ -d "$TOOLKIT_DIR" ]]; then
-        tmux send-keys -t "${SESSION_NAME}:staging" "cd ${TOOLKIT_DIR} && python3 -m http.server 80" C-m
+        tmux send-keys -t "${SESSION_NAME}:staging" "cd ${TOOLKIT_DIR} && python3 -m http.server 8000" C-m
     else
         tmux send-keys -t "${SESSION_NAME}:staging" "echo 'Toolkit dir not found — start file server manually'" C-m
     fi

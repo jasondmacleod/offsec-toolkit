@@ -53,6 +53,7 @@ TOOLS_CACHE="$HOME/.offsec_tools/privesc"    # Cached tool downloads
 HTTP_PORT=8888                             # HTTP server port for tool serving
 SERVE_TIMEOUT=1800                         # Auto-stop HTTP server after 30 min (plenty for engagement transfers)
 REMOTE_TMP="/tmp"                            # Remote writable dir (override with --remote-tmp if /tmp is noexec)
+OFFLINE_MODE=false                           # --offline skips network, cache-only
 
 # Tool URLs — verified as of March 2026
 LINPEAS_URL="https://github.com/peass-ng/PEASS-ng/releases/latest/download/linpeas.sh"
@@ -199,12 +200,17 @@ stage_tools() {
         local cached="$TOOLS_CACHE/$filename"
 
         if [[ -f "$cached" ]]; then
-            # Use cache if less than 7 days old
-            if [[ $(find "$cached" -mtime -7 2>/dev/null) ]]; then
+            # Use cache if less than 7 days old (or always in offline mode)
+            if [[ "${OFFLINE_MODE:-false}" == "true" ]] || [[ $(find "$cached" -mtime -7 2>/dev/null) ]]; then
                 info "Using cached: $filename"
                 cp "$cached" "$tools_dir/$filename"
                 return 0
             fi
+        fi
+
+        if [[ "${OFFLINE_MODE:-false}" == "true" ]]; then
+            warn "Offline mode: no cache for $filename (expected at $cached)"
+            return 1
         fi
 
         info "Downloading: $filename"
@@ -1216,6 +1222,10 @@ main() {
                 ;;
             --no-stage)
                 no_stage=true
+                shift
+                ;;
+            --offline)
+                OFFLINE_MODE=true
                 shift
                 ;;
             --remote-tmp)

@@ -109,7 +109,7 @@ trap cleanup INT TERM
 # GLOBAL STATE — set by argument parsing + normalize_hash
 #------------------------------------------------------------------------------
 DOMAIN=""
-USER=""
+AD_USER=""
 PASS=""
 NT_HASH=""
 LM_NT_HASH=""
@@ -204,19 +204,19 @@ normalize_hash() {
 #------------------------------------------------------------------------------
 build_nxc_auth() {
     if [[ "$AUTH_TYPE" == "hash" ]]; then
-        NXC_AUTH=(-u "$USER" -H "$NT_HASH" -d "$DOMAIN" -t "$THREADS")
+        NXC_AUTH=(-u "$AD_USER" -H "$NT_HASH" -d "$DOMAIN" -t "$THREADS")
     else
-        NXC_AUTH=(-u "$USER" -p "$PASS" -d "$DOMAIN" -t "$THREADS")
+        NXC_AUTH=(-u "$AD_USER" -p "$PASS" -d "$DOMAIN" -t "$THREADS")
     fi
 }
 
 build_rpc_auth() {
     # RPC_CRED: string for -U flag.  RPC_HASH_FLAG: optional --pw-nt-hash
     if [[ "$AUTH_TYPE" == "hash" ]]; then
-        RPC_CRED="${DOMAIN}/${USER}%${NT_HASH}"
+        RPC_CRED="${DOMAIN}/${AD_USER}%${NT_HASH}"
         RPC_HASH_FLAG=(--pw-nt-hash)
     else
-        RPC_CRED="${DOMAIN}/${USER}%${PASS}"
+        RPC_CRED="${DOMAIN}/${AD_USER}%${PASS}"
         RPC_HASH_FLAG=()
     fi
 }
@@ -224,10 +224,10 @@ build_rpc_auth() {
 build_smbc_auth() {
     # SMBC_CRED: string for -U.  SMBC_HASH_FLAG: optional --pw-nt-hash
     if [[ "$AUTH_TYPE" == "hash" ]]; then
-        SMBC_CRED="${DOMAIN}/${USER}%${NT_HASH}"
+        SMBC_CRED="${DOMAIN}/${AD_USER}%${NT_HASH}"
         SMBC_HASH_FLAG=(--pw-nt-hash)
     else
-        SMBC_CRED="${DOMAIN}/${USER}%${PASS}"
+        SMBC_CRED="${DOMAIN}/${AD_USER}%${PASS}"
         SMBC_HASH_FLAG=()
     fi
 }
@@ -235,10 +235,10 @@ build_smbc_auth() {
 build_impacket_auth() {
     # IMPACKET_TARGET: positional arg.  IMPACKET_AUTH_ARGS: optional -hashes
     if [[ "$AUTH_TYPE" == "hash" ]]; then
-        IMPACKET_TARGET="${DOMAIN}/${USER}"
+        IMPACKET_TARGET="${DOMAIN}/${AD_USER}"
         IMPACKET_AUTH_ARGS=(-hashes "$LM_NT_HASH")
     else
-        IMPACKET_TARGET="${DOMAIN}/${USER}:${PASS}"
+        IMPACKET_TARGET="${DOMAIN}/${AD_USER}:${PASS}"
         IMPACKET_AUTH_ARGS=()
     fi
 }
@@ -355,11 +355,11 @@ phase1_domain_context() {
         progress_log "FAIL" "$phase_key" "credential validation failed"
         return 1
     fi
-    success "Credentials valid for ${USER}@${DOMAIN}"
-    creds_log "adr" "$DC_IP" "$USER" "${PASS:-${HASH:-unknown}}" "validated"
+    success "Credentials valid for ${AD_USER}@${DOMAIN}"
+    creds_log "adr" "$DC_IP" "$AD_USER" "${PASS:-${HASH:-unknown}}" "validated"
 
     if grep -qF 'Pwn3d!' "$ctx_out"; then
-        success "*** ADMIN ACCESS (Pwn3d!) — ${USER} is local admin on DC ***"
+        success "*** ADMIN ACCESS (Pwn3d!) — ${AD_USER} is local admin on DC ***"
         echo "ADMIN_ON_DC=YES" >> "${OUTDIR}/summary_notes.txt"
     fi
 
@@ -412,10 +412,10 @@ phase1_domain_context() {
     # Seed attack_commands.txt with secretsdump template
     if [[ "$AUTH_TYPE" == "hash" ]]; then
         attack_cmd "SECRETSDUMP (after obtaining DA creds)" \
-            "impacket-secretsdump -hashes ${LM_NT_HASH} ${DOMAIN}/${USER}@${DC_IP}"
+            "impacket-secretsdump -hashes ${LM_NT_HASH} ${DOMAIN}/${AD_USER}@${DC_IP}"
     else
         attack_cmd "SECRETSDUMP (after obtaining DA creds)" \
-            "impacket-secretsdump ${DOMAIN}/${USER}:${PASS}@${DC_IP}"
+            "impacket-secretsdump ${DOMAIN}/${AD_USER}:${PASS}@${DC_IP}"
     fi
 
     progress_log "DONE" "$phase_key" "domain=${DOMAIN}"
@@ -472,11 +472,11 @@ phase2_user_enum() {
     if [[ "$AUTH_TYPE" == "hash" ]]; then
         warn "ldapsearch skipped (no NTLM hash auth support) — user details unavailable"
     elif [[ "${TOOL_STATUS[ldapsearch]}" == "ok" ]]; then
-        cmd_log "ldapsearch -x -H ldap://${DC_IP} -D '${USER}@${DOMAIN}' -b '${BASE_DN}' '(objectClass=user)' sAMAccountName description pwdLastSet lastLogon userAccountControl"
+        cmd_log "ldapsearch -x -H ldap://${DC_IP} -D '${AD_USER}@${DOMAIN}' -b '${BASE_DN}' '(objectClass=user)' sAMAccountName description pwdLastSet lastLogon userAccountControl"
         timeout 120 ldapsearch \
             -x \
             -H "ldap://${DC_IP}" \
-            -D "${USER}@${DOMAIN}" \
+            -D "${AD_USER}@${DOMAIN}" \
             -w "$PASS" \
             -b "$BASE_DN" \
             -E "pr=1000/noprompt" \
@@ -681,11 +681,11 @@ phase4_computers() {
     if [[ "$AUTH_TYPE" == "hash" ]]; then
         warn "ldapsearch skipped (hash auth) — using nxc computers only"
     elif [[ "${TOOL_STATUS[ldapsearch]}" == "ok" ]]; then
-        cmd_log "ldapsearch -x -H ldap://${DC_IP} -D '${USER}@${DOMAIN}' -b '${BASE_DN}' '(objectClass=computer)' dNSHostName operatingSystem operatingSystemVersion"
+        cmd_log "ldapsearch -x -H ldap://${DC_IP} -D '${AD_USER}@${DOMAIN}' -b '${BASE_DN}' '(objectClass=computer)' dNSHostName operatingSystem operatingSystemVersion"
         timeout 120 ldapsearch \
             -x \
             -H "ldap://${DC_IP}" \
-            -D "${USER}@${DOMAIN}" \
+            -D "${AD_USER}@${DOMAIN}" \
             -w "$PASS" \
             -b "$BASE_DN" \
             -E "pr=1000/noprompt" \
@@ -799,7 +799,7 @@ phase6_bloodhound() {
     fi
 
     local bh_prefix="${OUTDIR}/bloodhound/bh"
-    local -a bh_args=(-c All -d "$DOMAIN" -u "$USER" -ns "$DC_IP" --zip -op "$bh_prefix")
+    local -a bh_args=(-c All -d "$DOMAIN" -u "$AD_USER" -ns "$DC_IP" --zip -op "$bh_prefix")
     [[ -n "$DC_HOST" ]] && bh_args+=(-dc "$DC_HOST")
 
     if [[ "$AUTH_TYPE" == "hash" ]]; then
@@ -901,7 +901,7 @@ phase7_shares() {
                 "gpp-decrypt '<cpassword_value_from_xml>'" \
                 "" \
                 "# Or use impacket-GetGPPPassword:" \
-                "$(if [[ "$AUTH_TYPE" == "hash" ]]; then echo "impacket-GetGPPPassword -dc-ip ${DC_IP} -hashes ${LM_NT_HASH} ${DOMAIN}/${USER}"; else echo "impacket-GetGPPPassword -dc-ip ${DC_IP} ${DOMAIN}/${USER}:${PASS}"; fi)"
+                "$(if [[ "$AUTH_TYPE" == "hash" ]]; then echo "impacket-GetGPPPassword -dc-ip ${DC_IP} -hashes ${LM_NT_HASH} ${DOMAIN}/${AD_USER}"; else echo "impacket-GetGPPPassword -dc-ip ${DC_IP} ${DOMAIN}/${AD_USER}:${PASS}"; fi)"
         fi
 
         # Flag other interesting files
@@ -1093,10 +1093,10 @@ chain_prompt() {
 
 mode_chain() {
     phase "AD Kill Chain — Interactive Walkthrough"
-    info "Domain: ${BOLD}${DOMAIN}${NC}  DC: ${BOLD}${DC_IP}${NC}  User: ${BOLD}${USER}${NC}"
+    info "Domain: ${BOLD}${DOMAIN}${NC}  DC: ${BOLD}${DC_IP}${NC}  User: ${BOLD}${AD_USER}${NC}"
     local chain_log="${OUTDIR}/chain_log.txt"
     echo "AD Kill Chain — $(date)" > "$chain_log"
-    echo "Domain: ${DOMAIN}  DC: ${DC_IP}  User: ${USER}" >> "$chain_log"
+    echo "Domain: ${DOMAIN}  DC: ${DC_IP}  User: ${AD_USER}" >> "$chain_log"
     echo "" >> "$chain_log"
 
     # Step 1: Validate foothold
@@ -1306,7 +1306,7 @@ write_summary() {
         echo "  DC IP:       ${DC_IP}"
         [[ -n "$DC_HOST" ]] && echo "  DC Hostname: ${DC_HOST}"
         [[ -n "$domain_sid" ]] && echo "  Domain SID:  ${domain_sid}"
-        echo "  Auth user:   ${USER} (${AUTH_TYPE} auth)"
+        echo "  Auth user:   ${AD_USER} (${AUTH_TYPE} auth)"
         echo "  Output dir:  ${OUTDIR}/"
         echo ""
 
@@ -1481,7 +1481,7 @@ main() {
                 DOMAIN="$2"; shift 2 ;;
             -u|--user)
                 [[ $# -lt 2 ]] && { error "--user requires an argument"; exit 1; }
-                USER="$2"; shift 2 ;;
+                AD_USER="$2"; shift 2 ;;
             -p|--password)
                 [[ $# -lt 2 ]] && { error "--password requires an argument"; exit 1; }
                 PASS="$2"; AUTH_TYPE="password"; shift 2 ;;
@@ -1516,7 +1516,7 @@ main() {
 
     # Validate required arguments
     [[ -z "$DOMAIN" ]]    && { error "-d/--domain is required"; exit 1; }
-    [[ -z "$USER" ]]      && { error "-u/--user is required"; exit 1; }
+    [[ -z "$AD_USER" ]]      && { error "-u/--user is required"; exit 1; }
     [[ -z "$DC_IP" ]]     && { error "-dc/--dc-ip is required"; exit 1; }
     [[ -z "$AUTH_TYPE" ]] && { error "One of -p/--password or -H/--hash is required"; exit 1; }
     is_valid_ip "$DC_IP"  || { error "Invalid DC IP: ${DC_IP}"; exit 1; }
@@ -1572,7 +1572,7 @@ main() {
     echo -e "${BOLD}${CYAN}  adr.sh — Active Directory Enumeration${NC}"
     echo -e "${BOLD}${CYAN}  Domain:  ${DOMAIN}${NC}"
     echo -e "${BOLD}${CYAN}  DC:      ${DC_IP}${NC}"
-    echo -e "${BOLD}${CYAN}  User:    ${USER} (${AUTH_TYPE} auth)${NC}"
+    echo -e "${BOLD}${CYAN}  User:    ${AD_USER} (${AUTH_TYPE} auth)${NC}"
     echo -e "${BOLD}${CYAN}  Base DN: ${BASE_DN}${NC}"
     echo -e "${BOLD}${CYAN}  Output:  ${OUTDIR}${NC}"
     [[ "$QUICK_MODE" == true ]] && \

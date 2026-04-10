@@ -210,7 +210,7 @@ phase_proof() {
         cp -- "${f}" "${proof_copy}" 2>/dev/null || true
         echo "source: ${f}" >> "${proof_copy}.meta"
         found_any=true
-    done < <(timeout 30 find / -maxdepth 10 \( -path /proc -o -path /sys -o -path /dev -o -path /run \) -prune -o \( -name "local.txt" -o -name "proof.txt" \) -type f -print 2>/dev/null)
+    done < <(timeout 120 find / -maxdepth 10 \( -path /proc -o -path /sys -o -path /dev -o -path /run \) -prune -o \( -name "local.txt" -o -name "proof.txt" \) -type f -print 2>/dev/null)
 
     if [[ "${found_any}" == "false" ]]; then
         warn "No proof flags found (local.txt / proof.txt)"
@@ -312,7 +312,7 @@ phase_creds() {
     fi
     if [[ -r /etc/shadow ]]; then
         cp -- /etc/shadow "${cdir}/shadow.txt" 2>/dev/null || true
-        grep -v '^\(.*:\)\{1\}\(!\|!\*\|\*\)' /etc/shadow 2>/dev/null | grep -v '::' > "${cdir}/shadow_hashes.txt" 2>/dev/null || true
+        awk -F: '$2 !~ /^(\*|!|!!|!\*|x|$)/ && $2 !~ /^$/' /etc/shadow 2>/dev/null > "${cdir}/shadow_hashes.txt" || true
         success "Copied /etc/shadow — hashes extracted to shadow_hashes.txt"
     else
         warn "/etc/shadow not readable"
@@ -520,8 +520,8 @@ phase_files() {
     local fdir="${OUTDIR}/files"
 
     # SUID binaries
-    info "Searching for SUID binaries (timeout 30s)..."
-    timeout 30 find / \( -path /proc -o -path /sys -o -path /dev -o -path /run \) -prune -o -perm -4000 -type f -print 2>/dev/null | sort > "${fdir}/suid_binaries.txt" || true
+    info "Searching for SUID binaries (timeout 120s)..."
+    timeout 120 find / \( -path /proc -o -path /sys -o -path /dev -o -path /run \) -prune -o -perm -4000 -type f -print 2>/dev/null | sort > "${fdir}/suid_binaries.txt" || true
     local suid_count=""
     suid_count="$(wc -l < "${fdir}/suid_binaries.txt" 2>/dev/null || echo 0)"
     success "Found ${suid_count} SUID binaries → ${fdir}/suid_binaries.txt"

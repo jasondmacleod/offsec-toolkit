@@ -1273,6 +1273,13 @@ TARGET_TAG="${HOST}_${PORT}_${PROTO}"
 OUTPUT_DIR="${OUTPUT_ROOT}/${TARGET_TAG}/artifacts/web"
 mkdir -p "${OUTPUT_DIR}"/{fingerprint,content,content/recursive,vhosts,params,summary}
 
+# Reachability precheck — fail fast instead of wasting engagement time on a dead host
+if ! curl -sS -o /dev/null --max-time 5 -k "$TARGET_URL" 2>/dev/null; then
+    error "Target unreachable: $TARGET_URL (curl --max-time 5 failed)"
+    error "Verify host/port/scheme before running webenum."
+    exit 1
+fi
+
 #==============================================================================
 # PRE-FLIGHT
 #==============================================================================

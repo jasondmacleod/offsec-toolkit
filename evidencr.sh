@@ -54,7 +54,6 @@ PROOF_FLAG_VALUE="not collected"
 FLAG_COPY_NOTE="[not provided]"
 
 write_progress() { echo "$(date '+%Y-%m-%d %H:%M:%S') | $1 | $2 | $3" >> "$PROGRESS_LOG"; }
-phase_done()     { grep -q "| DONE | ${1} |" "$PROGRESS_LOG" 2>/dev/null; }
 
 cleanup() {
     echo ""
@@ -81,7 +80,7 @@ Options:
   --os <os>            Target OS: Linux|Windows
   --points <value>     Points value: 10|20|25
   --category <type>    Machine category: standalone|AD-client|AD-DC
-  -o <outdir>          Output directory (default: ~/evidence)
+  -o <outdir>          Output directory (default: \$TOOLKIT_ROOT/evidence)
   --non-interactive    Skip all prompts; use flags only
   -h, --help           Show this help
 EOF

@@ -61,10 +61,10 @@ if [[ "$CHECK_ONLY" == true ]] && [[ $EUID -ne 0 ]]; then
     # For check mode, resolve real user without sudo
     REAL_USER="$USER"
     REAL_HOME="$HOME"
+else
+    REAL_USER="${SUDO_USER:-$USER}"
+    REAL_HOME=$(getent passwd "$REAL_USER" | cut -d: -f6)
 fi
-
-REAL_USER="${SUDO_USER:-$USER}"
-REAL_HOME=$(getent passwd "$REAL_USER" | cut -d: -f6)
 
 TOOLS_DIR="${REAL_HOME}/tools"
 WIN_DIR="${TOOLS_DIR}/windows"
