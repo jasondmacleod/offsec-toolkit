@@ -58,7 +58,7 @@ show_ad() {
 show_spray() {
     header "4. CREDENTIAL SPRAY — Test found creds across protocols"
     cmd "./sprayr.sh -U users.txt -p 'Summer2024!' -T targets.txt --proto smb,winrm,rdp,ssh"
-    note "Respects lockout: --delay 35 --attempts 2"
+    note "Use --safe for lockout-conscious sequential spraying with jitter"
     note "Hits logged to \$TOOLKIT_ROOT/creds.txt"
     note "Output: \$TOOLKIT_ROOT/spray/<timestamp>/"
 }

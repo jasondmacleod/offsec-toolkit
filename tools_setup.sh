@@ -306,10 +306,12 @@ check_apt() {
     fi
 }
 check_pip() {
-    local pkg="$1" import_name="${2:-}"
+    local pkg="$1" import_name="${2:-}" alt_bin="${3:-}"
     [[ -z "$import_name" ]] && { import_name="${pkg//-/_}"; import_name="${import_name%%[>=<]*}"; }
     if python3 -c "import ${import_name}" &>/dev/null 2>&1; then
         log_success "  ✓ pip: ${pkg}"; CHECK_PRESENT+=("pip:${pkg}")
+    elif [[ -n "$alt_bin" ]] && command -v "$alt_bin" &>/dev/null; then
+        log_success "  ✓ pip: ${pkg} (via ${alt_bin} on PATH)"; CHECK_PRESENT+=("pip:${pkg}")
     else
         log_error "  ✗ pip: ${pkg}"; CHECK_MISSING+=("pip:${pkg}")
     fi
@@ -356,7 +358,7 @@ if [[ "$CHECK_ONLY" == true ]]; then
     check_pip "certipy-ad"    "certipy"
     check_pip "bloodhound"    "bloodhound"
     check_pip "impacket"      "impacket"
-    check_pip "enum4linux-ng" "enum4linux_ng"
+    check_pip "enum4linux-ng" "enum4linux_ng" "enum4linux-ng"
 
     log_header "gem Packages"
     check_gem "evil-winrm"

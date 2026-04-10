@@ -1221,7 +1221,8 @@ run_hydra() {
     log_cmd "${cmd[*]}"
     echo ""
 
-    "${cmd[@]}" || true
+    local hydra_rc=0
+    "${cmd[@]}" || hydra_rc=$?
 
     echo ""
     # Only claim success if the outfile contains at least one parseable cred line.
@@ -1245,9 +1246,19 @@ run_hydra() {
         done < "$outfile"
         echo ""
         log_success "Results saved → $outfile"
-    else
-        log_warn "No valid credentials found"
+        return 0
     fi
+
+    # No creds parsed. Distinguish "ran fine, found nothing" from "hydra
+    # failed to run" (unreachable target, bad service, tool error). Hydra
+    # exits nonzero in the latter case, so propagate that instead of
+    # masquerading as a clean "no credentials found".
+    if (( hydra_rc != 0 )); then
+        log_error "Hydra execution failed (rc=${hydra_rc}) — target/transport error, not a clean run"
+        return "$hydra_rc"
+    fi
+    log_warn "No valid credentials found"
+    return 0
 }
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -1602,7 +1613,7 @@ fi
 # ── Hydra online brute force ──
 if [[ -n "${HYDRA_MODE:-}" ]]; then
     run_hydra
-    exit 0
+    exit $?
 fi
 
 # ── Offline cracking ──

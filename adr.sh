@@ -1134,13 +1134,13 @@ mode_chain() {
             local kcount
             kcount=$(wc -l < "${OUTDIR}/hashes/kerberoast.txt")
             echo -e "${GREEN}  ${kcount} Kerberoast hash(es) collected${NC}"
-            echo -e "${YELLOW}  → Crack: ./crackr.sh hashcat -m 13100 -f ${OUTDIR}/hashes/kerberoast.txt${NC}"
+            echo -e "${YELLOW}  → Crack: ./crackr.sh -f ${OUTDIR}/hashes/kerberoast.txt${NC}"
         fi
         if [[ -s "${OUTDIR}/hashes/asreproast.txt" ]]; then
             local acount
             acount=$(wc -l < "${OUTDIR}/hashes/asreproast.txt")
             echo -e "${GREEN}  ${acount} AS-REP hash(es) collected${NC}"
-            echo -e "${YELLOW}  → Crack: ./crackr.sh hashcat -m 18200 -f ${OUTDIR}/hashes/asreproast.txt${NC}"
+            echo -e "${YELLOW}  → Crack: ./crackr.sh -f ${OUTDIR}/hashes/asreproast.txt${NC}"
         fi
         echo "[$(date '+%H:%M:%S')] Step 3 DONE — kerberos attacks" >> "$chain_log"
     fi
