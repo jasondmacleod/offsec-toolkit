@@ -71,15 +71,15 @@ ADPASS=Password123!
 ## tmux Layout Created
 
 ```
-Window 0: SA-1     ← Standalone 1 (70/30 vertical split)
-Window 1: SA-2     ← Standalone 2 (70/30 vertical split)
-Window 2: SA-3     ← Standalone 3 (70/30 vertical split)
-Window 3: AD       ← All AD targets (70/30 vertical split)
-Window 4: staging  ← HTTP server (left) + listener notes (right)
-Window 5: notes    ← creds.txt, scratch space
+Window 1: SA-1     ← Standalone 1 (70/30 vertical split)
+Window 2: SA-2     ← Standalone 2 (70/30 vertical split)
+Window 3: SA-3     ← Standalone 3 (70/30 vertical split)
+Window 4: AD       ← All AD targets (70/30 vertical split)
+Window 5: staging  ← HTTP server (left) + listener notes (right)
+Window 6: notes    ← creds.txt, scratch space
 ```
 
-Navigate: `Ctrl+b 0` through `Ctrl+b 5` (or use `Ctrl+b w` for window picker).
+Navigate: `Ctrl+b 1` through `Ctrl+b 6` (or use `Ctrl+b w` for window picker). Window numbers follow your tmux `base-index` — startr.sh adapts automatically. If your `base-index` is `0`, windows are `0–5` instead.
 
 ---
 
@@ -169,7 +169,7 @@ After first foothold → [[lootr]] for collection → [[evidencr]] for evidence 
 - `tmux` installed
 - VPN connected (tun0 up)
 - `~/toolkit/` directory populated with transfer tools for HTTP server (see warning above)
-- `~/scripts/bin/recon.sh` for `--recon` flag
+- `~/scripts/recon.sh` for `--recon` flag (falls back to `~/scripts/bin/recon.sh`)
 
 ---
 

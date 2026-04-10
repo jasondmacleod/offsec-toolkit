@@ -74,8 +74,8 @@ Before scanning, the script **automatically checks HTTP connectivity** — it cu
 ### Step 2: Read the Summary First
 
 ```bash
-cat $TOOLKIT_ROOT/web/192.168.50.100/artifacts/web/summary/summary.md
-cat $TOOLKIT_ROOT/web/192.168.50.100/artifacts/web/summary/quick_wins.txt
+cat $TOOLKIT_ROOT/web/192.168.50.100_80_http/artifacts/web/summary/summary.md
+cat $TOOLKIT_ROOT/web/192.168.50.100_80_http/artifacts/web/summary/quick_wins.txt
 ```
 
 `summary.md` is structured: tech stack → headers → sensitive paths → directory findings → vhosts → source hints. `quick_wins.txt` gives you just the high-value lines grouped by category.
@@ -204,7 +204,7 @@ Aggregates everything into `summary/summary.md` (structured report) and `summary
 ## Output Structure
 
 ```
-$TOOLKIT_ROOT/web/<host>/artifacts/web/
+$TOOLKIT_ROOT/web/<host>_<port>_<proto>/artifacts/web/
 ├── fingerprint/
 │   ├── whatweb.txt              # Tech stack identification
 │   ├── whatweb_verbose.txt      # Detailed plugin output
@@ -403,7 +403,7 @@ ffuf -u http://TARGET -H "Host: FUZZ.target.htb" -w /usr/share/seclists/Discover
 **Phase skipped (already done):**
 Delete `progress.log` or the specific output directory:
 ```bash
-rm $TOOLKIT_ROOT/web/TARGET/artifacts/web/progress.log
+rm $TOOLKIT_ROOT/web/TARGET_PORT_PROTO/artifacts/web/progress.log
 ```
 
 ---
