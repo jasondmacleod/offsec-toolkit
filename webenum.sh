@@ -1073,9 +1073,12 @@ Designed to run after recon.sh for thorough web-layer coverage.
 
 USAGE:
   ./webenum.sh --url <URL> [OPTIONS]
+  ./webenum.sh --from-recon <IP> [OPTIONS]
 
 OPTIONS:
-  --url URL          Target URL (required). e.g. http://10.10.10.5:8080
+  --url URL          Target URL. e.g. http://10.10.10.5:8080
+  --from-recon IP    Auto-detect HTTP URL(s) from recon.sh output
+                       for the given IP (reads ~/toolkit/recon/<IP>/)
   --deep             Enable deep mode: recursive fuzzing + parameter discovery
   --vhost DOMAIN     Enable vhost fuzzing against this base domain
                        e.g. --vhost target.htb
@@ -1087,6 +1090,9 @@ OPTIONS:
 EXAMPLES:
   # Standard run after recon finds HTTP
   ./webenum.sh --url http://10.10.10.5
+
+  # Auto-detect URL from prior recon run
+  ./webenum.sh --from-recon 10.10.10.5
 
   # HTTPS non-standard port
   ./webenum.sh --url https://10.10.10.5:8443

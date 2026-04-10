@@ -30,6 +30,17 @@ param(
 )
 
 #==============================================================================
+# PLATFORM GUARD
+#==============================================================================
+# $IsWindows is defined on PowerShell Core (6+). On Windows PowerShell 5.1
+# it does not exist, but 5.1 only runs on Windows, so treat absence as Windows.
+if ((Get-Variable -Name IsWindows -ErrorAction SilentlyContinue) -and -not $IsWindows) {
+    Write-Host "[-] lootr.ps1 targets Windows hosts only. Current platform is not Windows." -ForegroundColor Red
+    Write-Host "    For Linux targets, use lootr.sh instead." -ForegroundColor Yellow
+    exit 1
+}
+
+#==============================================================================
 # OUTPUT HELPERS
 #==============================================================================
 # Auto-detect: disable color when not interactive or NoColor requested

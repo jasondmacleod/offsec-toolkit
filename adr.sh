@@ -1594,7 +1594,23 @@ main() {
     # Execute phases
     if ! phase1_domain_context; then
         error "Phase 1 failed — aborting (credential validation failed)"
-        write_summary
+        # Write a minimal abort summary instead of the full summary,
+        # which would reference data that was never collected.
+        {
+            echo "════════════════════════════════════════════════════════════════"
+            echo "  AD ENUMERATION — ABORTED"
+            echo "  Generated: $(date)"
+            echo "════════════════════════════════════════════════════════════════"
+            echo ""
+            echo "Phase 1 (credential validation) failed. No enumeration was run."
+            echo ""
+            echo "Target:    ${DC_IP}"
+            echo "Domain:    ${DOMAIN}"
+            echo "User:      ${AD_USER} (${AUTH_TYPE} auth)"
+            echo "Output:    ${OUTDIR}/"
+            echo ""
+            echo "Check:  ${OUTDIR}/phase1_*.txt for the authentication error."
+        } > "${OUTDIR}/summary.txt"
         exit 1
     fi
 

@@ -269,9 +269,37 @@ gem_install() {
 CHECK_PRESENT=()
 CHECK_MISSING=()
 
+# Map an apt package name to the primary binary it provides, so we can
+# check usability via `command -v` rather than `dpkg -s`. This matters
+# when a tool was installed from source / pip / cargo rather than apt.
+_apt_pkg_binary() {
+    case "$1" in
+        snmp)                echo snmpwalk ;;
+        ldap-utils)          echo ldapsearch ;;
+        dnsutils)            echo dig ;;
+        nfs-common)          echo showmount ;;
+        netexec)             echo nxc ;;
+        impacket-scripts)    echo impacket-GetNPUsers ;;
+        netcat-traditional)  echo nc.traditional ;;
+        python3-pip)         echo pip3 ;;
+        ruby-full)           echo ruby ;;
+        proxychains4)        echo proxychains4 ;;
+        wordlists|seclists)  echo "" ;;   # data-only packages, no binary
+        *)                   echo "$1" ;;
+    esac
+}
+
 check_apt() {
     local pkg="$1"
-    if dpkg -s "$pkg" &>/dev/null 2>&1; then
+    local bin
+    bin="$(_apt_pkg_binary "$pkg")"
+    if [[ -n "$bin" ]] && command -v "$bin" &>/dev/null; then
+        log_success "  ✓ apt: ${pkg}"; CHECK_PRESENT+=("apt:${pkg}")
+        return
+    fi
+    # Fall back to dpkg for data-only packages (wordlists, seclists)
+    # or for tools whose binary name we don't know.
+    if dpkg -s "$pkg" &>/dev/null; then
         log_success "  ✓ apt: ${pkg}"; CHECK_PRESENT+=("apt:${pkg}")
     else
         log_error "  ✗ apt: ${pkg}"; CHECK_MISSING+=("apt:${pkg}")

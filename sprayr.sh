@@ -140,6 +140,27 @@ is_cidr_or_range() {
     [[ "$1" =~ / ]] || [[ "$1" =~ [0-9]-[0-9] ]]
 }
 
+# Accepts IPv4, CIDR, IP range, or a DNS hostname.
+# Rejects obvious garbage (empty, spaces, most shell metachars).
+is_valid_target() {
+    local t="$1"
+    [[ -z "$t" ]] && return 1
+    [[ "$t" =~ [[:space:]\;\|\&\$\`\(\)] ]] && return 1
+    # CIDR / range
+    if is_cidr_or_range "$t"; then
+        [[ "$t" =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}(/[0-9]{1,2}|-[0-9]{1,3})$ ]] && return 0
+        return 1
+    fi
+    # Dotted-quad IPv4
+    if [[ "$t" =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}$ ]]; then
+        local IFS=. o
+        for o in $t; do (( o <= 255 )) || return 1; done
+        return 0
+    fi
+    # Hostname (loose: letters, digits, dot, dash — must contain a letter)
+    [[ "$t" =~ ^[A-Za-z0-9.-]+$ ]] && [[ "$t" =~ [A-Za-z] ]]
+}
+
 is_valid_ntlm() {
     [[ "$1" =~ ^[A-Fa-f0-9]{32}$ ]]
 }
@@ -961,17 +982,40 @@ main() {
 
     IS_RANGE_TARGET=false
 
+    # Collect raw targets first, then validate and write only good ones.
+    local _raw_targets=()
     if [[ -n "$TARGET_FILE" ]]; then
-        grep -vE '^\s*#|^\s*$' "$TARGET_FILE" > "$RESOLVED_TARGETS_FILE" 2>/dev/null || true
+        local _fline
+        while IFS= read -r _fline; do
+            [[ "$_fline" =~ ^[[:space:]]*(#|$) ]] && continue
+            _raw_targets+=("$_fline")
+        done < "$TARGET_FILE"
+    fi
+    if [[ -n "$TARGETS_RAW" ]]; then
+        local _tgts
+        IFS=',' read -ra _tgts <<< "$TARGETS_RAW"
+        _raw_targets+=("${_tgts[@]}")
     fi
 
-    if [[ -n "$TARGETS_RAW" ]]; then
-        local _tgt _tgts
-        IFS=',' read -ra _tgts <<< "$TARGETS_RAW"
-        for _tgt in "${_tgts[@]}"; do
-            _tgt="${_tgt// /}"   # strip spaces
-            [[ -n "$_tgt" ]] && echo "$_tgt" >> "$RESOLVED_TARGETS_FILE"
-        done
+    local _tgt _kept=0 _skipped=0
+    for _tgt in "${_raw_targets[@]}"; do
+        _tgt="${_tgt// /}"
+        [[ -z "$_tgt" ]] && continue
+        if is_valid_target "$_tgt"; then
+            echo "$_tgt" >> "$RESOLVED_TARGETS_FILE"
+            (( _kept++ ))
+        else
+            warn "Skipping invalid target: ${_tgt}"
+            (( _skipped++ ))
+        fi
+    done
+
+    if (( _kept == 0 )); then
+        error "No valid targets found (skipped ${_skipped} invalid entries)"
+        exit 1
+    fi
+    if (( _skipped > 0 )); then
+        warn "Skipped ${_skipped} invalid target(s); proceeding with ${_kept}"
     fi
 
     if [[ ! -s "$RESOLVED_TARGETS_FILE" ]]; then

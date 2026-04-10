@@ -42,14 +42,14 @@ show_web() {
     cmd "./webenum.sh --from-recon 10.10.10.1"
     note "Auto-detects URLs from recon nmap output"
     note "Or specify directly:"
-    cmd "./webenum.sh http://10.10.10.1:8080"
+    cmd "./webenum.sh --url http://10.10.10.1:8080"
     note "Runs: gobuster, feroxbuster, nikto, whatweb, tech fingerprint"
     note "Output: \$TOOLKIT_ROOT/web/<host>/"
 }
 
 show_ad() {
     header "3. AD ENUM — When domain controller found"
-    cmd "./adr.sh -d corp.local -u user -p 'Pass123' -t 10.10.10.1"
+    cmd "./adr.sh -d corp.local -u user -p 'Pass123' -dc 10.10.10.1"
     note "Runs: enum4linux-ng, RPC, LDAP, SMB, BloodHound, AS-REP, Kerberoast"
     note "Creds logged to \$TOOLKIT_ROOT/creds.txt automatically"
     note "Output: \$TOOLKIT_ROOT/ad/corp.local/"
@@ -57,7 +57,7 @@ show_ad() {
 
 show_spray() {
     header "4. CREDENTIAL SPRAY — Test found creds across protocols"
-    cmd "./sprayr.sh -u users.txt -p 'Summer2024!' -t targets.txt -P smb,winrm,rdp,ssh"
+    cmd "./sprayr.sh -U users.txt -p 'Summer2024!' -T targets.txt --proto smb,winrm,rdp,ssh"
     note "Respects lockout: --delay 35 --attempts 2"
     note "Hits logged to \$TOOLKIT_ROOT/creds.txt"
     note "Output: \$TOOLKIT_ROOT/spray/<timestamp>/"
@@ -65,9 +65,9 @@ show_spray() {
 
 show_crack() {
     header "5. CRACK — Offline hash cracking"
-    cmd "./crackr.sh hashcat -m 1000 -f ntlm_hashes.txt"
-    cmd "./crackr.sh jtr -f shadow.txt --format sha512crypt"
-    cmd "./crackr.sh hydra -s ssh -t 10.10.10.1 -u admin"
+    cmd "./crackr.sh -f ntlm_hashes.txt"
+    cmd "./crackr.sh -f shadow.txt                        # auto-detect"
+    cmd "./crackr.sh --hydra ssh --target 10.10.10.1 -u admin"
     note "Cracked creds logged to \$TOOLKIT_ROOT/creds.txt"
     note "Output: \$TOOLKIT_ROOT/crackr/"
 }
@@ -75,7 +75,7 @@ show_crack() {
 show_privesc() {
     header "6. PRIVESC ENUM — On target or remote"
     note "Linux target:"
-    cmd "./escalatr.sh 10.10.10.1 --user lowpriv --key id_rsa"
+    cmd "./escalatr.sh 10.10.10.1 --os linux"
     note "Or run lootr.sh directly on target for local enum"
     note "Output: \$TOOLKIT_ROOT/privesc/"
 }
