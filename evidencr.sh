@@ -724,13 +724,31 @@ NEXT STEPS:
        ${SCREENSHOT_DIR}/checklist.txt
   2. Transfer attack chain notes to your Obsidian engagement day notes
   3. Copy flag values to your Creds_Tracker.md
-  4. When done with ALL machines, run:
+  4. Verify nothing was missed in the creds ledger:
+       cat ${TOOLKIT_ROOT}/creds.txt
+  5. Cross-machine flag audit (all captured so far):
+       cat ${TOOLKIT_ROOT}/evidence/*/flags/proof.txt
+       cat ${TOOLKIT_ROOT}/evidence/*/flags/local.txt
+  6. When done with ALL machines, review the full ledger:
        cat ${LEDGER_FILE}
-     to get the full cross-machine summary for your report
 
 Metasploit tracker reminder:
   Have you used Meterpreter on more than ONE machine? (limit: 1 target)
 EOF
+
+    if [[ "$MACHINE_CATEGORY" == "AD-DC" ]]; then
+        cat <<'ADEOF'
+
+AD-DC checklist — confirm before closing this machine:
+  [ ] DCSync run?
+        impacket-secretsdump -just-dc <domain>/<user>:<pass>@<DC_IP>
+        nxc smb <DC_IP> -u <user> -p <pass> --ntds
+  [ ] krbtgt hash captured? (needed for golden ticket)
+  [ ] Domain SID recorded?
+        impacket-getPac -targetUser administrator <domain>/<user>:<pass>
+  [ ] All domain admin hashes in creds.txt?
+ADEOF
+    fi
 
     write_progress "DONE" "$TARGET_IP" "Evidence collection complete"
 }

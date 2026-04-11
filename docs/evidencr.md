@@ -104,9 +104,17 @@ All three must be true before switching to the next target:
 - All checklist screenshots are saved
 - Attack chain is recorded
 
-### 6. At end of engagement, review the cross-machine ledger
+### 6. At end of engagement — final audit before report writing
 
 ```bash
+# Verify creds ledger — anything missed?
+cat $TOOLKIT_ROOT/creds.txt
+
+# Cross-machine flag audit — confirm every flag was captured
+cat $TOOLKIT_ROOT/evidence/*/flags/proof.txt
+cat $TOOLKIT_ROOT/evidence/*/flags/local.txt
+
+# Full cross-machine evidence ledger
 cat $TOOLKIT_ROOT/evidence/evidence_ledger.txt
 ```
 
@@ -125,6 +133,14 @@ Use `--category AD-client` or `--category AD-DC` to tag machines correctly. The 
 ./evidencr.sh -t 10.10.10.10 -n DC01 --os Windows --flags proof \
   --points 40 --category AD-DC
 ```
+
+> [!important] **Before running evidencr on an AD-DC — confirm these are done:**
+> - DCSync: `impacket-secretsdump -just-dc <domain>/<user>:<pass>@<DC_IP>`
+> - NTDS dump: `nxc smb <DC_IP> -u <user> -p <pass> --ntds`
+> - krbtgt hash captured (needed for golden ticket)
+> - All domain admin hashes added to `$TOOLKIT_ROOT/creds.txt`
+>
+> When `--category AD-DC` is passed, the script prints this checklist again at the end of the evidence collection run.
 
 **AD chain entries must link machines.** Standalone chains describe one host. AD chains describe movement:
 
