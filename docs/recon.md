@@ -11,7 +11,7 @@ tags:
 # recon.sh
 
 ## What It Is
-Automated enumeration orchestrator for OffSec. Runs rustscan → nmap TCP → nmap UDP → targeted service enumeration in parallel. Generates `summary.txt` and `loot/quick_wins.txt` per target.
+Automated enumeration orchestrator for OffSec. Runs rustscan → nmap TCP → nmap UDP → targeted service enumeration in parallel. Generates `summary.txt` (with a **NEXT-STEP COMMANDS** section containing ready-to-run follow-on commands per service) and `loot/quick_wins.txt` (anonymous access, default creds, zone transfers, and copy-paste exploit commands) per target.
 
 > [!important] Enumeration only — no exploitation
 > OffSec compliant. Finds the doors, you walk through them.
@@ -29,6 +29,8 @@ cat $TOOLKIT_ROOT/recon/target_priority.txt   # attack highest-score target firs
 sudo ./recon.sh --auto 10.10.10.1 10.10.10.2 10.10.10.3
 
 # 2. Read engagement instructions while it runs, then check summaries
+# summary.txt includes a NEXT-STEP COMMANDS section — copy-paste follow-ons per service
+# quick_wins.txt has anonymous access, default creds, zone transfers + ready-to-run commands
 cat $TOOLKIT_ROOT/recon/*/summary.txt
 cat $TOOLKIT_ROOT/recon/*/loot/quick_wins.txt
 
@@ -129,10 +131,10 @@ $TOOLKIT_ROOT/recon/
 ```bash
 IP=10.10.10.1
 
-# Big picture — always read first
+# Big picture — always read first; scroll to NEXT-STEP COMMANDS section for ready-to-run follow-ons
 cat $TOOLKIT_ROOT/recon/$IP/summary.txt
 
-# ★ Prioritize these — actionable findings
+# ★ Prioritize these — anonymous access, default creds, and copy-paste exploit commands
 cat $TOOLKIT_ROOT/recon/$IP/loot/quick_wins.txt
 
 # Web findings
@@ -167,18 +169,21 @@ cat $TOOLKIT_ROOT/recon/target_priority.txt
 | HTTP/HTTPS | 80, 443, 8080, 8443, 8000, 8888+ | whatweb, nikto, gobuster, feroxbuster, ffuf | robots.txt, vhosts |
 | SMB | 139, 445 | enum4linux-ng, smbmap, smbclient, nxc | READ/WRITE shares |
 | FTP | 21 | banner, anon login, wget mirror | Anonymous login |
-| SSH | 22 | banner, nmap scripts | Old/vulnerable version |
-| SNMP | 161/UDP | onesixtyone, snmpwalk | Community strings, processes |
-| MySQL | 3306 | nmap scripts, mysql client | Empty/root no-password |
-| PostgreSQL | 5432 | nmap scripts, psql | Default creds |
-| DNS | 53 | dig | Zone transfer |
-| SMTP | 25, 587, 465 | nmap scripts, VRFY | Valid usernames |
+| SSH | 22 | banner, nmap scripts | Old/vulnerable version + `searchsploit`, `ssh-audit`, `crackr.sh --hydra` suggestion |
+| SNMP | 161/UDP | onesixtyone, snmpwalk | Community strings, processes + `grep -iE pass` on `process_args.txt` |
+| MySQL | 3306 | nmap scripts, mysql client | Empty/root no-password; if fails → `crackr.sh --hydra mysql` |
+| PostgreSQL | 5432 | nmap scripts, psql | Default creds; if fails → `crackr.sh --hydra postgres` |
+| DNS | 53 | dig | Zone transfer; if successful → auto-generates `/etc/hosts` entries per hostname |
+| SMTP | 25, 587, 465 | nmap scripts, VRFY | Valid usernames → saved to `loot/smtp_valid_users.txt` + `sprayr.sh`/`crackr.sh` commands |
 | LDAP | 389, 636, 3268 | nmap scripts, ldapsearch | Anonymous bind |
-| Redis | 6379 | nc, nmap scripts | No-auth access |
+| Redis | 6379 | nc, nmap scripts | No-auth access + full SSH-key write trick with `ssh -i` follow-on |
 | RPC/NFS | 111, 2049 | rpcclient, rpcinfo, showmount | NFS exports |
 
 > [!tip] SNMP & FTP are high-value
 > Anonymous FTP auto-mirrors the entire share. SNMP process list frequently reveals running services, credentials in command args, and pivot targets.
+
+> [!tip] NEXT-STEP COMMANDS section is the most important output
+> Every service with a finding generates resolved copy-paste commands in `summary.txt`. VHosts get `/etc/hosts` + `webenum` commands. DNS zone transfers extract hostnames. SMTP valid users go to `loot/smtp_valid_users.txt` ready for spray. Redis no-auth includes the full SSH-key write attack + `ssh -i` follow-on. WinRM includes `crackr --hydra winrm` fallback when no creds are available.
 
 ---
 

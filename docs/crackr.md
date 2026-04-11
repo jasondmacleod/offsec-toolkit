@@ -223,6 +223,23 @@ crackr --hydra ssh --target 10.10.10.5 --port 2222 -u admin -w rockyou
 
 **Hydra default ports:** ssh=22, ftp=21, rdp=3389, smb=445, mysql=3306, mssql=1433, postgres=5432, vnc=5900, http-get=80, https-get=443
 
+### What Happens When Hydra Finds Credentials
+
+When hydra succeeds, the script automatically prints **service-specific next steps** using the actual found username and password. No placeholders.
+
+| Service | Next Steps Printed |
+|---------|-------------------|
+| `ssh` | `ssh user@target`, then `sudo -l` + escalatr suggestion |
+| `smb` | `nxc smb --shares`, `nxc smb --sam`, `./adr.sh` |
+| `winrm` | `evil-winrm -i target -u user -p pass` + `./adr.sh` |
+| `rdp` | `xfreerdp /v:target /u:user /p:pass /cert:ignore` |
+| `ftp` | `ftp user@target` + `wget -m` mirror |
+| `ldap` | `./adr.sh` + `ldapsearch` command |
+| `mysql` | `mysql -h target -u user -p'pass'` + `mysqldump` |
+| `postgres` | `PGPASSWORD=pass psql -h target -U user` |
+| `smtp` | `./sprayr.sh` + IMAP curl |
+| `http-*` | `./webenum.sh --user/--pass` + admin curl |
+
 ---
 
 ## CeWL Wordlist Generation
@@ -262,7 +279,9 @@ Auto-detected from pattern matching. Handles SAM dump format (`user:rid:lm:ntlm:
 | NTLM (SAM dump) | 1000 | nt | `user:rid:LM:NTLM:::` |
 | NTLMv1 | 5500 | netntlm | `:::<48hex>:<48hex>:` |
 | NTLMv2 | 5600 | netntlmv2 | Responder captures |
-| Kerberoast (TGS) | 13100 | krb5tgs | `$krb5tgs$` |
+| Kerberoast RC4 (TGS) | 13100 | krb5tgs | `$krb5tgs$23$` |
+| Kerberoast AES-128 | 19600 | krb5tgs-aes128 | `$krb5tgs$17$` |
+| Kerberoast AES-256 | 19700 | krb5tgs-aes256 | `$krb5tgs$18$` |
 | AS-REP Roast | 18200 | krb5asrep | `$krb5asrep$` |
 | MD5 Crypt (Linux) | 500 | md5crypt | `$1$` |
 | SHA-256 Crypt | 7400 | sha256crypt | `$5$` |

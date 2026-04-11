@@ -324,7 +324,8 @@ bash /tmp/lootr.sh
 
 ```bash
 HOST=$(hostname)
-cat ~/loot/$HOST/summary.txt    # read this FIRST — flags highest-value findings
+cat ~/loot/$HOST/attack_commands.txt    # ★ START HERE — pre-built exploit commands per finding
+cat ~/loot/$HOST/summary.txt            # full findings overview
 ```
 
 **Act on findings in this priority order:**
@@ -372,7 +373,8 @@ powershell -ep bypass -File .\lootr.ps1
 
 ```powershell
 $H = $env:COMPUTERNAME; $R = ".\loot\$H"
-Get-Content "$R\summary.txt"    # read this FIRST
+Get-Content "$R\attack_commands.txt"    # ★ START HERE — pre-built exploit commands per finding
+Get-Content "$R\summary.txt"            # full findings overview
 ```
 
 **Act on findings in this priority order:**
@@ -480,7 +482,8 @@ C:\Windows\Temp\winPEASx64.exe | Tee-Object C:\Windows\Temp\winpeas_output.txt
 
 ```bash
 ./escalatr.sh --parse /tmp/linpeas_output.txt
-cat $TOOLKIT_ROOT/privesc/TARGET_IP/quick-wins.txt
+cat $TOOLKIT_ROOT/privesc/TARGET_IP/attack_commands.txt    # ★ START HERE — ready-to-run exploit commands
+cat $TOOLKIT_ROOT/privesc/TARGET_IP/quick-wins.txt         # full parsed findings
 ```
 
 **Decision:** Act on any findings using the same priority tables from Phase 3 (Linux or Windows). The technique detail is in `Linux_PrivEsc.md` and `Windows_PrivEsc.md`.
@@ -924,7 +927,7 @@ Do this right now, not later. Copy the flag value and submit it in the OffSec en
    Linux? → servr.sh http → transfer + run lootr.sh on target
    Windows? → servr.sh smb → transfer + run lootr.ps1 on target
 5. While lootr runs → run escalatr.sh from Kali
-6. Read lootr summary.txt → check each finding per Phase 3 decision tree
+6. Read lootr attack_commands.txt → copy-paste exploits per finding (then summary.txt for context)
 7. Feed any hashes to crackr.sh -q immediately
 8. Spray any cracked cred immediately: sprayr.sh --from-creds
 9. Root/SYSTEM? → evidencr.sh IMMEDIATELY → screenshot → submit flag
@@ -984,7 +987,7 @@ Do this right now, not later. Copy the flag value and submit it in the OffSec en
    f. writable_service_binaries.txt → replace binary + restart service
 
 3. None of the above?
-   → Run winPEAS via escalatr.sh → parse output → check quick-wins.txt
+   → Run winPEAS via escalatr.sh → parse output → check attack_commands.txt first, then quick-wins.txt
    → Check PowerShell history: type $env:APPDATA\Microsoft\Windows\PowerShell\PSReadLine\ConsoleHost_history.txt
    → Check for saved WiFi passwords, browser creds, KeePass databases
    → Look for non-standard services or scheduled tasks running as SYSTEM

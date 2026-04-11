@@ -39,7 +39,10 @@ cat $TOOLKIT_ROOT/privesc/10.10.10.1/commands.txt
 ./escalatr.sh --parse /tmp/linpeas_output.txt
 ./escalatr.sh --parse /tmp/winpeas_output.txt --os windows
 
-# 6. Check quick-wins report
+# 6. ★ START HERE — pre-built exploit commands for every finding
+cat $TOOLKIT_ROOT/privesc/10.10.10.1/attack_commands.txt
+
+# 7. Full parsed findings
 cat $TOOLKIT_ROOT/privesc/10.10.10.1/quick-wins.txt
 ```
 
@@ -97,6 +100,7 @@ $TOOLKIT_ROOT/privesc/<IP>/
 ├── tools/              # Downloaded tools ready for transfer
 ├── commands.txt        # Prioritized copy-paste enumeration commands
 ├── quick-wins.txt      # Parsed findings report (after --parse)
+├── attack_commands.txt # ★ START HERE — fully resolved exploit commands (after --parse)
 ├── raw/                # Raw tool output copies
 └── progress.log        # Phase tracking (START/DONE/FAIL)
 ```
@@ -411,13 +415,14 @@ Kernel (last resort)
 ./escalatr.sh --parse /tmp/linpeas_output.txt
 ./escalatr.sh --parse /tmp/winpeas_output.txt --os windows
 
-# Output written to:
-$TOOLKIT_ROOT/privesc/parsed_YYYYMMDD_HHMMSS/quick-wins.txt
+# Two output files written:
+$TOOLKIT_ROOT/privesc/parsed_YYYYMMDD_HHMMSS/quick-wins.txt      # findings summary
+$TOOLKIT_ROOT/privesc/parsed_YYYYMMDD_HHMMSS/attack_commands.txt  # ★ ready-to-run exploits
 ```
 
-**Parser extracts:**
-- Linux: sudo entries, non-standard SUID binaries, capabilities, writable critical files, shared object issues, cron jobs, credentials, internal services, group membership, NFS exports, linpeas RED/YELLOW highlights
-- Windows: token privileges, stored credentials, unquoted paths, modifiable services, DLL hijacking indicators, AlwaysInstallElevated, scheduled tasks, cleartext credentials, internal listeners, winPEAS highlights
+**Parser extracts and generates commands for:**
+- Linux: sudo NOPASSWD per binary (GTFOBins), non-standard SUID per binary (GTFOBins), capabilities (cap_setuid/cap_dac), writable `/etc/sudoers` or `/etc/passwd`, NFS `no_root_squash`, cron injection template, internal services → `pivotr.sh` command per port
+- Windows: token privileges (SeImpersonate → Potato by OS, SeBackup → `reg save`, SeDebug → `procdump`), stored creds → `runas`, AlwaysInstallElevated → MSI payload, unquoted path → payload placement, writable service binary → replace + restart, DLL hijack → `msfvenom`/`mingw` template, internal listeners → `chisel`/SSH forward
 
 ---
 

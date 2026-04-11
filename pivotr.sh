@@ -499,6 +499,11 @@ mode_ligolo() {
         "4. Verify tunnel (from new Kali terminal):" \
         "   nmap -sT -Pn -p 22,80,445 <INTERNAL_IP>" \
         "" \
+        "5. Enumerate internal network (once tunnel is up):" \
+        "   ./recon.sh --auto <INTERNAL_HOST_IP>   # full recon on target" \
+        "   ./adr.sh -dc <DC_IP> -u <USER> -p '<PASS>'  # if domain joined" \
+        "   nxc smb ${subnet%/*}/24 --gen-relay-list /tmp/smb_hosts.txt  # find SMB hosts" \
+        "" \
         "TIP: Access pivot localhost via 240.0.0.1 (Ligolo magic IP)" \
         "TIP: v0.8+ autoroute may handle routes — manual is reliable" \
         "TIP: In console: interface_create --name ligolo (v0.6+)"
@@ -610,6 +615,15 @@ mode_listener() {
     fi
 
     echo -e "${YELLOW}[!] Reverse shell must connect to KALI_IP:PORT — ligolo forwards it${NC}"
+    echo ""
+    echo -e "${BOLD}Once shell lands on Kali:${NC}"
+    echo -e "  ${CYAN}# Upgrade shell first:${NC}"
+    echo -e "  ${YELLOW}python3 -c 'import pty; pty.spawn(\"/bin/bash\")'${NC}"
+    echo -e "  ${YELLOW}Ctrl+Z → stty raw -echo; fg → export TERM=xterm${NC}"
+    echo ""
+    echo -e "  ${CYAN}# Then enumerate the internal host:${NC}"
+    echo -e "  ${YELLOW}./recon.sh --auto <INTERNAL_HOST_IP>   # from Kali after noting the IP${NC}"
+    echo -e "  ${YELLOW}./escalatr.sh                              # on the remote host${NC}"
 }
 
 #==============================================================================
@@ -708,6 +722,18 @@ mode_ssh() {
             echo -e "  ${GREEN}ssh -N -L 0.0.0.0:${local_port}:${target_ip}:${target_port} ${pivot_user}@${pivot_ip} -p ${pivot_port}${NC}"
             echo ""
             echo -e "${BOLD}Then access:${NC}  localhost:${local_port} on Kali"
+            echo ""
+            echo -e "${BOLD}Verify tunnel works:${NC}"
+            echo -e "  ${YELLOW}curl -s --connect-timeout 3 http://localhost:${local_port}  # if HTTP"
+            echo -e "  ${YELLOW}nc -zv localhost ${local_port}                               # generic port check"
+            echo ""
+            echo -e "${BOLD}Debug if tunnel fails:${NC}"
+            echo -e "  ${YELLOW}# Check pivot is reachable:  ping ${pivot_ip}"
+            echo -e "  ${YELLOW}# Check pivot port is open:  nc -zv ${pivot_ip} ${pivot_port}"
+            echo -e "  ${YELLOW}# Check target is reachable from pivot (run on pivot):"
+            echo -e "  ${YELLOW}#   nc -zv ${target_ip} ${target_port}"
+            echo -e "  ${YELLOW}# Check Kali ufw: sudo ufw status  (should be inactive or allow port)"
+            echo -e "${NC}"
             ;;
 
         dynamic)
@@ -723,6 +749,17 @@ mode_ssh() {
             echo -e "  ${YELLOW}socks5 127.0.0.1 ${socks_port}${NC}"
             echo ""
             echo -e "${RED}${BOLD}[!] proxychains scans MUST use: nmap -sT -Pn (no SYN, no ping)${NC}"
+            echo ""
+            echo -e "${BOLD}Verify SOCKS tunnel works:${NC}"
+            echo -e "  ${YELLOW}proxychains -q curl -s --connect-timeout 5 http://<TARGET_IP>"
+            echo -e "  ${YELLOW}proxychains -q nxc smb <TARGET_IP>                    # SMB check"
+            echo -e "  ${YELLOW}proxychains -q nmap -sT -Pn -p 445,80,22 <TARGET_IP>  # port check"
+            echo -e "${NC}"
+            echo -e "${BOLD}Debug if tunnel fails:${NC}"
+            echo -e "  ${YELLOW}# Check pivot is reachable: ping ${pivot_ip}"
+            echo -e "  ${YELLOW}# Check pivot port is open: nc -zv ${pivot_ip} ${pivot_port}"
+            echo -e "  ${YELLOW}# Kali ufw: sudo ufw status  (should be inactive or allow port)"
+            echo -e "${NC}"
             ;;
 
         remote)
@@ -739,6 +776,16 @@ mode_ssh() {
             echo -e "${BOLD}Then access on Kali:${NC}  localhost:${local_port}"
             echo ""
             echo -e "${YELLOW}[!] Ensure Kali sshd is running: sudo systemctl start ssh${NC}"
+            echo ""
+            echo -e "${BOLD}Verify tunnel works (run on Kali after pivot connects):${NC}"
+            echo -e "  ${YELLOW}nc -zv localhost ${local_port}                    # TCP port check"
+            echo -e "  ${YELLOW}curl -s --connect-timeout 3 http://localhost:${local_port}  # if HTTP"
+            echo ""
+            echo -e "${BOLD}Debug if tunnel fails:${NC}"
+            echo -e "  ${YELLOW}# Confirm pivot SSH outbound to Kali:  nc -zv ${kali_ip} 22 (from pivot)"
+            echo -e "  ${YELLOW}# Check Kali sshd GatewayPorts config: grep GatewayPorts /etc/ssh/sshd_config"
+            echo -e "  ${YELLOW}# Check local port is bound: ss -tlnp | grep ${local_port}"
+            echo -e "${NC}"
             ;;
 
         remote-dynamic)
@@ -753,6 +800,11 @@ mode_ssh() {
             echo ""
             echo -e "${RED}${BOLD}[!] proxychains scans MUST use: nmap -sT -Pn (no SYN, no ping)${NC}"
             echo -e "${YELLOW}[!] Ensure Kali sshd is running: sudo systemctl start ssh${NC}"
+            echo ""
+            echo -e "${BOLD}Verify SOCKS tunnel works:${NC}"
+            echo -e "  ${YELLOW}proxychains -q curl -s --connect-timeout 5 http://<TARGET_IP>"
+            echo -e "  ${YELLOW}proxychains -q nxc smb <TARGET_IP>"
+            echo -e "${NC}"
             ;;
     esac
 
@@ -844,6 +896,15 @@ mode_chisel() {
             echo -e "  ${YELLOW}socks5 127.0.0.1 ${socks_port}${NC}"
             echo ""
             echo -e "${RED}${BOLD}[!] proxychains scans MUST use: nmap -sT -Pn (no SYN, no ping)${NC}"
+            echo ""
+            echo -e "${BOLD}Verify SOCKS proxy (after pivot connects):${NC}"
+            echo -e "  ${CYAN}proxychains -q nxc smb <INTERNAL_SUBNET>/24${NC}          # SMB sweep"
+            echo -e "  ${CYAN}proxychains -q curl -s http://<INTERNAL_IP>${NC}           # HTTP test"
+            echo -e "  ${CYAN}proxychains -q nmap -sT -Pn -p 22,80,445 <INTERNAL_IP>${NC} # port check"
+            echo ""
+            echo -e "${BOLD}Then enumerate (proxychains wraps the scripts):${NC}"
+            echo -e "  ${CYAN}proxychains ./recon.sh --auto <INTERNAL_IP>${NC}       # full recon"
+            echo -e "  ${CYAN}proxychains ./adr.sh -dc <DC_IP> -u <USER> -p '<PASS>'${NC} # if AD"
 
             if [[ "$start_server" == true ]]; then
                 info "Starting chisel server..."

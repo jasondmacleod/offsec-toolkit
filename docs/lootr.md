@@ -81,7 +81,8 @@ Stable shell obtained?
 
 ```bash
 loot/<hostname>/
-├── summary.txt
+├── summary.txt          # ★ Findings overview
+├── attack_commands.txt  # ★ START HERE — fully resolved exploit commands
 ├── progress.log
 ├── proof/
 ├── system/
@@ -94,7 +95,8 @@ loot/<hostname>/
 
 ```powershell
 loot\<hostname>\
-├── summary.txt
+├── summary.txt          # ★ Findings overview
+├── attack_commands.txt  # ★ START HERE — fully resolved exploit commands
 ├── progress.log
 ├── proof\
 ├── system\
@@ -150,26 +152,29 @@ The scripts handle all collection logic. This section tells you **what to look f
 ```bash
 HOST=$(hostname)
 
-# 1. Start with summary because it surfaces the fastest wins
+# 1. ★ START HERE — pre-built exploit commands for every finding
+cat loot/$HOST/attack_commands.txt
+
+# 2. Full findings summary
 cat loot/$HOST/summary.txt
 
-# 2. Flag confirmation and proof preservation
+# 3. Flag confirmation and proof preservation
 ls loot/$HOST/proof/
 
-# 3. Crack / reuse / pivot material
+# 4. Crack / reuse / pivot material
 cat loot/$HOST/creds/shadow_hashes.txt
 ls loot/$HOST/creds/key_*
 cat loot/$HOST/creds/config_files_with_creds.txt
 cat loot/$HOST/creds/kerberos.txt
 
-# 4. Direct privesc leads
+# 5. Direct privesc leads
 cat loot/$HOST/system/sudo_rights.txt
 cat loot/$HOST/files/capabilities.txt
 cat loot/$HOST/files/suid_binaries.txt
 cat loot/$HOST/files/cron_jobs.txt
 cat loot/$HOST/files/recently_modified.txt
 
-# 5. Pivot clues
+# 6. Pivot clues
 cat loot/$HOST/network/internal_listeners.txt
 cat loot/$HOST/network/reachable_subnets.txt
 cat loot/$HOST/network/hosts.txt
@@ -181,27 +186,30 @@ cat loot/$HOST/network/hosts.txt
 $HOSTNAME = $env:COMPUTERNAME
 $ROOT = ".\loot\$HOSTNAME"
 
-# 1. Start with summary because it highlights immediate privesc and credential wins
+# 1. ★ START HERE — pre-built exploit commands for every finding
+Get-Content "$ROOT\attack_commands.txt"
+
+# 2. Full findings summary
 Get-Content "$ROOT\summary.txt"
 
-# 2. Flag confirmation
+# 3. Flag confirmation
 Get-ChildItem "$ROOT\proof"
 
-# 3. Direct privesc checks
+# 4. Direct privesc checks
 Get-Content "$ROOT\files\always_install_elevated.txt"
 Get-Content "$ROOT\files\unquoted_service_paths.txt"
 Get-Content "$ROOT\files\writable_service_binaries.txt"
 Get-Content "$ROOT\files\writable_path_dirs.txt"
 Get-Content "$ROOT\files\dll_hijack_candidates.txt"
 
-# 4. Dangerous privileges and reusable creds
+# 5. Dangerous privileges and reusable creds
 Get-Content "$ROOT\creds\privileges.txt"
 Get-Content "$ROOT\creds\cmdkey.txt"
 Get-Content "$ROOT\creds\autologon.txt"
 Get-Content "$ROOT\creds\wifi_passwords.txt"
 Get-Content "$ROOT\creds\putty_sessions.txt"
 
-# 5. Pivot and lateral clues
+# 6. Pivot and lateral clues
 Get-Content "$ROOT\network\internal_listeners.txt"
 Get-Content "$ROOT\network\shares.txt"
 Get-Content "$ROOT\network\mapped_drives.txt"
@@ -213,21 +221,24 @@ Get-Content "$ROOT\network\hosts.txt"
 > [!important] Do Not Let Findings Sit
 > Every lootr finding maps to an immediate next action. If you finish reviewing and haven't acted on anything yet, you wasted the collection.
 
+> [!tip] attack_commands.txt generates all of the below automatically
+> Every finding lootr.sh surfaces also writes a ready-to-run command into `attack_commands.txt`. Read that file first — the table below is your fallback if the finding isn't covered or you need to understand the why.
+
 | Finding | Immediate action |
 |---------|-----------------|
 | Flags found | `cat`/`type`, screenshot with `whoami` and path, note in report — **do this first** |
-| Shadow hashes | Feed to `crackr.sh` now |
-| SSH keys | Test against every other known host now |
+| Shadow hashes | `attack_commands.txt` has `unshadow` + `crackr.sh` pipeline |
+| SSH keys | `attack_commands.txt` has `ssh -i key USER@HOST` per user per key |
 | Stored creds (cmdkey, autologon, wifi, cleartext) | Test reuse now — feed to `sprayr.sh` if AD context |
 | Kerberos tickets | Import and test with `impacket` tools now |
-| SeImpersonatePrivilege | Potato attack now → [[Windows_PrivEsc]] |
-| SeBackupPrivilege / SeDebugPrivilege | Exploit via known paths now → [[Windows_PrivEsc]] |
-| AlwaysInstallElevated | MSI payload now → [[Windows_PrivEsc]] |
-| Unquoted service paths / writable service binaries | Service abuse now → [[Windows_PrivEsc]] |
-| SUID / capabilities hits | Check GTFOBins now → [[Linux_PrivEsc]] |
-| Writable cron jobs | Inject payload now → [[Linux_PrivEsc]] |
-| sudo rights | Check GTFOBins / sudo abuse now → [[Linux_PrivEsc]] |
-| Internal listeners on 127.x | Tunnel with `pivotr.sh` now |
+| SeImpersonatePrivilege | `attack_commands.txt` has Potato command for detected OS version |
+| SeBackupPrivilege / SeDebugPrivilege | `attack_commands.txt` has `reg save` / `procdump` command |
+| AlwaysInstallElevated | `attack_commands.txt` has `msfvenom` MSI + `msiexec` command |
+| Unquoted service paths / writable service binaries | `attack_commands.txt` has payload placement + restart command |
+| SUID / capabilities hits | `attack_commands.txt` has GTFOBins one-liner per binary |
+| Writable cron jobs | `attack_commands.txt` has injection template |
+| sudo rights | `attack_commands.txt` has GTFOBins command per allowed binary |
+| Internal listeners on 127.x | `attack_commands.txt` has `pivotr.sh` command per port |
 | New subnets / hosts discovered | Add to target list, scan with `recon.sh` now |
 | SMB shares / mapped drives | Enumerate for creds and data now |
 
@@ -282,7 +293,7 @@ powershell -ep bypass -File .\lootr.ps1 -OutDir C:\Windows\Temp\loot
 > The output may contain flags, hashes, private keys, Wi-Fi passwords, registry-derived creds, and ticket material. Treat the loot directory like evidence and keep host folders separated.
 
 > [!important] High-ROI Checks
-> The first files worth reviewing are usually:
+> Start with `attack_commands.txt` — it synthesizes every finding into ready-to-run commands. Then:
 > Linux: `summary.txt`, `shadow_hashes.txt`, SSH keys, `sudo_rights.txt`, `capabilities.txt`, `internal_listeners.txt`.
 > Windows: `summary.txt`, `always_install_elevated.txt`, `privileges.txt`, `autologon.txt`, `cmdkey.txt`, `wifi_passwords.txt`, `unquoted_service_paths.txt`.
 
