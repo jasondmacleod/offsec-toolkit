@@ -795,8 +795,11 @@ WINDOWS_COMMANDS
 parse_linux_output() {
     local input_file="$1"
     local output_dir="$2"
+    local target_ip="${3:-}"
     local quickwins="$output_dir/quick-wins.txt"
     local raw_dir="$output_dir/raw"
+    local kali_ip
+    kali_ip=$(get_kali_ip)
 
     phase "Parsing Linux enumeration output"
     mkdir -p "$raw_dir"
@@ -1134,6 +1137,10 @@ CEOF
         echo "============================================================"
     } > "${acfile}"
 
+    # Resolve known values — no placeholders in copy-paste commands
+    sed -i "s/<KALI_IP>/${kali_ip}/g" "${acfile}" 2>/dev/null
+    [[ -n "${target_ip}" ]] && sed -i "s/<TARGET_IP>/${target_ip}/g" "${acfile}" 2>/dev/null
+
     success "Attack commands → ${acfile}"
     warn "cat ${acfile}  # ← START HERE for exploitation"
 }
@@ -1141,8 +1148,11 @@ CEOF
 parse_windows_output() {
     local input_file="$1"
     local output_dir="$2"
+    local target_ip="${3:-}"
     local quickwins="$output_dir/quick-wins.txt"
     local raw_dir="$output_dir/raw"
+    local kali_ip
+    kali_ip=$(get_kali_ip)
 
     phase "Parsing Windows enumeration output"
     mkdir -p "$raw_dir"
@@ -1433,6 +1443,10 @@ parse_windows_output() {
 
         echo "============================================================"
     } > "${acfile}"
+
+    # Resolve known values — no placeholders in copy-paste commands
+    sed -i "s/<KALI_IP>/${kali_ip}/g" "${acfile}" 2>/dev/null
+    [[ -n "${target_ip}" ]] && sed -i "s/<TARGET_IP>/${target_ip}/g" "${acfile}" 2>/dev/null
 
     success "Attack commands → ${acfile}"
     warn "cat ${acfile}  # ← START HERE for exploitation"
@@ -1776,9 +1790,9 @@ main() {
         fi
 
         if [[ "$target_os" == "linux" ]]; then
-            parse_linux_output "$parse_file" "$parse_dir"
+            parse_linux_output "$parse_file" "$parse_dir" "${target_ip:-}"
         else
-            parse_windows_output "$parse_file" "$parse_dir"
+            parse_windows_output "$parse_file" "$parse_dir" "${target_ip:-}"
         fi
         exit 0
     fi
