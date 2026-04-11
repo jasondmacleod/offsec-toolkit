@@ -135,12 +135,16 @@ startr complete → recon running on all 6 targets
 │      nxc smb $DC -u $ADUSER -p $ADPASS
 │      nxc smb $AD1 -u $ADUSER -p $ADPASS
 │      nxc smb $AD2 -u $ADUSER -p $ADPASS
-│      → If creds work: note access level. If not: flag it now, don't assume.
+│      → If creds work: run full AD enum now
+│      ./adr.sh -d $DOMAIN -u $ADUSER -p $ADPASS -dc $DC
+│      → If not: flag it, don't assume — spray with crackr/sprayr once you find hashes
 │
-├── 2. Monitor recon results as they land
-│      Watch tmux windows 0–3 for recon.sh output
-│      First standalone with HTTP/SMB/interesting ports → start attacking it
-│      Don't wait for all scans to finish
+├── 2. Monitor recon results — read these first as each scan lands
+│      cat $TOOLKIT_ROOT/recon/$SA1/summary.txt          # NEXT-STEP COMMANDS section
+│      cat $TOOLKIT_ROOT/recon/$SA1/loot/quick_wins.txt  # anonymous access, default creds, exploits
+│      cat $TOOLKIT_ROOT/recon/*/loot/quick_wins.txt     # all targets at once
+│      → scroll to NEXT-STEP COMMANDS in summary.txt for ready-to-run follow-ons
+│      → don't wait for all scans to finish; act on the first result that lands
 │
 ├── 3. Pick first standalone target
 │      Triage by open ports: HTTP (80/443/8080) → web enum first
