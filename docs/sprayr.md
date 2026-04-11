@@ -146,14 +146,19 @@ Script auto-generates fully resolved follow-on commands based on what was found:
 
 | Finding | Commands Generated |
 |---------|--------------------|
-| SMB `Pwn3d!` | `impacket-psexec`, `impacket-wmiexec`, `impacket-smbexec`, `--sam` dump, `impacket-secretsdump` |
-| WinRM `Pwn3d!` | `evil-winrm -i TARGET -u USER [-p PASS \| -H HASH]` |
+| SMB `Pwn3d!` (pass) | `impacket-psexec`, `impacket-wmiexec`, `impacket-smbexec`, `--sam` dump, `impacket-secretsdump`, `./adr.sh` (if domain), `nxc smb --put-file lootr.ps1` + exec |
+| SMB `Pwn3d!` (hash) | Same as above with `-H :NTHASH` variants |
+| WinRM `Pwn3d!` | `evil-winrm` connect, `upload lootr.ps1`, `powershell lootr.ps1`, `download attack_commands.txt` |
+| SSH hit | `ssh USER@TARGET`, `./escalatr.sh -t TARGET -u USER -p PASS`, `scp`/`ssh` to run `lootr.sh` |
 | RDP hit | `xfreerdp3` with correct `/pth:` or `/p:` and `/d:` flags |
-| SSH hit | `ssh USER@TARGET` |
 | MSSQL hit | `nxc mssql ... -q 'SELECT @@version'` |
 | LDAP hit | `./adr.sh -d DOMAIN -u USER [-p PASS \| -H :HASH] -dc TARGET` |
 
 All commands are pre-filled with the actual credentials, hashes, IPs, and domain from the spray.
+
+> [!tip] **After SMB `Pwn3d!`:** `next_steps.txt` includes a `nxc smb --put-file` + exec block to drop and run `lootr.ps1` on the target, automatically generating `attack_commands.txt` for Windows privesc paths.
+> **After WinRM `Pwnd`:** `next_steps.txt` includes the full evil-winrm session sequence through `download attack_commands.txt`.
+> **After SSH hit:** `next_steps.txt` includes `./escalatr.sh` for automated Linux privesc enum + `lootr.sh` drop.
 
 ---
 

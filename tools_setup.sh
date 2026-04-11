@@ -350,15 +350,17 @@ if [[ "$CHECK_ONLY" == true ]]; then
         netexec responder impacket-scripts bloodhound \
         john hashcat wordlists seclists cewl hydra \
         rlwrap socat netcat-traditional curl wget python3-pip ruby-full unzip \
-        sqlmap proxychains4 ncat chisel; do
+        sqlmap proxychains4 ncat chisel \
+        ssh-audit kpcli ligolo-ng ligolo-ng-common-binaries; do
         check_apt "$pkg"
     done
 
     log_header "pip Packages"
-    check_pip "certipy-ad"    "certipy"
-    check_pip "bloodhound"    "bloodhound"
-    check_pip "impacket"      "impacket"
-    check_pip "enum4linux-ng" "enum4linux_ng" "enum4linux-ng"
+    check_pip "certipy-ad"       "certipy"
+    check_pip "bloodhound-ce"    "bloodhound_ce"    "bloodhound-ce-python"
+    check_pip "bloodhound"       "bloodhound"
+    check_pip "impacket"         "impacket"
+    check_pip "enum4linux-ng"    "enum4linux_ng"    "enum4linux-ng"
 
     log_header "gem Packages"
     check_gem "evil-winrm"
@@ -382,6 +384,8 @@ if [[ "$CHECK_ONLY" == true ]]; then
     check_file "${TOOLS_DIR}/chisel"      "chisel (linux)"
     check_file "${WIN_DIR}/chisel.exe"    "chisel (windows)"
     check_file "${TOOLS_DIR}/penelope.py"
+    check_file "${WIN_DIR}/RunasCs.exe"             "RunasCs.exe (local auth as another user)"
+    check_file "${WIN_DIR}/SeManageVolumeExploit.exe" "SeManageVolumeExploit.exe"
 
     # ── Summary ──────────────────────────────────────────────────────────────
     echo ""
@@ -428,6 +432,7 @@ APT_PACKAGES=(
     john hashcat wordlists seclists cewl hydra
     rlwrap socat netcat-traditional curl wget python3-pip ruby-full unzip
     sqlmap proxychains4 ncat chisel
+    ssh-audit kpcli ligolo-ng ligolo-ng-common-binaries
 )
 
 for pkg in "${APT_PACKAGES[@]}"; do
@@ -437,6 +442,7 @@ done
 # ── 2. pip ────────────────────────────────────────────────────────────────────
 log_header "2 · pip Packages"
 pip_install "certipy-ad"    "certipy"
+pip_install "bloodhound-ce" "bloodhound_ce"   # bloodhound-ce-python (adr.sh phase 6)
 pip_install "bloodhound"    "bloodhound"
 pip_install "impacket"      "impacket"
 pip_install "enum4linux-ng" "enum4linux_ng"
@@ -537,6 +543,14 @@ else
     log_error "  FAIL: could not resolve mimikatz URL"; FAILED+=("mimikatz.exe")
 fi
 
+# RunasCs — run commands as another local user (AutoLogon privesc)
+RUNASCS_URL=$(gh_latest_url "antonioCoco/RunasCs" "RunasCs\.zip$")
+dl_zip "$RUNASCS_URL" "${WIN_DIR}/RunasCs.exe" "RunasCs.exe" "RunasCs.exe"
+
+# SeManageVolumeExploit — SeManageVolumePrivilege → Full Control on System32 → DLL hijack
+SMVE_URL=$(gh_latest_url "CsEnox/SeManageVolumeExploit" "SeManageVolumeExploit\.exe$")
+download "$SMVE_URL" "${WIN_DIR}/SeManageVolumeExploit.exe"
+
 # ── 7. Linux binaries ─────────────────────────────────────────────────────────
 log_header "7 · Linux Binaries — Target Enumeration"
 
@@ -619,6 +633,8 @@ echo -e "  Linux    → ${LIN_DIR}/"
 echo -e "  Ligolo   → ${LIGOLO_DIR}/"
 echo -e "  chisel   → ${TOOLS_DIR}/chisel"
 echo -e "  penelope → ${TOOLS_DIR}/penelope.py"
+echo -e "  RunasCs  → ${WIN_DIR}/RunasCs.exe"
+echo -e "  SeManageVolumeExploit → ${WIN_DIR}/SeManageVolumeExploit.exe"
 
 echo -e "\n${BOLD}engagement-day file server:${NC}"
 echo -e "  cd ${WIN_DIR} && python3 -m http.server 80"

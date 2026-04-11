@@ -27,14 +27,18 @@ note()   { echo -e "  ${YELLOW}→${NC} $1"; }
 
 show_recon() {
     header "1. RECON — First 10 minutes per target"
-    cmd "./recon.sh 10.10.10.1 10.10.10.2 10.10.10.3"
-    note "Runs nmap (TCP+UDP top200), service enum, vuln scripts"
-    note "Output: \$TOOLKIT_ROOT/recon/<ip>/scans/"
-    note "Add --sequential if Kali is resource-limited"
+    cmd "./recon.sh --auto 10.10.10.1 10.10.10.2 10.10.10.3"
+    note "Runs rustscan → nmap TCP/UDP → service enum in parallel"
+    note "Output: \$TOOLKIT_ROOT/recon/<ip>/"
     echo ""
-    note "Quick check results:"
-    cmd "cat \$TOOLKIT_ROOT/recon/10.10.10.1/scans/*full*.nmap"
-    cmd "ls \$TOOLKIT_ROOT/recon/10.10.10.1/scans/"
+    note "★ Read these first (generated per target):"
+    cmd "cat \$TOOLKIT_ROOT/recon/10.10.10.1/summary.txt"
+    note "  └─ scroll to NEXT-STEP COMMANDS section for ready-to-run follow-ons"
+    cmd "cat \$TOOLKIT_ROOT/recon/10.10.10.1/loot/quick_wins.txt"
+    note "  └─ anonymous access, default creds, zone transfers, copy-paste exploit commands"
+    echo ""
+    note "Across all targets at once:"
+    cmd "cat \$TOOLKIT_ROOT/recon/*/loot/quick_wins.txt"
 }
 
 show_web() {
@@ -75,9 +79,14 @@ show_crack() {
 show_privesc() {
     header "6. PRIVESC ENUM — On target or remote"
     note "Linux target:"
-    cmd "./escalatr.sh 10.10.10.1 --os linux"
-    note "Or run lootr.sh directly on target for local enum"
-    note "Output: \$TOOLKIT_ROOT/privesc/"
+    cmd "./escalatr.sh -t 10.10.10.1 -u user -p 'pass'"
+    note "Windows target (run on target):"
+    cmd "powershell -ep bypass .\\lootr.ps1"
+    note "Output: \$TOOLKIT_ROOT/privesc/ (Linux) | .\\loot\\ (Windows)"
+    echo ""
+    note "★ Read attack_commands.txt first — contains resolved exploit commands per finding:"
+    cmd "cat \$TOOLKIT_ROOT/privesc/10.10.10.1/attack_commands.txt  # Linux"
+    cmd "type C:\\loot\\attack_commands.txt                        # Windows (on target)"
 }
 
 show_pivot() {
@@ -97,6 +106,11 @@ show_loot() {
     note "Windows target (run ON target):"
     cmd "powershell -ep bypass .\\lootr.ps1"
     note "Finds proof.txt/local.txt, creds, network info, privesc vectors"
+    echo ""
+    note "★ Read attack_commands.txt — generated per finding, no placeholders:"
+    cmd "cat loot/attack_commands.txt   # Linux output dir"
+    cmd "type loot\\attack_commands.txt  # Windows output dir"
+    note "  └─ SeImpersonate → Potato command, SUID → exploit, creds → spray, etc."
 }
 
 show_evidence() {
