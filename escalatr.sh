@@ -1129,7 +1129,7 @@ CEOF
                 [[ -z "${port}" ]] && continue
                 echo "# Port ${port}:"
                 echo "ssh -N -L 127.0.0.1:${port}:127.0.0.1:${port} <USER>@<TARGET_IP>"
-                echo "# OR: ./pivotr.sh --mode local --local-port ${port} --target 127.0.0.1 --target-port ${port} --pivot-ip <TARGET_IP>"
+                echo "# OR: ./pivotr.sh ssh --type local --local-port ${port} --target-ip 127.0.0.1 --target-port ${port} --pivot-ip <TARGET_IP>"
             done <<< "${internal_ports}"
             echo ""
         fi

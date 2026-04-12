@@ -149,7 +149,7 @@ Script auto-generates fully resolved follow-on commands based on what was found:
 | SMB `Pwn3d!` (pass) | `impacket-psexec`, `impacket-wmiexec`, `impacket-smbexec`, `--sam` dump, `impacket-secretsdump`, `./adr.sh` (if domain), `nxc smb --put-file lootr.ps1` + exec |
 | SMB `Pwn3d!` (hash) | Same as above with `-H :NTHASH` variants |
 | WinRM `Pwn3d!` | `evil-winrm` connect, `upload lootr.ps1`, `powershell lootr.ps1`, `download attack_commands.txt` |
-| SSH hit | `ssh USER@TARGET`, `./escalatr.sh -t TARGET -u USER -p PASS`, `scp`/`ssh` to run `lootr.sh` |
+| SSH hit | `ssh USER@TARGET`, `./escalatr.sh TARGET --os linux`, `scp`/`ssh` to run `lootr.sh` |
 | RDP hit | `xfreerdp3` with correct `/pth:` or `/p:` and `/d:` flags |
 | MSSQL hit | `nxc mssql ... -q 'SELECT @@version'` |
 | LDAP hit | `./adr.sh -d DOMAIN -u USER [-p PASS \| -H :HASH] -dc TARGET` |

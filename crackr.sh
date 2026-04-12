@@ -1265,7 +1265,7 @@ run_hydra() {
                 echo "  find / -perm -4000 -type f 2>/dev/null"
                 echo ""
                 echo -e "${GREEN}# Run privilege escalation check:${NC}"
-                echo "  ./escalatr.sh -t ${target} -u ${ex_user} -p '${ex_pass}'"
+                echo "  ./escalatr.sh ${target} --os linux"
                 ;;
             smb|smbnt)
                 echo -e "${GREEN}# Spray across scope:${NC}"
@@ -1328,9 +1328,10 @@ run_hydra() {
                 ;;
             http-get|https-get|http-post-form|https-post-form)
                 echo -e "${GREEN}# Web login credentials found — enumerate authenticated content:${NC}"
-                echo "  ./webenum.sh --url http://${target} --user ${ex_user} --pass '${ex_pass}'"
+                echo "  ./webenum.sh --url http://${target}"
                 echo ""
-                echo -e "${GREEN}# Check for admin panels / file upload:${NC}"
+                echo -e "${GREEN}# Check for admin panels / file upload with the found creds:${NC}"
+                echo "  curl -sk -u '${ex_user}:${ex_pass}' 'http://${target}/admin'"
                 echo "  curl -sk -c /tmp/cookies.txt -b /tmp/cookies.txt 'http://${target}/admin'"
                 echo "  curl -sk -c /tmp/cookies.txt -b /tmp/cookies.txt 'http://${target}/dashboard'"
                 ;;

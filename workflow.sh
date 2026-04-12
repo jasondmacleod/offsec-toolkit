@@ -79,7 +79,7 @@ show_crack() {
 show_privesc() {
     header "6. PRIVESC ENUM — On target or remote"
     note "Linux target:"
-    cmd "./escalatr.sh -t 10.10.10.1 -u user -p 'pass'"
+    cmd "./escalatr.sh 10.10.10.1 --os linux"
     note "Windows target (run on target):"
     cmd "powershell -ep bypass .\\lootr.ps1"
     note "Output: \$TOOLKIT_ROOT/privesc/ (Linux) | .\\loot\\ (Windows)"

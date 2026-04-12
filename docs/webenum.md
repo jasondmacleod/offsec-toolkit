@@ -347,7 +347,7 @@ hydra -L users.txt -P passwords.txt TARGET http-get /admin
 
 ### Parameter Found (--deep mode)
 ```bash
-# quick_wins.txt contains a sqlmap command for parameters found by Phase 5 — copy from there
+# quick_wins.txt contains one sqlmap command per discovered parameter — copy from there
 sqlmap -u "http://TARGET/page?id=1" --batch --level 3 --risk 2
 ```
 

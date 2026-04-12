@@ -714,7 +714,7 @@ generate_attack_commands() {
                 [[ -z "${port}" ]] && continue
                 echo "# Port ${port} (internal only):"
                 echo "ssh -N -L 127.0.0.1:${port}:127.0.0.1:${port} <USER>@<THIS_HOST_IP>"
-                echo "# OR: ./pivotr.sh --mode local --local-port ${port} --target 127.0.0.1 --target-port ${port} --pivot-ip <THIS_HOST_IP>"
+                echo "# OR: ./pivotr.sh ssh --type local --local-port ${port} --target-ip 127.0.0.1 --target-port ${port} --pivot-ip <THIS_HOST_IP>"
                 echo "# Then connect: <tool> 127.0.0.1 ${port}"
                 echo ""
             done < "${OUTDIR}/network/internal_listeners.txt"

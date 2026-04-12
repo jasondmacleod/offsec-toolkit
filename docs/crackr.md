@@ -229,7 +229,7 @@ When hydra succeeds, the script automatically prints **service-specific next ste
 
 | Service | Next Steps Printed |
 |---------|-------------------|
-| `ssh` | `ssh user@target`, then `sudo -l` + escalatr suggestion |
+| `ssh` | `ssh user@target`, then `sudo -l` + `./escalatr.sh target --os linux` |
 | `smb` | `nxc smb --shares`, `nxc smb --sam`, `./adr.sh` |
 | `winrm` | `evil-winrm -i target -u user -p pass` + `./adr.sh` |
 | `rdp` | `xfreerdp /v:target /u:user /p:pass /cert:ignore` |
@@ -238,7 +238,7 @@ When hydra succeeds, the script automatically prints **service-specific next ste
 | `mysql` | `mysql -h target -u user -p'pass'` + `mysqldump` |
 | `postgres` | `PGPASSWORD=pass psql -h target -U user` |
 | `smtp` | `./sprayr.sh` + IMAP curl |
-| `http-*` | `./webenum.sh --user/--pass` + admin curl |
+| `http-*` | `./webenum.sh --url http://target` + credentialed admin curl |
 
 ---
 
@@ -424,5 +424,5 @@ crackr -f keepass.hash -m 13400 -q
 
 - [[Passwords]] — manual password attack techniques and methodology
 - [[Active_Directory]] — where NTLM, NTLMv2, Kerberoast, AS-REP hashes come from
-- [[Linux_PrivEsc]] — where shadow files come from
+- [[lootr]] — where collected shadow files and `attack_commands.txt` come from
 - [[OffSec_Password_Attacks_Mental_Model_Bus_Review]] — decision-tree for attack selection

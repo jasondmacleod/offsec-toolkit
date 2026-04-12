@@ -1231,8 +1231,15 @@ generate_summary() {
                 echo "${param_lines}" | sed 's/^/  PARAM: /'
                 echo ""
                 echo "  NEXT (test parameters for injection):"
-                echo "  sqlmap -u '${url}?<PARAM>=1' --batch --level 2"
-                echo "  # Manual XSS: ${url}?<PARAM>=<script>alert(1)</script>"
+                while IFS= read -r param_line; do
+                    [[ -z "${param_line}" ]] && continue
+                    local param_url xss_url
+                    param_url=$(echo "${param_line}" | awk '{print $1}')
+                    [[ -z "${param_url}" || "${param_url}" != http* ]] && continue
+                    xss_url="${param_url/testvalue/%3Cscript%3Ealert(1)%3C%2Fscript%3E}"
+                    echo "  sqlmap -u '${param_url}' --batch --level 2"
+                    echo "  curl -sk '${xss_url}'"
+                done <<< "${param_lines}"
             else
                 echo "  (none found)"
             fi
