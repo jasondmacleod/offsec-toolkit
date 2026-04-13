@@ -499,7 +499,7 @@ mode_ligolo() {
         "5. Enumerate internal network (once tunnel is up):" \
         "   ./recon.sh --auto <INTERNAL_HOST_IP>   # full recon on target" \
         "   ./adr.sh -dc <DC_IP> -u <USER> -p '<PASS>'  # if domain joined" \
-        "   nxc smb ${subnet%/*}/24 --gen-relay-list /tmp/smb_hosts.txt  # find SMB hosts" \
+        "   nxc smb ${subnet} --gen-relay-list /tmp/smb_hosts.txt  # find SMB hosts" \
         "" \
         "TIP: Access pivot localhost via 240.0.0.1 (Ligolo magic IP)" \
         "TIP: v0.8+ autoroute may handle routes — manual is reliable" \
