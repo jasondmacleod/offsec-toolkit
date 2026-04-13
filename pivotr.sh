@@ -491,7 +491,7 @@ mode_ligolo() {
         "3. In Ligolo console (when agent connects):" \
         "   session       → select the agent" \
         "   ifconfig      → confirm internal interface" \
-        "   start         → activate tunnel" \
+        "   tunnel_start --tun ${tun_name}   → activate tunnel" \
         "" \
         "4. Verify tunnel (from new Kali terminal):" \
         "   nmap -sT -Pn -p 22,80,445 <INTERNAL_IP>" \
@@ -502,8 +502,7 @@ mode_ligolo() {
         "   nxc smb ${subnet} --gen-relay-list /tmp/smb_hosts.txt  # find SMB hosts" \
         "" \
         "TIP: Access pivot localhost via 240.0.0.1 (Ligolo magic IP)" \
-        "TIP: v0.8+ autoroute may handle routes — manual is reliable" \
-        "TIP: In console: interface_create --name ligolo (v0.6+)"
+        "TIP: v0.8+ autoroute may handle routes — manual is reliable"
 
     info "Proxy PID ${proxy_pid} — press Ctrl+C to stop and clean up"
     # Keep script alive while proxy runs (user will Ctrl+C when done)
@@ -620,7 +619,7 @@ mode_listener() {
     echo ""
     echo -e "  ${CYAN}# Then enumerate the internal host:${NC}"
     echo -e "  ${YELLOW}./recon.sh --auto <INTERNAL_HOST_IP>   # from Kali after noting the IP${NC}"
-    echo -e "  ${YELLOW}./escalatr.sh                              # on the remote host${NC}"
+    echo -e "  ${YELLOW}./escalatr.sh <INTERNAL_HOST_IP> --os linux  # run from Kali${NC}"
 }
 
 #==============================================================================
