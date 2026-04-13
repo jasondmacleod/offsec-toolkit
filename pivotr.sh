@@ -409,16 +409,36 @@ mode_ligolo() {
     add_route "$subnet" "$tun_name" || return 1
 
     # 5. Start proxy
+    # -daemon suppresses the interactive CLI/WebUI prompt (non-interactive safe)
     phase "Starting Ligolo Proxy"
-    info "Starting: ${proxy_bin} -nobanner -selfcert -laddr 0.0.0.0:${port}"
-    "$proxy_bin" -nobanner -selfcert -laddr "0.0.0.0:${port}" &
+    local proxy_log="${STATE_DIR}/proxy.log"
+    mkdir -p -- "$STATE_DIR"
+    info "Starting: ${proxy_bin} -nobanner -selfcert -daemon -laddr 0.0.0.0:${port}"
+    "$proxy_bin" -nobanner -selfcert -daemon -laddr "0.0.0.0:${port}" > "$proxy_log" 2>&1 &
     local proxy_pid=$!
-    if ! wait_for_tcp_listener "0.0.0.0:${port}" 5 && ! wait_for_tcp_listener "*:${port}" 5; then
-        error "Proxy failed to start. Check if port ${port} is already in use."
+
+    # Wait for readiness by watching proxy stdout for the "Listening on" line
+    local waited=0
+    local proxy_timeout=10
+    while (( waited < proxy_timeout * 10 )); do
+        if grep -q "Listening on" "$proxy_log" 2>/dev/null; then
+            break
+        fi
+        if ! kill -0 "$proxy_pid" 2>/dev/null; then
+            error "Proxy process died unexpectedly. Log: ${proxy_log}"
+            [[ -s "$proxy_log" ]] && tail -5 "$proxy_log" >&2
+            return 1
+        fi
+        sleep 0.1
+        (( waited++ ))
+    done
+    if ! grep -q "Listening on" "$proxy_log" 2>/dev/null; then
+        error "Proxy did not report ready within ${proxy_timeout}s. Log: ${proxy_log}"
         return 1
     fi
+
     register_bg "$proxy_pid" "ligolo-proxy"
-    success "Ligolo proxy listening on 0.0.0.0:${port}"
+    success "Ligolo proxy listening on 0.0.0.0:${port} (log: ${proxy_log})"
 
     # Record tunnel config for reconnect
     record_state "tunnel" "ligolo" "subnet=${subnet};port=${port};tun_name=${tun_name};kali_ip=${kali_ip};pivot_ip=${pivot_ip:-};serve=${serve};serve_port=${serve_port}"
@@ -429,7 +449,8 @@ mode_ligolo() {
         phase "File Server"
         is_valid_port "$serve_port" || { error "Invalid serve port: $serve_port"; return 1; }
         local serve_dir
-        serve_dir="$(pwd)"
+        serve_dir="$(dirname "$(realpath "$0")")/ligolo"
+        mkdir -p -- "$serve_dir"
 
         # Find agent binaries and symlink/note their paths
         local agent_linux agent_win
