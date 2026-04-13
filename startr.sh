@@ -384,7 +384,7 @@ build_tmux() {
     tx tmux new-window -t "${SESSION_NAME}" -n "staging"
     tx tmux send-keys -t "${SESSION_NAME}:staging.${P0}" "$src_cmd" C-m
     if [[ -d "$TOOLKIT_DIR" ]]; then
-        tx tmux send-keys -t "${SESSION_NAME}:staging.${P0}" "cd ${TOOLKIT_DIR} && python3 -m http.server 8000" C-m
+        tx tmux send-keys -t "${SESSION_NAME}:staging.${P0}" "cd ${TOOLKIT_DIR} && python3 -m http.server 80" C-m
     else
         tx tmux send-keys -t "${SESSION_NAME}:staging.${P0}" "echo 'Toolkit dir not found — start file server manually'" C-m
     fi
