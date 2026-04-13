@@ -411,10 +411,15 @@ mode_ligolo() {
     # 5. Start proxy
     # -daemon suppresses the interactive CLI/WebUI prompt (non-interactive safe)
     phase "Starting Ligolo Proxy"
+    local ligolo_dir
+    ligolo_dir="$(dirname "$(realpath "$0")")/ligolo"
+    mkdir -p -- "${ligolo_dir}/certs" "$STATE_DIR"
     local proxy_log="${STATE_DIR}/proxy.log"
-    mkdir -p -- "$STATE_DIR"
     info "Starting: ${proxy_bin} -nobanner -selfcert -daemon -laddr 0.0.0.0:${port}"
-    "$proxy_bin" -nobanner -selfcert -daemon -laddr "0.0.0.0:${port}" > "$proxy_log" 2>&1 &
+    "$proxy_bin" -nobanner -selfcert -daemon \
+        -certfile "${ligolo_dir}/certs/cert.pem" \
+        -keyfile  "${ligolo_dir}/certs/key.pem"  \
+        -laddr "0.0.0.0:${port}" > "$proxy_log" 2>&1 &
     local proxy_pid=$!
 
     # Wait for readiness by watching proxy stdout for the "Listening on" line
@@ -448,9 +453,7 @@ mode_ligolo() {
     if [[ "$serve" == true ]]; then
         phase "File Server"
         is_valid_port "$serve_port" || { error "Invalid serve port: $serve_port"; return 1; }
-        local serve_dir
-        serve_dir="$(dirname "$(realpath "$0")")/ligolo"
-        mkdir -p -- "$serve_dir"
+        local serve_dir="$ligolo_dir"
 
         # Find agent binaries and symlink/note their paths
         local agent_linux agent_win
