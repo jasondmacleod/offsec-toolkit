@@ -6,7 +6,7 @@
 # Does NOT run on compromised hosts. Does NOT exploit anything.
 #
 # USAGE:
-#   ./pivotr.sh ligolo   --subnet 10.10.10.0/24 [--pivot-ip IP] [--serve]
+#   ./pivotr.sh ligolo   --subnet 10.10.10.0/24 [--pivot-ip IP] [--serve] [--daemon]
 #   ./pivotr.sh ligolo2  --subnet 172.16.1.0/24
 #   ./pivotr.sh listener --port 4444 [--port 80]
 #   ./pivotr.sh ssh      --type dynamic --pivot-ip 10.10.10.5 --pivot-user user
@@ -337,6 +337,7 @@ mode_ligolo() {
     local kali_ip=""
     local serve=false
     local serve_port=80
+    local daemon=false
 
     # Parse args
     while [[ $# -gt 0 ]]; do
@@ -361,6 +362,8 @@ mode_ligolo() {
             --serve-port)
                 [[ $# -lt 2 ]] && { error "--serve-port requires an argument"; return 1; }
                 serve_port="$2"; shift 2 ;;
+            --daemon|--background)
+                daemon=true; shift ;;
             *)
                 error "Unknown option: $1"; return 1 ;;
         esac
@@ -408,47 +411,13 @@ mode_ligolo() {
     phase "Routing"
     add_route "$subnet" "$tun_name" || return 1
 
-    # 5. Start proxy
-    # -daemon suppresses the interactive CLI/WebUI prompt (non-interactive safe)
+    # 5. Setup certs directory (needed in both modes)
     phase "Starting Ligolo Proxy"
     local ligolo_dir
     ligolo_dir="$(dirname "$(realpath "$0")")/ligolo"
     mkdir -p -- "${ligolo_dir}/certs" "$STATE_DIR"
-    local proxy_log="${STATE_DIR}/proxy.log"
-    info "Starting: ${proxy_bin} -nobanner -selfcert -daemon -laddr 0.0.0.0:${port}"
-    "$proxy_bin" -nobanner -selfcert -daemon \
-        -certfile "${ligolo_dir}/certs/cert.pem" \
-        -keyfile  "${ligolo_dir}/certs/key.pem"  \
-        -laddr "0.0.0.0:${port}" > "$proxy_log" 2>&1 &
-    local proxy_pid=$!
 
-    # Wait for readiness by watching proxy stdout for the "Listening on" line
-    local waited=0
-    local proxy_timeout=10
-    while (( waited < proxy_timeout * 10 )); do
-        if grep -q "Listening on" "$proxy_log" 2>/dev/null; then
-            break
-        fi
-        if ! kill -0 "$proxy_pid" 2>/dev/null; then
-            error "Proxy process died unexpectedly. Log: ${proxy_log}"
-            [[ -s "$proxy_log" ]] && tail -5 "$proxy_log" >&2
-            return 1
-        fi
-        sleep 0.1
-        (( waited++ ))
-    done
-    if ! grep -q "Listening on" "$proxy_log" 2>/dev/null; then
-        error "Proxy did not report ready within ${proxy_timeout}s. Log: ${proxy_log}"
-        return 1
-    fi
-
-    register_bg "$proxy_pid" "ligolo-proxy"
-    success "Ligolo proxy listening on 0.0.0.0:${port} (log: ${proxy_log})"
-
-    # Record tunnel config for reconnect
-    record_state "tunnel" "ligolo" "subnet=${subnet};port=${port};tun_name=${tun_name};kali_ip=${kali_ip};pivot_ip=${pivot_ip:-};serve=${serve};serve_port=${serve_port}"
-
-    # 6. Optional file server
+    # 6. Optional file server (start before proxy so it's ready and box prints cleanly)
     local serve_url=""
     if [[ "$serve" == true ]]; then
         phase "File Server"
@@ -491,6 +460,9 @@ mode_ligolo() {
         fi
     fi
 
+    # Record tunnel config for reconnect
+    record_state "tunnel" "ligolo" "subnet=${subnet};port=${port};tun_name=${tun_name};kali_ip=${kali_ip};pivot_ip=${pivot_ip:-};serve=${serve};serve_port=${serve_port};daemon=${daemon}"
+
     # 7. NEXT STEPS box
     local agent_dl_linux agent_dl_win
     if [[ -n "$serve_url" ]]; then
@@ -501,36 +473,109 @@ mode_ligolo() {
         agent_dl_win="# Start file server: ./pivotr.sh ligolo ... --serve"
     fi
 
-    print_box "LIGOLO SETUP COMPLETE — NEXT STEPS" \
-        "1. Transfer agent to pivot host:" \
-        "" \
-        "   Linux:   ${agent_dl_linux}" \
-        "   Windows: ${agent_dl_win}" \
-        "" \
-        "2. Run agent on pivot host:" \
-        "" \
-        "   Linux:   /tmp/agent -connect ${kali_ip}:${port} -ignore-cert" \
-        "   Windows: .\\agent.exe -connect ${kali_ip}:${port} -ignore-cert" \
-        "" \
-        "3. In Ligolo console (when agent connects):" \
-        "   session       → select the agent" \
-        "   ifconfig      → confirm internal interface" \
-        "   tunnel_start --tun ${tun_name}   → activate tunnel" \
-        "" \
-        "4. Verify tunnel (from new Kali terminal):" \
-        "   nmap -sT -Pn -p 22,80,445 <INTERNAL_IP>" \
-        "" \
-        "5. Enumerate internal network (once tunnel is up):" \
-        "   ./recon.sh --auto <INTERNAL_HOST_IP>   # full recon on target" \
-        "   ./adr.sh -dc <DC_IP> -u <USER> -p '<PASS>'  # if domain joined" \
-        "   nxc smb ${subnet} --gen-relay-list /tmp/smb_hosts.txt  # find SMB hosts" \
-        "" \
-        "TIP: Access pivot localhost via 240.0.0.1 (Ligolo magic IP)" \
-        "TIP: v0.8+ autoroute may handle routes — manual is reliable"
+    if [[ "$daemon" == true ]]; then
+        print_box "LIGOLO SETUP COMPLETE — NEXT STEPS (daemon mode)" \
+            "NOTE: Proxy runs in BACKGROUND — no interactive console in this terminal." \
+            "" \
+            "1. Transfer agent to pivot host:" \
+            "" \
+            "   Linux:   ${agent_dl_linux}" \
+            "   Windows: ${agent_dl_win}" \
+            "" \
+            "2. Run agent on pivot host:" \
+            "" \
+            "   Linux:   /tmp/agent -connect ${kali_ip}:${port} -ignore-cert" \
+            "   Windows: .\\agent.exe -connect ${kali_ip}:${port} -ignore-cert" \
+            "" \
+            "3. Use the Ligolo WebUI to activate the tunnel:" \
+            "   http://127.0.0.1:8080  (if WebUI port is open)" \
+            "   Or re-run without --daemon for an interactive console." \
+            "" \
+            "4. Verify tunnel (from new Kali terminal):" \
+            "   nmap -sT -Pn -p 22,80,445 <INTERNAL_IP>" \
+            "" \
+            "5. Enumerate internal network (once tunnel is up):" \
+            "   ./recon.sh --auto <INTERNAL_HOST_IP>   # full recon on target" \
+            "   ./adr.sh -dc <DC_IP> -u <USER> -p '<PASS>'  # if domain joined" \
+            "   nxc smb ${subnet} --gen-relay-list /tmp/smb_hosts.txt  # find SMB hosts" \
+            "" \
+            "TIP: Access pivot localhost via 240.0.0.1 (Ligolo magic IP)" \
+            "TIP: Ctrl+C to stop proxy and all background processes"
+    else
+        print_box "LIGOLO SETUP COMPLETE — NEXT STEPS" \
+            "Proxy starting in THIS terminal — Ligolo console appears below." \
+            "" \
+            "1. Open a NEW terminal and transfer the agent to the pivot:" \
+            "" \
+            "   Linux:   ${agent_dl_linux}" \
+            "   Windows: ${agent_dl_win}" \
+            "" \
+            "2. Run agent on pivot host:" \
+            "" \
+            "   Linux:   /tmp/agent -connect ${kali_ip}:${port} -ignore-cert" \
+            "   Windows: .\\agent.exe -connect ${kali_ip}:${port} -ignore-cert" \
+            "" \
+            "   Agent connects back automatically — watch THIS terminal." \
+            "" \
+            "3. In Ligolo console (this terminal, when agent appears):" \
+            "   session                      → select the agent" \
+            "   ifconfig                     → confirm internal interface" \
+            "   tunnel_start --tun ${tun_name}   → activate tunnel" \
+            "" \
+            "4. Verify tunnel (from that same new Kali terminal):" \
+            "   nmap -sT -Pn -p 22,80,445 <INTERNAL_IP>" \
+            "" \
+            "5. Enumerate internal network (once tunnel is up):" \
+            "   ./recon.sh --auto <INTERNAL_HOST_IP>   # full recon on target" \
+            "   ./adr.sh -dc <DC_IP> -u <USER> -p '<PASS>'  # if domain joined" \
+            "   nxc smb ${subnet} --gen-relay-list /tmp/smb_hosts.txt  # find SMB hosts" \
+            "" \
+            "TIP: Access pivot localhost via 240.0.0.1 (Ligolo magic IP)" \
+            "TIP: Ctrl+C exits the proxy and cleans up all background processes"
+    fi
 
-    info "Proxy PID ${proxy_pid} — press Ctrl+C to stop and clean up"
-    # Keep script alive while proxy runs (user will Ctrl+C when done)
-    wait "$proxy_pid" 2>/dev/null || true
+    # 8. Start proxy
+    if [[ "$daemon" == true ]]; then
+        # Daemon mode: background process, poll log for readiness, then wait
+        local proxy_log="${STATE_DIR}/proxy.log"
+        info "Starting (daemon): ${proxy_bin} -nobanner -selfcert -daemon -laddr 0.0.0.0:${port}"
+        "$proxy_bin" -nobanner -selfcert -daemon \
+            -certfile "${ligolo_dir}/certs/cert.pem" \
+            -keyfile  "${ligolo_dir}/certs/key.pem"  \
+            -laddr "0.0.0.0:${port}" > "$proxy_log" 2>&1 &
+        local proxy_pid=$!
+
+        local waited=0
+        local proxy_timeout=10
+        while (( waited < proxy_timeout * 10 )); do
+            if grep -q "Listening on" "$proxy_log" 2>/dev/null; then
+                break
+            fi
+            if ! kill -0 "$proxy_pid" 2>/dev/null; then
+                error "Proxy process died unexpectedly. Log: ${proxy_log}"
+                [[ -s "$proxy_log" ]] && tail -5 "$proxy_log" >&2
+                return 1
+            fi
+            sleep 0.1
+            (( waited++ ))
+        done
+        if ! grep -q "Listening on" "$proxy_log" 2>/dev/null; then
+            error "Proxy did not report ready within ${proxy_timeout}s. Log: ${proxy_log}"
+            return 1
+        fi
+
+        register_bg "$proxy_pid" "ligolo-proxy"
+        success "Ligolo proxy listening on 0.0.0.0:${port} (log: ${proxy_log})"
+        info "Proxy PID ${proxy_pid} — press Ctrl+C to stop and clean up"
+        wait "$proxy_pid" 2>/dev/null || true
+    else
+        # Foreground mode: run proxy interactively — it takes over this terminal
+        info "Starting ligolo-proxy in foreground on 0.0.0.0:${port} — Ligolo console follows..."
+        "$proxy_bin" -nobanner -selfcert \
+            -certfile "${ligolo_dir}/certs/cert.pem" \
+            -keyfile  "${ligolo_dir}/certs/key.pem"  \
+            -laddr "0.0.0.0:${port}"
+    fi
 }
 
 #==============================================================================

