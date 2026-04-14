@@ -49,6 +49,16 @@ crackr --cewl http://target.htb --cewl-mutate -q -f hashes.txt
 > 5. # REPEAT after every new hash source (secretsdump, mimikatz, Responder, etc.)
 > ```
 
+> [!tip] **Post-crack next steps — auto-resolved**
+> After each crack run, the script prints a **POST-CRACK — WHAT TO DO NEXT** block with fully resolved copy-paste commands:
+> - The first cracked `user:pass` is read from the output file and substituted into every suggestion
+> - Hash-type-specific branches: AS-REP → spray + AD enum, Kerberoast → spray + group check, NTLM → spray + PTH + shell, NTLMv2 → spray + direct shell, Linux hashes → SSH + su, DCC2 → spray, MSSQL → mssqlclient + xp_cmdshell
+> - Set **`$OffSec_DOMAIN`** and **`$OffSec_DC`** once at engagement start for domain/DC resolution across all branches:
+> ```bash
+> export OffSec_DOMAIN=corp.local
+> export OffSec_DC=10.10.10.1
+> ```
+
 ---
 
 ## Offline Cracking
@@ -229,7 +239,7 @@ When hydra succeeds, the script automatically prints **service-specific next ste
 
 | Service | Next Steps Printed |
 |---------|-------------------|
-| `ssh` | `ssh user@target`, then `sudo -l` + `./escalatr.sh target --os linux` |
+| `ssh` | `ssh user@target`, then `sudo -l` + escalatr suggestion |
 | `smb` | `nxc smb --shares`, `nxc smb --sam`, `./adr.sh` |
 | `winrm` | `evil-winrm -i target -u user -p pass` + `./adr.sh` |
 | `rdp` | `xfreerdp /v:target /u:user /p:pass /cert:ignore` |
@@ -238,7 +248,7 @@ When hydra succeeds, the script automatically prints **service-specific next ste
 | `mysql` | `mysql -h target -u user -p'pass'` + `mysqldump` |
 | `postgres` | `PGPASSWORD=pass psql -h target -U user` |
 | `smtp` | `./sprayr.sh` + IMAP curl |
-| `http-*` | `./webenum.sh --url http://target` + credentialed admin curl |
+| `http-*` | `./webenum.sh --url http://TARGET` + admin curl |
 
 ---
 
@@ -424,5 +434,5 @@ crackr -f keepass.hash -m 13400 -q
 
 - [[Passwords]] — manual password attack techniques and methodology
 - [[Active_Directory]] — where NTLM, NTLMv2, Kerberoast, AS-REP hashes come from
-- [[lootr]] — where collected shadow files and `attack_commands.txt` come from
+- [[Linux_PrivEsc]] — where shadow files come from
 - [[OffSec_Password_Attacks_Mental_Model_Bus_Review]] — decision-tree for attack selection

