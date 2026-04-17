@@ -54,7 +54,19 @@ set -u
 #------------------------------------------------------------------------------
 # CONFIGURATION — Tune these for your environment / engagement needs
 #------------------------------------------------------------------------------
-TOOLKIT_ROOT="${TOOLKIT_ROOT:-${HOME}/offsec}"  # Unified output root (shared across toolkit)
+# Resolve workspace root — three-level priority:
+#   1. Explicit TOOLKIT_ROOT already set in environment (user override)
+#   2. Invoking user's home when running under sudo (prevents /root/offsec after re-exec)
+#   3. Current HOME as final fallback
+if [[ -z "${TOOLKIT_ROOT:-}" ]]; then
+    if [[ -n "${SUDO_USER:-}" ]]; then
+        _inv_home=$(getent passwd "$SUDO_USER" 2>/dev/null | cut -d: -f6)
+        TOOLKIT_ROOT="${_inv_home:-$HOME}/offsec"
+        unset _inv_home
+    else
+        TOOLKIT_ROOT="${HOME}/offsec"
+    fi
+fi
 RECON_DIR="${TOOLKIT_ROOT}/recon"         # Base output directory
 # Rustscan batch size — derived from current ulimit to avoid "Too many open files" noise
 _ulimit_n=$(ulimit -n 2>/dev/null || echo 1024)
@@ -2383,7 +2395,7 @@ done
 if [[ $EUID -ne 0 ]] && [[ "$NO_SUDO" != "true" ]]; then
     warn "Not running as root — re-executing with sudo for full scan capability (UDP, OS detect)..."
     warn "Pass --no-sudo to skip this. Sudo may prompt for your password."
-    exec sudo env PATH="$PATH" "$0" "${ORIGINAL_ARGS[@]}"
+    exec sudo env PATH="$PATH" TOOLKIT_ROOT="$TOOLKIT_ROOT" "$0" "${ORIGINAL_ARGS[@]}"
     # exec replaces this process; if it fails (no sudo), fall through with a warning
     warn "sudo exec failed — continuing without root (UDP and OS detection will be skipped)"
 fi
@@ -2392,6 +2404,17 @@ fi
 # PRE-FLIGHT CHECKS
 #------------------------------------------------------------------------------
 header "OffSec RECON WRAPPER — Pre-Flight Check"
+
+# ── Workspace resolution — verify this is correct before continuing ──────────
+_invoking_user="${SUDO_USER:-$(id -un)}"
+_effective_user="$(id -un)"
+echo -e "${BOLD}  Invoking user   :${NC} ${_invoking_user}"
+echo -e "${BOLD}  Effective user  :${NC} ${_effective_user}"
+echo -e "${BOLD}  Workspace root  :${NC} ${TOOLKIT_ROOT}"
+echo -e "${BOLD}  Recon output    :${NC} ${RECON_DIR}"
+unset _invoking_user _effective_user
+echo ""
+# ─────────────────────────────────────────────────────────────────────────────
 
 # Check critical tools
 CRITICAL_TOOLS=(rustscan nmap)
