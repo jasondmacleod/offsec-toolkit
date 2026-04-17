@@ -67,10 +67,12 @@ NMAP_TCP_TIMEOUT=600                   # Seconds for TCP service scan
 NMAP_UDP_TIMEOUT=900                   # Seconds for UDP scan (slow by nature)
 UDP_TOP_PORTS=200                      # Top N UDP ports to scan (200 balances coverage vs speed)
 GOBUSTER_THREADS=20                    # Directory brute threads (lighter for first-pass OffSec recon)
-GOBUSTER_TIMEOUT=30                    # Per-request timeout seconds
+GOBUSTER_TIMEOUT=5                     # Per-request timeout seconds (--timeout flag)
+GOBUSTER_RUNTIME=180                   # Max total runtime for the gobuster process
 GOBUSTER_WORDLIST="/usr/share/wordlists/dirbuster/directory-list-2.3-medium.txt"
 GOBUSTER_EXTENSIONS="php,asp,aspx,txt,html"   # Trimmed for first-pass speed; add cgi,jsp,bak manually if needed
-NIKTO_TIMEOUT=300                      # Seconds
+NIKTO_TIMEOUT=120                      # Seconds
+FEROX_RUNTIME=180                      # Max total runtime for the feroxbuster process
 ENUM4LINUX_TIMEOUT=300                 # Seconds
 SMBMAP_TIMEOUT=120                     # Seconds
 SNMPWALK_TIMEOUT=120                   # Seconds
@@ -781,7 +783,7 @@ enum_http() {
                 # Add -k for HTTPS (skip cert verification)
                 [[ "$proto" == "https" ]] && gobuster_flags+=(-k)
 
-                timeout 600 gobuster dir "${gobuster_flags[@]}" 2>&1 | tail -3 || true
+                timeout "$GOBUSTER_RUNTIME" gobuster dir "${gobuster_flags[@]}" 2>&1 | tail -3 || true
             else
                 warn "  Gobuster wordlist not found: $GOBUSTER_WORDLIST"
             fi
@@ -798,7 +800,7 @@ enum_http() {
                     -t 30 --timeout 30 -d 2 -q \
                     -o "$outdir/feroxbuster.txt")
                 [[ "$proto" == "https" ]] && ferox_flags+=(-k)
-                timeout 600 feroxbuster "${ferox_flags[@]}" 2>&1 | tail -3 || true
+                timeout "$FEROX_RUNTIME" feroxbuster "${ferox_flags[@]}" 2>&1 | tail -3 || true
             fi
         fi
     else
