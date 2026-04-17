@@ -252,7 +252,7 @@ nxc smb 192.168.1.10 -u admin -p 'Password1' --local-auth
 
 ## Related
 
-- [[adr.sh]] — run first to get users/all_users.txt and check lockout policy
+- [[adr]] — run first to get users/all_users.txt and check lockout policy
 - [[crackr]] — crack the hashes that sprayr.sh then validates
 - [[Active_Directory_PtH_PtT]] — what to do after Pwn3d! hits
 - [[Active_Directory]] — broader AD attack methodology

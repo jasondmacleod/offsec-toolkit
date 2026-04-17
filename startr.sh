@@ -137,9 +137,11 @@ load_targets_file() {
     info "Loading targets from $file"
     while IFS='=' read -r key value; do
         # Skip blank lines and comments
-        [[ -z "$key" || "$key" =~ ^# ]] && continue
-        key="$(echo "$key" | tr -d '[:space:]')"
-        value="$(echo "$value" | tr -d '[:space:]')"
+        [[ -z "$key" || "$key" =~ ^[[:space:]]*# ]] && continue
+        # Strip only leading/trailing whitespace — preserve internal spaces
+        # so passwords like 'Hello World!' survive intact.
+        key="${key#"${key%%[![:space:]]*}"}";   key="${key%"${key##*[![:space:]]}"}"
+        value="${value#"${value%%[![:space:]]*}"}"; value="${value%"${value##*[![:space:]]}"}"
         case "$key" in
             SA1)     SA1="$value" ;;
             SA2)     SA2="$value" ;;
@@ -295,23 +297,24 @@ write_env() {
     header "SETTING ENVIRONMENT"
 
     local env_file="${EXAM_DIR}/env.sh"
-    # Use single-quoted heredoc to avoid shell expansion, then fill values with printf
+    # printf %q is the only correct way to round-trip arbitrary values through
+    # the shell — single-quote wrapping breaks if a value contains a quote.
     {
         echo '#!/usr/bin/env bash'
         echo "# engagement environment — source this in any new shell:"
         echo "#   source ${EXAM_DIR}/env.sh"
         echo ""
-        echo "export KALI='${KALI_IP}'"
-        echo "export engagement='${EXAM_DIR}'"
-        echo "export SA1='${SA1}'"
-        echo "export SA2='${SA2}'"
-        echo "export SA3='${SA3}'"
-        echo "export AD1='${AD1}'"
-        echo "export AD2='${AD2}'"
-        echo "export DC='${DC}'"
-        echo "export DOMAIN='${DOMAIN}'"
-        printf "export ADUSER='%s'\n" "$ADUSER"
-        printf "export ADPASS='%s'\n" "$ADPASS"
+        printf 'export KALI=%q\n'   "$KALI_IP"
+        printf 'export engagement=%q\n'   "$EXAM_DIR"
+        printf 'export SA1=%q\n'    "$SA1"
+        printf 'export SA2=%q\n'    "$SA2"
+        printf 'export SA3=%q\n'    "$SA3"
+        printf 'export AD1=%q\n'    "$AD1"
+        printf 'export AD2=%q\n'    "$AD2"
+        printf 'export DC=%q\n'     "$DC"
+        printf 'export DOMAIN=%q\n' "$DOMAIN"
+        printf 'export ADUSER=%q\n' "$ADUSER"
+        printf 'export ADPASS=%q\n' "$ADPASS"
     } > "$env_file"
     chmod +x "$env_file"
     success "Environment written to $env_file"

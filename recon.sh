@@ -56,15 +56,20 @@ set -u
 #------------------------------------------------------------------------------
 TOOLKIT_ROOT="${TOOLKIT_ROOT:-${HOME}/offsec}"  # Unified output root (shared across toolkit)
 RECON_DIR="${TOOLKIT_ROOT}/recon"         # Base output directory
-RUSTSCAN_BATCH_SIZE=1500               # Rustscan batch size / concurrent sockets per batch
+# Rustscan batch size — derived from current ulimit to avoid "Too many open files" noise
+_ulimit_n=$(ulimit -n 2>/dev/null || echo 1024)
+RUSTSCAN_BATCH_SIZE=$(( _ulimit_n / 2 ))
+(( RUSTSCAN_BATCH_SIZE < 100  )) && RUSTSCAN_BATCH_SIZE=100
+(( RUSTSCAN_BATCH_SIZE > 5000 )) && RUSTSCAN_BATCH_SIZE=5000
+unset _ulimit_n
 RUSTSCAN_TIMEOUT=4000                  # Connection timeout in ms
 NMAP_TCP_TIMEOUT=600                   # Seconds for TCP service scan
 NMAP_UDP_TIMEOUT=900                   # Seconds for UDP scan (slow by nature)
 UDP_TOP_PORTS=200                      # Top N UDP ports to scan (200 balances coverage vs speed)
-GOBUSTER_THREADS=50                    # Directory brute threads
+GOBUSTER_THREADS=20                    # Directory brute threads (lighter for first-pass OffSec recon)
 GOBUSTER_TIMEOUT=30                    # Per-request timeout seconds
 GOBUSTER_WORDLIST="/usr/share/wordlists/dirbuster/directory-list-2.3-medium.txt"
-GOBUSTER_EXTENSIONS="php,html,txt,asp,aspx,jsp,cgi,bak,old,conf"
+GOBUSTER_EXTENSIONS="php,asp,aspx,txt,html"   # Trimmed for first-pass speed; add cgi,jsp,bak manually if needed
 NIKTO_TIMEOUT=300                      # Seconds
 ENUM4LINUX_TIMEOUT=300                 # Seconds
 SMBMAP_TIMEOUT=120                     # Seconds
@@ -77,6 +82,7 @@ MAX_PARALLEL_TARGETS=3                 # Max targets scanned simultaneously
 SEQUENTIAL_TARGETS=false               # Process targets one at a time
 AUTO_MODE=false                        # Skip confirmation prompts
 UDP_FULL=false                         # Scan all 65535 UDP ports (slow but thorough)
+NO_SUDO=false                          # Skip sudo auto-reexec (pass --no-sudo to disable)
 SNMP_COMMUNITY_STRINGS=("public" "private" "manager" "community")
 
 #------------------------------------------------------------------------------
@@ -284,6 +290,18 @@ is_ssl_port() {
     esac
     [[ "$service" =~ ssl|https|tls ]] && return 0
     return 1
+}
+
+is_web_brute_target() {
+    # Returns 1 for HTTP-like management ports that are not real web apps.
+    # WinRM (5985/5986) and Windows HTTPAPI (47001) respond to HTTP requests
+    # but have no web content worth brute-forcing — nikto/gobuster/ferox waste
+    # minutes on them and find nothing meaningful.
+    local port="$1"
+    case "$port" in
+        5985|5986|47001) return 1 ;;
+    esac
+    return 0
 }
 
 #------------------------------------------------------------------------------
@@ -737,46 +755,55 @@ enum_http() {
         echo "# No robots.txt found (got HTML/404 response)" > "$outdir/robots.txt"
     fi
 
-    # --- Nikto (vulnerability scanner) ---
-    if check_tool nikto; then
-        info "  → nikto $url (timeout: ${NIKTO_TIMEOUT}s)"
-        timeout "$NIKTO_TIMEOUT" nikto -h "$url" -o "$outdir/nikto.txt" \
-            -Format txt -nointeractive 2>&1 | tail -5 || true
-    fi
-
-    # --- Gobuster (directory brute-force) ---
-    if check_tool gobuster; then
-        if [[ -f "$GOBUSTER_WORDLIST" ]]; then
-            info "  → gobuster dir $url"
-            local gobuster_flags=(-u "$url" -w "$GOBUSTER_WORDLIST" \
-                -t "$GOBUSTER_THREADS" \
-                --timeout "${GOBUSTER_TIMEOUT}s" \
-                -o "$outdir/gobuster_dir.txt" \
-                -x "$GOBUSTER_EXTENSIONS" \
-                --no-error -q)
-            # Add -k for HTTPS (skip cert verification)
-            [[ "$proto" == "https" ]] && gobuster_flags+=(-k)
-
-            timeout 600 gobuster dir "${gobuster_flags[@]}" 2>&1 | tail -3 || true
-        else
-            warn "  Gobuster wordlist not found: $GOBUSTER_WORDLIST"
+    # --- Nikto / Gobuster / Feroxbuster ---
+    # Skip brute-force tools on WinRM/management HTTP endpoints (5985, 5986, 47001).
+    # These respond with HTTP but have no meaningful web content to enumerate.
+    if is_web_brute_target "$port"; then
+        # --- Nikto (vulnerability scanner) ---
+        if check_tool nikto; then
+            info "  → nikto $url (timeout: ${NIKTO_TIMEOUT}s)"
+            # Note: do NOT pass -Format txt when -o already ends in .txt — older nikto
+            # versions produce nikto.txt.txt with both flags set.
+            timeout "$NIKTO_TIMEOUT" nikto -h "$url" -o "$outdir/nikto.txt" \
+                -nointeractive 2>&1 | tail -5 || true
         fi
-    fi
 
-    # --- Feroxbuster (alternative/complementary to gobuster) ---
-    # Only run if gobuster didn't find much and feroxbuster is available
-    if check_tool feroxbuster; then
-        local gobuster_hits=""
-        # Count only actual result lines (start with /) — wc -l is unreliable due to gobuster headers
-        gobuster_hits=$(grep -c '^/' "$outdir/gobuster_dir.txt" 2>/dev/null); gobuster_hits=${gobuster_hits:-0}
-        if (( gobuster_hits < 5 )); then
-            info "  → feroxbuster $url (gobuster found <5 results, trying recursive)"
-            local ferox_flags=(-u "$url" -w "$GOBUSTER_WORDLIST" \
-                -t 30 --timeout 30 -d 2 -q \
-                -o "$outdir/feroxbuster.txt")
-            [[ "$proto" == "https" ]] && ferox_flags+=(-k)
-            timeout 600 feroxbuster "${ferox_flags[@]}" 2>&1 | tail -3 || true
+        # --- Gobuster (directory brute-force) ---
+        if check_tool gobuster; then
+            if [[ -f "$GOBUSTER_WORDLIST" ]]; then
+                info "  → gobuster dir $url"
+                local gobuster_flags=(-u "$url" -w "$GOBUSTER_WORDLIST" \
+                    -t "$GOBUSTER_THREADS" \
+                    --timeout "${GOBUSTER_TIMEOUT}s" \
+                    -o "$outdir/gobuster_dir.txt" \
+                    -x "$GOBUSTER_EXTENSIONS" \
+                    --no-error -q)
+                # Add -k for HTTPS (skip cert verification)
+                [[ "$proto" == "https" ]] && gobuster_flags+=(-k)
+
+                timeout 600 gobuster dir "${gobuster_flags[@]}" 2>&1 | tail -3 || true
+            else
+                warn "  Gobuster wordlist not found: $GOBUSTER_WORDLIST"
+            fi
         fi
+
+        # --- Feroxbuster (recursive, only when gobuster is sparse on a real web port) ---
+        if check_tool feroxbuster; then
+            local gobuster_hits=""
+            # Count only actual result lines (start with /) — wc -l is unreliable due to gobuster headers
+            gobuster_hits=$(grep -c '^/' "$outdir/gobuster_dir.txt" 2>/dev/null); gobuster_hits=${gobuster_hits:-0}
+            if (( gobuster_hits < 5 )); then
+                info "  → feroxbuster $url (gobuster found <5 results, trying recursive)"
+                local ferox_flags=(-u "$url" -w "$GOBUSTER_WORDLIST" \
+                    -t 30 --timeout 30 -d 2 -q \
+                    -o "$outdir/feroxbuster.txt")
+                [[ "$proto" == "https" ]] && ferox_flags+=(-k)
+                timeout 600 feroxbuster "${ferox_flags[@]}" 2>&1 | tail -3 || true
+            fi
+        fi
+    else
+        info "  → skipping nikto/gobuster/feroxbuster on port $port (WinRM/management HTTP — not a web app)"
+        echo "# Port $port: WinRM/HTTPAPI endpoint — brute-force tools skipped" > "$outdir/brute_skip.txt"
     fi
 
     # --- ffuf vhost fuzz (if hostname detected) ---
@@ -1302,31 +1329,38 @@ enum_smtp() {
     timeout 180 nmap --script=smtp-commands,smtp-enum-users,smtp-open-relay \
         -p "$port" -oN "$outdir/nmap_smtp_scripts.txt" "$ip" 2>&1 | tail -5 || true
 
-    # --- VRFY user enumeration ---
-    info "  → SMTP VRFY enumeration"
-    local users_file="/usr/share/seclists/Usernames/Names/names.txt"
-    if [[ ! -f "$users_file" ]]; then
-        users_file="/usr/share/wordlists/metasploit/unix_users.txt"
-    fi
-    if [[ -f "$users_file" ]] && check_tool nc; then
-        # shellcheck disable=SC2016
-        timeout 120 bash -c '
-            ip="$1"; port="$2"; users_file="$3"
-            while IFS= read -r user; do
-                response=$(printf "VRFY %s\r\nQUIT\r\n" "$user" | nc -w 3 "$ip" "$port" 2>/dev/null)
-                if printf "%s\n" "$response" | grep -qE "^2[0-9]{2}"; then
-                    echo "VALID: $user — $response"
-                fi
-            done < <(head -100 "$users_file")
-        ' -- "$ip" "$port" "$users_file" > "$outdir/vrfy_users.txt" 2>&1 || true
-
-        local valid_count=""
-        valid_count=$(grep -c "^VALID:" "$outdir/vrfy_users.txt" 2>/dev/null); valid_count=${valid_count:-0}
-        if (( valid_count > 0 )); then
-            success "  ★ Found $valid_count valid SMTP user(s)"
-            echo "SMTP VRFY found $valid_count valid users on $ip:$port" \
-                >> "$target_dir/loot/quick_wins.txt"
+    # --- VRFY user enumeration (host-level, runs once regardless of how many SMTP ports exist) ---
+    # Sentinel prevents duplicate VRFY runs when both port 25 and 587 are open.
+    local vrfy_sentinel="$target_dir/tcp/smtp/vrfy_done"
+    if [[ ! -f "$vrfy_sentinel" ]]; then
+        info "  → SMTP VRFY enumeration (host-level, port $port)"
+        local users_file="/usr/share/seclists/Usernames/Names/names.txt"
+        if [[ ! -f "$users_file" ]]; then
+            users_file="/usr/share/wordlists/metasploit/unix_users.txt"
         fi
+        if [[ -f "$users_file" ]] && check_tool nc; then
+            # shellcheck disable=SC2016
+            timeout 120 bash -c '
+                ip="$1"; port="$2"; users_file="$3"
+                while IFS= read -r user; do
+                    response=$(printf "VRFY %s\r\nQUIT\r\n" "$user" | nc -w 3 "$ip" "$port" 2>/dev/null)
+                    if printf "%s\n" "$response" | grep -qE "^2[0-9]{2}"; then
+                        echo "VALID: $user — $response"
+                    fi
+                done < <(head -100 "$users_file")
+            ' -- "$ip" "$port" "$users_file" > "$outdir/vrfy_users.txt" 2>&1 || true
+
+            local valid_count=""
+            valid_count=$(grep -c "^VALID:" "$outdir/vrfy_users.txt" 2>/dev/null); valid_count=${valid_count:-0}
+            if (( valid_count > 0 )); then
+                success "  ★ Found $valid_count valid SMTP user(s) via port $port"
+                echo "SMTP VRFY found $valid_count valid users on $ip (via port $port)" \
+                    >> "$target_dir/loot/quick_wins.txt"
+            fi
+            touch "$vrfy_sentinel"
+        fi
+    else
+        info "  → SMTP VRFY already completed (host-level sentinel found) — skipping on port $port"
     fi
 
     success "SMTP enumeration complete for $ip:$port"
@@ -1487,6 +1521,67 @@ enum_redis() {
     progress_log "$target_dir" "DONE" "redis_${port}" ""
 }
 
+#--- POP3 / IMAP ENUMERATION --------------------------------------------------
+enum_pop3_imap() {
+    local ip="$1"
+    local port="$2"
+    local target_dir="$3"
+    local proto="$4"   # "pop3" or "imap"
+    local outdir="$target_dir/tcp/${proto}"
+    mkdir -p "$outdir"
+
+    local phase_key="${proto}_${port}"
+    if is_phase_done "$target_dir" "$phase_key"; then
+        info "${proto^^} enum already done for $ip:$port — skipping"
+        return 0
+    fi
+    progress_log "$target_dir" "START" "$phase_key" "port=$port"
+
+    info "${proto^^} enumeration starting: $ip:$port"
+
+    # --- Banner grab ---
+    if check_tool nc; then
+        info "  → banner grab"
+        # shellcheck disable=SC2016
+        timeout 10 bash -c 'printf "QUIT\r\n" | nc -w 5 "$1" "$2"' \
+            -- "$ip" "$port" > "$outdir/banner_${port}.txt" 2>&1 || true
+
+        local banner
+        banner=$(head -1 "$outdir/banner_${port}.txt" 2>/dev/null | tr -d '\r\n')
+        [[ -n "$banner" ]] && success "  Banner: $banner"
+
+        # --- CAPABILITIES probe ---
+        if [[ "$proto" == "pop3" ]]; then
+            info "  → POP3 CAPA"
+            # shellcheck disable=SC2016
+            timeout 10 bash -c 'printf "CAPA\r\nQUIT\r\n" | nc -w 5 "$1" "$2"' \
+                -- "$ip" "$port" > "$outdir/capa_${port}.txt" 2>&1 || true
+        else
+            info "  → IMAP CAPABILITY"
+            # shellcheck disable=SC2016
+            timeout 10 bash -c 'printf ". CAPABILITY\r\n. LOGOUT\r\n" | nc -w 5 "$1" "$2"' \
+                -- "$ip" "$port" > "$outdir/capability_${port}.txt" 2>&1 || true
+        fi
+    fi
+
+    # --- Nmap scripts ---
+    if [[ "$proto" == "pop3" ]]; then
+        info "  → nmap POP3 scripts"
+        timeout 60 nmap --script=pop3-capabilities,pop3-ntlm-info \
+            -p "$port" -oN "$outdir/nmap_pop3_${port}.txt" "$ip" 2>&1 | tail -3 || true
+    else
+        info "  → nmap IMAP scripts"
+        timeout 60 nmap --script=imap-capabilities,imap-ntlm-info \
+            -p "$port" -oN "$outdir/nmap_imap_${port}.txt" "$ip" 2>&1 | tail -3 || true
+    fi
+
+    echo "${proto^^} detected on $ip:$port — check $outdir/ for capabilities/banner" \
+        >> "$target_dir/loot/quick_wins.txt"
+
+    success "${proto^^} enumeration complete for $ip:$port"
+    progress_log "$target_dir" "DONE" "$phase_key" ""
+}
+
 #------------------------------------------------------------------------------
 # PHASE 4: SERVICE TRIAGE — Decide what to enumerate based on nmap results
 #------------------------------------------------------------------------------
@@ -1583,6 +1678,14 @@ triage_and_enumerate() {
         # Redis
         elif [[ "$service" =~ redis ]] || [[ "$port" == "6379" ]]; then
             launch_enum enum_redis "$ip" "$port" "$target_dir"
+
+        # POP3
+        elif [[ "$service" =~ pop3 ]] || [[ "$port" == "110" || "$port" == "995" ]]; then
+            launch_enum enum_pop3_imap "$ip" "$port" "$target_dir" "pop3"
+
+        # IMAP
+        elif [[ "$service" =~ imap ]] || [[ "$port" == "143" || "$port" == "993" ]]; then
+            launch_enum enum_pop3_imap "$ip" "$port" "$target_dir" "imap"
 
         # Unknown/other — log it
         else
@@ -1759,13 +1862,58 @@ generate_summary() {
             echo ""
         fi
 
+        # --- SMTP Findings ---
+        if grep -q "| DONE | smtp_" "$target_dir/progress.log" 2>/dev/null; then
+            echo "═══ SMTP FINDINGS ════════════════════════════════════════"
+            echo ""
+            local vrfy_file="$target_dir/tcp/smtp/vrfy_users.txt"
+            if [[ -f "$vrfy_file" ]]; then
+                local vcount
+                vcount=$(grep -c "^VALID:" "$vrfy_file" 2>/dev/null); vcount=${vcount:-0}
+                if (( vcount > 0 )); then
+                    echo "  ★ VRFY found $vcount valid users (see $vrfy_file)"
+                    echo "  Top users:"
+                    grep "^VALID:" "$vrfy_file" 2>/dev/null | head -10 | while IFS= read -r l; do echo "    $l"; done
+                else
+                    echo "  VRFY enumeration returned no valid users"
+                fi
+            fi
+            # Banner info
+            local smtp_banner="$target_dir/tcp/smtp/banner.txt"
+            [[ -f "$smtp_banner" ]] && echo "  Banner: $(head -1 "$smtp_banner" 2>/dev/null | tr -d '\r')"
+            echo ""
+        fi
+
+        # --- POP3 / IMAP Findings ---
+        local mail_section=false
+        for proto_name in pop3 imap; do
+            if grep -q "| DONE | ${proto_name}_" "$target_dir/progress.log" 2>/dev/null; then
+                if [[ "$mail_section" == "false" ]]; then
+                    echo "═══ MAIL SERVICE FINDINGS ════════════════════════════════"
+                    echo ""
+                    mail_section=true
+                fi
+                echo "  ${proto_name^^} detected — check $target_dir/tcp/${proto_name}/ for capabilities/banner"
+                find "$target_dir/tcp/${proto_name}" -name "banner_*.txt" 2>/dev/null | while read -r bf; do
+                    local port_n
+                    port_n=$(basename "$bf" | grep -oP '\d+')
+                    local banner_line
+                    banner_line=$(head -1 "$bf" 2>/dev/null | tr -d '\r\n')
+                    [[ -n "$banner_line" ]] && echo "    Port $port_n: $banner_line"
+                done
+            fi
+        done
+        [[ "$mail_section" == "true" ]] && echo ""
+
         # --- Next-Step Commands ---
+        # IMPORTANT: each section is gated on actual phase completion or confirmed
+        # file content — NOT directory existence (dirs are pre-created for all services).
         echo "═══ ★ NEXT-STEP COMMANDS ★ ══════════════════════════════"
         echo ""
         local tcp_ports_found=""
         [[ -f "$target_dir/scans/tcp_ports.txt" ]] && tcp_ports_found=$(cat "$target_dir/scans/tcp_ports.txt" 2>/dev/null)
 
-        # HTTP → webenum
+        # HTTP → webenum (only for real web ports; WinRM/management ports get light advice)
         if ls "$target_dir/tcp/http/port_"* &>/dev/null 2>&1; then
             for httpdir in "$target_dir/tcp/http"/port_*; do
                 [[ -d "$httpdir" ]] || continue
@@ -1773,21 +1921,26 @@ generate_summary() {
                 p=$(basename "$httpdir" | sed 's/port_//')
                 local proto_hint="http"
                 [[ "$p" == "443" || "$p" == "8443" ]] && proto_hint="https"
-                echo "  # HTTP on port $p — run deep web enumeration:"
-                echo "  ./webenum.sh --url ${proto_hint}://$ip:${p}"
+                if is_web_brute_target "$p"; then
+                    echo "  # HTTP on port $p — run deep web enumeration:"
+                    echo "  ./webenum.sh --url ${proto_hint}://$ip:${p}"
+                else
+                    echo "  # Port $p — HTTP management endpoint (WinRM/HTTPAPI), not a web app:"
+                    echo "  curl -ski ${proto_hint}://$ip:${p}/"
+                fi
             done
         fi
 
-        # SMB → adr.sh or manual
-        if [[ -d "$target_dir/tcp/smb" ]]; then
+        # SMB → gated on phase completion, not directory existence
+        if is_phase_done "$target_dir" "smb"; then
             echo "  # SMB found — if domain-joined, run AD recon:"
             echo "  ./adr.sh -d <DOMAIN> -u <USER> -p '<PASS>' -dc $ip"
             echo "  # OR anonymous SMB access:"
             echo "  smbmap -H $ip -u '' -p ''"
         fi
 
-        # LDAP → adr.sh
-        if [[ -d "$target_dir/tcp/ldap" ]]; then
+        # LDAP → gated on phase completion
+        if is_phase_done "$target_dir" "ldap"; then
             echo "  # LDAP found — anonymous bind test:"
             echo "  ldapsearch -x -H ldap://$ip -s base namingContexts"
             if [[ -s "$target_dir/tcp/ldap/naming_contexts.txt" ]]; then
@@ -1798,12 +1951,12 @@ generate_summary() {
             echo "  # If creds available: ./adr.sh -d <DOMAIN> -u <USER> -p '<PASS>' -dc $ip"
         fi
 
-        # FTP → anonymous access
+        # FTP → anonymous access (file existence is reliable; directory is pre-created for all targets)
         if [[ -f "$target_dir/tcp/ftp/ANONYMOUS_ACCESS.txt" ]]; then
             echo "  # ANONYMOUS FTP ACCESS:"
             echo "  ftp $ip                           # login: anonymous / anonymous@test.com"
             echo "  wget -r --no-passive-ftp ftp://anonymous:anon@$ip/"
-        elif [[ -d "$target_dir/tcp/ftp" ]]; then
+        elif is_phase_done "$target_dir" "ftp"; then
             echo "  # FTP found — check $target_dir/tcp/ftp/anonymous_check.txt"
         fi
 
@@ -1817,11 +1970,11 @@ generate_summary() {
             done
         fi
 
-        # MySQL
+        # MySQL — gated on phase completion, not directory existence
         if grep -qi 'MySQL ROOT NO-PASSWORD\|MySQL EMPTY PASSWORD' "$target_dir/loot/quick_wins.txt" 2>/dev/null; then
             echo "  # MySQL root no-password:"
             echo "  mysql -h $ip -u root --password='' -e 'show databases; select user,host,password from mysql.user;'"
-        elif [[ -d "$target_dir/tcp/mysql" ]]; then
+        elif grep -q "| DONE | mysql_" "$target_dir/progress.log" 2>/dev/null; then
             echo "  # MySQL found:"
             echo "  mysql -h $ip -u root --password=''   # try blank password"
             echo "  mysql -h $ip -u root                 # try no password flag"
@@ -1829,11 +1982,11 @@ generate_summary() {
             echo "  ./crackr.sh --hydra mysql --target $ip -u root -P /usr/share/wordlists/rockyou.txt"
         fi
 
-        # PostgreSQL
+        # PostgreSQL — gated on phase completion
         if grep -qi 'PostgreSQL LOGIN' "$target_dir/loot/quick_wins.txt" 2>/dev/null; then
             echo "  # PostgreSQL login found — check quick_wins.txt for creds"
             echo "  psql -h $ip -U postgres -c '\l'"
-        elif [[ -d "$target_dir/tcp/postgres" ]]; then
+        elif grep -q "| DONE | postgres_" "$target_dir/progress.log" 2>/dev/null; then
             echo "  # PostgreSQL found:"
             echo "  psql -h $ip -U postgres             # try default creds"
             echo "  PGPASSWORD=postgres psql -h $ip -U postgres -c '\l'"
@@ -1841,8 +1994,8 @@ generate_summary() {
             echo "  ./crackr.sh --hydra postgres --target $ip -u postgres -P /usr/share/wordlists/rockyou.txt"
         fi
 
-        # SMTP
-        if [[ -d "$target_dir/tcp/smtp" ]]; then
+        # SMTP — gated on phase completion
+        if grep -q "| DONE | smtp_" "$target_dir/progress.log" 2>/dev/null; then
             local vrfy_file="$target_dir/tcp/smtp/vrfy_users.txt"
             if grep -qi 'valid user\|^VALID:' "$vrfy_file" 2>/dev/null; then
                 # Save valid usernames to a stable loot file
@@ -1912,19 +2065,33 @@ generate_summary() {
             else
                 echo "  # see $target_dir/tcp/dns/"
             fi
-        elif [[ -d "$target_dir/tcp/dns" ]]; then
+        elif is_phase_done "$target_dir" "dns"; then
             echo "  # DNS found — try zone transfer:"
             echo "  dig @$ip <DOMAIN> axfr"
         fi
 
-        # WinRM
-        if echo "${tcp_ports_found}" | grep -qE '5985|5986'; then
+        # WinRM (5985 = HTTP, 5986 = HTTPS, 47001 = Windows HTTPAPI alt port)
+        if echo "${tcp_ports_found}" | grep -qE '5985|5986|47001'; then
             echo "  # WinRM found:"
             echo "  evil-winrm -i $ip -u <USER> -p '<PASS>'"
             echo "  evil-winrm -i $ip -u <USER> -H '<NTLM_HASH>'"
             echo "  # No creds yet? Brute-force WinRM:"
             echo "  ./crackr.sh --hydra winrm --target $ip -U /usr/share/seclists/Usernames/top-usernames-shortlist.txt -P /usr/share/wordlists/rockyou.txt"
             echo "  # Or spray known users: ./sprayr.sh --from-creds -t $ip"
+        fi
+
+        # POP3
+        if grep -q "| DONE | pop3_" "$target_dir/progress.log" 2>/dev/null; then
+            echo "  # POP3 found — check banner for version, try default creds:"
+            echo "  nc -nv $ip 110"
+            echo "  # If users known: hydra -L <users> -P /usr/share/wordlists/rockyou.txt pop3://$ip"
+        fi
+
+        # IMAP
+        if grep -q "| DONE | imap_" "$target_dir/progress.log" 2>/dev/null; then
+            echo "  # IMAP found — inspect capabilities, try default creds:"
+            echo "  nc -nv $ip 143"
+            echo "  # If users known: hydra -L <users> -P /usr/share/wordlists/rockyou.txt imap://$ip"
         fi
 
         echo ""
@@ -1976,7 +2143,7 @@ recon_target() {
 
     # --- Setup directory structure ---
     local target_dir="${RECON_DIR}/${ip}"
-    mkdir -p "$target_dir"/{scans,tcp/{http,smb,ftp,ssh,mysql,postgres,dns,smtp,rpc,ldap,redis},udp/snmp,loot}
+    mkdir -p "$target_dir"/{scans,tcp/{http,smb,ftp,ssh,mysql,postgres,dns,smtp,pop3,imap,rpc,ldap,redis},udp/snmp,loot}
 
     # Initialize progress log
     if [[ ! -f "$target_dir/progress.log" ]]; then
@@ -2053,6 +2220,7 @@ OPTIONS:
   --quick-wins          Run 5-min triage per target BEFORE deep recon
   --quick-wins-only     Run triage only, print priority list, then stop
   --no-color            Disable colored output
+  --no-sudo             Skip automatic sudo re-exec (run without root privileges)
   -h, --help            Show this help message
 
 EXAMPLES:
@@ -2079,6 +2247,8 @@ EOF
 #------------------------------------------------------------------------------
 declare -a TARGETS=()
 TARGET_FILE=""
+# Preserve original args so sudo re-exec can pass them verbatim
+ORIGINAL_ARGS=("$@")
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -2141,6 +2311,10 @@ while [[ $# -gt 0 ]]; do
             disable_colors
             shift
             ;;
+        --no-sudo)
+            NO_SUDO=true
+            shift
+            ;;
         -*)
             error "Unknown option: $1"
             usage
@@ -2196,6 +2370,21 @@ for target in "${TARGETS[@]}"; do
         exit 1
     fi
 done
+
+#------------------------------------------------------------------------------
+# SUDO AUTO-REEXEC
+# UDP scanning and OS detection (-sU, -O) require root. Re-execute with sudo
+# automatically so the operator doesn't discover the limitation mid-scan.
+# Pass --no-sudo to skip this (e.g. when already inside a sudo environment
+# that doesn't need escalation, or when testing without privilege).
+#------------------------------------------------------------------------------
+if [[ $EUID -ne 0 ]] && [[ "$NO_SUDO" != "true" ]]; then
+    warn "Not running as root — re-executing with sudo for full scan capability (UDP, OS detect)..."
+    warn "Pass --no-sudo to skip this. Sudo may prompt for your password."
+    exec sudo "$0" "${ORIGINAL_ARGS[@]}"
+    # exec replaces this process; if it fails (no sudo), fall through with a warning
+    warn "sudo exec failed — continuing without root (UDP and OS detection will be skipped)"
+fi
 
 #------------------------------------------------------------------------------
 # PRE-FLIGHT CHECKS
@@ -2265,32 +2454,12 @@ else
     warn "  If this is the engagement, check your VPN connection!"
 fi
 
-# Root check
+# Root check (informational only — sudo re-exec already handled above)
 if [[ $EUID -eq 0 ]]; then
     success "  Running as root — full scan capability"
 else
     warn "  Not running as root — UDP scanning and OS detection will be limited"
-    warn "  Recommended: sudo $0 $*"  # $* in double quotes is intentional (display only)
-fi
-
-# Tool dependency check
-echo ""
-info "Checking required tools..."
-MISSING_TOOLS=()
-for tool in nmap rustscan gobuster nikto whatweb smbclient enum4linux; do
-    if command -v "$tool" &>/dev/null; then
-        success "  $tool"
-    else
-        warn "  $tool — NOT FOUND (apt install $tool)"
-        MISSING_TOOLS+=("$tool")
-    fi
-done
-if [[ " ${MISSING_TOOLS[*]} " == *" nmap "* ]]; then
-    error "nmap is required. Install: sudo apt install nmap"
-    exit 1
-fi
-if (( ${#MISSING_TOOLS[@]} > 0 )); then
-    warn "Some optional tools missing — related phases will be skipped"
+    warn "  (Pass --no-sudo was set; continuing without privilege escalation)"
 fi
 
 # Target reachability

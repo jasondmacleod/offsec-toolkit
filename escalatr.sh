@@ -125,13 +125,20 @@ cleanup() {
     fi
     CLEANUP_RUNNING=true
     trap - EXIT INT TERM
-    warn "Cleaning up..."
-    for pid in "${CHILD_PIDS[@]}"; do
-        kill "$pid" 2>/dev/null && wait "$pid" 2>/dev/null
-    done
-    if [[ -n "$HTTP_SERVER_PID" ]]; then
-        kill "$HTTP_SERVER_PID" 2>/dev/null && wait "$HTTP_SERVER_PID" 2>/dev/null
-        success "HTTP server stopped"
+    # Only announce cleanup when there is actually something to clean.
+    # Prevents noise after --help, bad flags, or any early exit.
+    local have_work=false
+    if (( ${#CHILD_PIDS[@]} > 0 )); then have_work=true; fi
+    if [[ -n "$HTTP_SERVER_PID" ]] && kill -0 "$HTTP_SERVER_PID" 2>/dev/null; then have_work=true; fi
+    if [[ "$have_work" == "true" ]]; then
+        warn "Cleaning up..."
+        for pid in "${CHILD_PIDS[@]}"; do
+            kill "$pid" 2>/dev/null && wait "$pid" 2>/dev/null
+        done
+        if [[ -n "$HTTP_SERVER_PID" ]]; then
+            kill "$HTTP_SERVER_PID" 2>/dev/null && wait "$HTTP_SERVER_PID" 2>/dev/null
+            success "HTTP server stopped"
+        fi
     fi
     if [[ "$exit_code" -ne 0 ]]; then
         exit "$exit_code"

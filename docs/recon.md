@@ -242,9 +242,9 @@ pip install enum4linux-ng
 
 ## Related
 
-- [[OffSec_Methodology]] — where recon fits in the overall attack chain
+- [[OffSec_Exam_Methodology_Complete]] — where recon fits in the overall attack chain
 - [[Active_Recon]] — manual recon to supplement or fill gaps
 - [[Web_App]] — manual follow-up on HTTP findings
-- [[Webenum_Tool]] — deeper web enumeration (webenum.sh)
+- [[webenum]] — deeper web enumeration (webenum.sh)
 - [[Passwords]] — crack anything surfaced in quick_wins
 - [[Active_Directory]] — AD-specific enumeration after initial access

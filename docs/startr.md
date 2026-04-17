@@ -216,7 +216,7 @@ cd ~/toolkit && python3 -m http.server 80
 
 - [[Exam_Quickstart]] — manual fallback if startr fails
 - [[tmux]] — tmux commands and navigation
-- [[recon]] — recon script launched by `--recon`
+- [[scripts/recon]] — recon script launched by `--recon`
 - [[Creds_Tracker]] — structured credential tracking (separate from the `creds.txt` scratchpad)
 - [[lootr]] — post-exploitation loot collection after first shell
 - [[evidencr]] — evidence capture at every flag
