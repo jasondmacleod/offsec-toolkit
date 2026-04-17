@@ -2395,7 +2395,16 @@ done
 if [[ $EUID -ne 0 ]] && [[ "$NO_SUDO" != "true" ]]; then
     warn "Not running as root — re-executing with sudo for full scan capability (UDP, OS detect)..."
     warn "Pass --no-sudo to skip this. Sudo may prompt for your password."
-    exec sudo env PATH="$PATH" TOOLKIT_ROOT="$TOOLKIT_ROOT" "$0" "${ORIGINAL_ARGS[@]}"
+    # Build an augmented PATH that includes user-specific bin dirs.
+    # sudo's secure_path can strip PATH even when passed via 'env', so we
+    # prepend known locations (cargo, local, snap) explicitly so rustscan
+    # and other user-installed tools survive the re-exec.
+    _inv_user="${SUDO_USER:-$(id -un)}"
+    _inv_home=$(getent passwd "$_inv_user" 2>/dev/null | cut -d: -f6)
+    _aug_path="${_inv_home}/.cargo/bin:${_inv_home}/.local/bin:${_inv_home}/go/bin:${_inv_home}/snap/bin:${PATH}"
+    unset _inv_user _inv_home
+    exec sudo env PATH="$_aug_path" TOOLKIT_ROOT="$TOOLKIT_ROOT" "$0" "${ORIGINAL_ARGS[@]}"
+    unset _aug_path
     # exec replaces this process; if it fails (no sudo), fall through with a warning
     warn "sudo exec failed — continuing without root (UDP and OS detection will be skipped)"
 fi
