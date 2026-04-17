@@ -10,6 +10,8 @@ tags:
 
 Deep web enumeration wrapper that runs **after** `recon.sh`. Where recon does a quick HTTP pass (whatweb, gobuster with dirbuster-medium), webenum goes deeper: aggressive fingerprinting, larger wordlists, tech-stack-targeted extensions, recursive fuzzing, vhost discovery, and parameter fuzzing.
 
+It also generates `loot/next_steps.txt`: a finding-driven web command library. Commands are emitted only when webenum has concrete evidence such as a discovered login page, a 401 path, a sensitive file, a vhost, risky HTTP methods, or a specific framework/product fingerprint.
+
 **Enumeration only — no exploitation. OffSec compliant.**
 
 ---
@@ -74,10 +76,12 @@ Before scanning, the script **automatically checks HTTP connectivity** — it cu
 
 ```bash
 cat $TOOLKIT_ROOT/web/192.168.50.100_80_http/artifacts/web/summary/summary.md
+cat $TOOLKIT_ROOT/web/192.168.50.100_80_http/artifacts/web/summary/summary.txt
+cat $TOOLKIT_ROOT/web/192.168.50.100_80_http/artifacts/web/loot/next_steps.txt
 cat $TOOLKIT_ROOT/web/192.168.50.100_80_http/artifacts/web/summary/quick_wins.txt
 ```
 
-`summary.md` is structured: tech stack → headers → sensitive paths → directory findings → vhosts → source hints. `quick_wins.txt` gives you high-value lines grouped by category — and now includes **ready-to-run commands** for auth prompts (hydra), login forms (hydra http-post-form template), WordPress (wpscan), vhosts (re-run webenum per vhost), and parameters (sqlmap). Read it before going manual.
+`summary.md` is structured Markdown: tech stack → headers → sensitive paths → directory findings → vhosts → source hints → a short next-step preview. `summary.txt` is written alongside it as a plain-text alias for consistency with the rest of the toolkit. `loot/next_steps.txt` is the full evidence-backed command library. `quick_wins.txt` gives high-value lines grouped by category for fast review.
 
 ### Step 3: Found a Domain Name? → Vhost Fuzz
 
@@ -152,6 +156,7 @@ webenum --url http://192.168.50.100 --deep --vhost target.htb
 | sitemap.xml | `fingerprint/sitemap.xml` | Endpoint discovery |
 | security.txt | `fingerprint/security_txt.txt` | Contact info, scope hints |
 | 27 sensitive path probes | `fingerprint/sensitive_paths.txt` | .git, .env, phpinfo, admin panels, APIs |
+| HTTP methods | `fingerprint/http_methods.txt` | OPTIONS output; risky methods trigger `next_steps.txt` commands |
 
 **Sensitive paths probed:** `.git/HEAD`, `.git/config`, `.env`, `.htaccess`, `.htpasswd`, `web.config`, `config.php`, `wp-config.php`, `phpinfo.php`, `.DS_Store`, `backup.zip`, `backup.tar.gz`, `/admin`, `/administrator`, `/login`, `/wp-admin`, `/manager`, `/phpmyadmin`, `/adminer`, `/console`, `/api`, `/api/v1`, `/swagger.json`, `/swagger-ui`, `/openapi.json`, `/_profiler`, `/debug`
 
@@ -196,12 +201,20 @@ Output: `params/params_<endpoint>.json` + `.txt`
 
 ### Phase 6 — Summary Generation
 
-Aggregates everything into `summary/summary.md` (structured report) and `summary/quick_wins.txt` (high-value lines only, grouped by category).
+Aggregates everything into `summary/summary.md` (structured report), `summary/summary.txt` (plain-text alias), `summary/quick_wins.txt` (high-value lines only, grouped by category), and `loot/next_steps.txt` (evidence-backed follow-up commands).
 
-`quick_wins.txt` now includes:
-- **robots.txt Disallow entries** — per-path `curl -w '%{http_code}'` probe commands (auto-generated, no placeholders)
-- **Sensitive files found** — resolved `curl -sk <url><path> -o /tmp/loot_<file>` commands for each actual 200-status sensitive file found
-- **CMS detection** — Joomla (`joomscan`), Drupal (`droopescan` + Drupalgeddon), Tomcat (WAR upload recipe with `LHOST` auto-resolved from tun0/eth0), Jenkins (Groovy console RCE with resolved IP + `penelope -p 4444 -O` reminder), phpMyAdmin (SQLi shell write) — specific attack commands per CMS
+`loot/next_steps.txt` includes commands only when triggered by concrete web findings:
+
+- **robots.txt Disallow entries** — per-path `curl -w '%{http_code}'` probe commands
+- **401 paths** — `hydra http-get` templates for actual paths
+- **login pages** — `curl`, `hydra http-post-form` template, parameter fuzzing command
+- **sensitive files** — resolved `curl -sk <actual-url> -o /tmp/loot_<file>` + credential grep
+- **vhosts** — `/etc/hosts` entry plus `webenum` re-run for each discovered host
+- **risky HTTP methods** — `curl OPTIONS`, `nmap http-methods`, TRACE check
+- **specific tech matches** — WordPress, Joomla, Drupal, Tomcat, Jenkins, phpMyAdmin, Adminer, Grafana, Webmin, JBoss/WildFly, Spring actuator, Elasticsearch
+- **exposed `.git`** — `git-dumper` and secret grep
+- **Swagger/OpenAPI** — `curl`/`jq` inspection and API object fuzzing
+- **parameters** — `sqlmap` and quick XSS probe examples
 
 ---
 
@@ -213,6 +226,7 @@ $TOOLKIT_ROOT/web/<host>_<port>_<proto>/artifacts/web/
 │   ├── whatweb.txt              # Tech stack identification
 │   ├── whatweb_verbose.txt      # Detailed plugin output
 │   ├── headers.txt              # Full HTTP response headers
+│   ├── http_methods.txt         # OPTIONS response for risky method checks
 │   ├── homepage_source.html     # First 500 lines of homepage
 │   ├── source_hints.txt         # Comments, paths, emails, versions
 │   ├── robots.txt               # Disallowed paths
@@ -234,7 +248,10 @@ $TOOLKIT_ROOT/web/<host>_<port>_<proto>/artifacts/web/
 │   └── params_<endpoint>.json/txt
 ├── summary/
 │   ├── summary.md               # ★ READ THIS FIRST
+│   ├── summary.txt              # Plain-text alias of summary.md
 │   └── quick_wins.txt           # ★ High-value lines, grouped
+├── loot/
+│   └── next_steps.txt           # ★ Finding-driven web command library
 └── progress.log                 # Phase completion tracking
 ```
 
@@ -259,7 +276,7 @@ $TOOLKIT_ROOT/web/<host>_<port>_<proto>/artifacts/web/
 recon.sh found HTTP?
 │
 ├── Run: webenum --url http://TARGET
-│   └── Read summary/summary.md + quick_wins.txt
+│   └── Read summary/summary.txt + loot/next_steps.txt + quick_wins.txt
 │
 ├── Found domain name? (redirect, cert, source)
 │   ├── Add to /etc/hosts
@@ -320,18 +337,18 @@ http://10.10.10.5/admin               |    200 |     1234 |     56 |    12
 
 ## Common engagement Patterns
 
-> [!tip] Check quick_wins.txt first
-> For WordPress, login forms, 401 pages, and parameters — `quick_wins.txt` now has the ready-to-run command already built. Check it before going manual.
+> [!tip] Check `loot/next_steps.txt` first
+> For WordPress, login forms, 401 pages, vhosts, parameters, exposed Git, Swagger/OpenAPI, upload paths, and product-specific findings — `loot/next_steps.txt` has the grounded command already built. Check it before going manual.
 
 ### WordPress Detected
 ```bash
-# quick_wins.txt contains this command — copy it from there (URL is pre-filled)
+# loot/next_steps.txt contains this command when WordPress is actually detected
 wpscan --url http://TARGET --enumerate ap,at,u --plugins-detection aggressive
 ```
 
 ### Login Page Found
 ```bash
-# quick_wins.txt contains a hydra http-post-form template for detected login forms
+# loot/next_steps.txt contains a hydra http-post-form template for detected login forms
 # Adjust the form body and failure string, then run:
 hydra -L /usr/share/seclists/Usernames/top-usernames-shortlist.txt \
       -P /usr/share/seclists/Passwords/Common-Credentials/10k-most-common.txt \
@@ -340,41 +357,47 @@ hydra -L /usr/share/seclists/Usernames/top-usernames-shortlist.txt \
 
 ### Auth-Required Pages (401)
 ```bash
-# quick_wins.txt contains a hydra http-get command for each 401 path — copy from there
+# loot/next_steps.txt contains a hydra http-get command for each 401 path
 hydra -L users.txt -P passwords.txt TARGET http-get /admin
 ```
 
 ### Parameter Found (--deep mode)
 ```bash
-# quick_wins.txt contains a sqlmap command for parameters found by Phase 5 — copy from there
+# loot/next_steps.txt contains a sqlmap command for parameters found by Phase 5
 sqlmap -u "http://TARGET/page?id=1" --batch --level 3 --risk 2
 ```
 
 ### robots.txt Disallow Entries Found
 ```bash
-# quick_wins.txt now auto-generates per-path curl probes — e.g.:
+# loot/next_steps.txt auto-generates per-path curl probes — e.g.:
 curl -sk -o /dev/null -w '%{http_code} http://TARGET/admin-panel\n' 'http://TARGET/admin-panel'
-# Copy these from quick_wins.txt — no manual retyping needed
+# Copy these from next_steps.txt — no manual retyping needed
 ```
 
 ### Non-WordPress CMS Detected
 
-`quick_wins.txt` prints specific attack commands automatically:
+`loot/next_steps.txt` prints concise follow-up commands automatically:
 
 | CMS | Commands Generated |
 |-----|--------------------|
-| Joomla | `joomscan --url`, admin login panel URL, hydra http-post-form template |
-| Drupal | `droopescan scan drupal -u`, version check via `CHANGELOG.txt`, Drupalgeddon msfconsole one-liner |
-| Tomcat | Manager panel URL, default creds check, WAR shell deploy + trigger sequence — `LHOST` auto-resolved, `penelope -p 4444 -O` reminder printed |
-| Jenkins | Script console URL, Groovy reverse shell — IP auto-resolved, `penelope -p 4444 -O` reminder printed |
-| phpMyAdmin | Login URL, default creds, SQLi `SELECT INTO OUTFILE` shell write |
+| Joomla | `joomscan --url`, admin login panel URL, Joomla path fuzzing |
+| Drupal | `droopescan scan drupal -u`, version check via `CHANGELOG.txt`, login check |
+| Tomcat | Manager panel URL, default creds check, WAR payload generation reminder |
+| Jenkins | Login/script console checks and targeted fuzzing |
+| phpMyAdmin | Login URL and hydra template |
+| Adminer | `adminer/` and `adminer.php` checks plus hydra template |
+| Grafana | Login/health checks and nuclei Grafana templates |
+| Webmin | Header/version checks, `searchsploit`, login hydra template |
+| JBoss/WildFly | `jmx-console`/`web-console` checks and management-path fuzzing |
+| Spring actuator | `/actuator`, `/actuator/env`, Spring Boot wordlist fuzzing |
+| Elasticsearch | cluster health, indices, sample search |
 
 ### Sensitive Files Found (Resolved Paths)
 ```bash
-# quick_wins.txt now uses actual found paths instead of <SENSITIVE_PATH> placeholder:
+# loot/next_steps.txt uses actual found URLs instead of <SENSITIVE_PATH> placeholders:
 curl -sk http://TARGET/backup.zip -o /tmp/loot_backup.zip && grep -iE 'pass|secret|key|user|db_' /tmp/loot_backup.zip
 curl -sk http://TARGET/.env -o /tmp/loot_.env && grep -iE 'pass|secret|key|user|db_' /tmp/loot_.env
-# Commands are specific to what was actually found — copy from quick_wins.txt
+# Commands are specific to what was actually found — copy from next_steps.txt
 ```
 
 ### API Endpoint Found (/api, /swagger.json)
@@ -387,6 +410,7 @@ curl -s http://TARGET/swagger.json | python3 -m json.tool
 
 ### .git Exposed
 ```bash
+# loot/next_steps.txt emits this only if /.git/HEAD or /.git/config was found
 # Dump the entire repository:
 git-dumper http://TARGET/.git/ ./git-dump
 cd git-dump && git log --oneline

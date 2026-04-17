@@ -11,7 +11,9 @@ tags:
 # recon.sh
 
 ## What It Is
-Automated enumeration orchestrator for OffSec. Runs rustscan → nmap TCP → nmap UDP → targeted service enumeration in parallel. Generates `summary.txt` (with a **NEXT-STEP COMMANDS** section containing ready-to-run follow-on commands per service) and `loot/quick_wins.txt` (anonymous access, default creds, zone transfers, and copy-paste exploit commands) per target.
+Automated enumeration orchestrator for OffSec. Runs rustscan → nmap TCP → nmap UDP → targeted service enumeration in parallel. Generates `summary.txt`, `loot/quick_wins.txt`, and a finding-driven `loot/next_steps.txt` per target.
+
+`next_steps.txt` is intentionally evidence-gated: commands are emitted only when the script has concrete support from nmap results or non-empty output files. It does not print anonymous SMB commands unless anonymous/readable shares were actually found, and it does not treat WinRM/HTTPAPI ports as real web app targets.
 
 > [!important] Enumeration only — no exploitation
 > OffSec compliant. Finds the doors, you walk through them.
@@ -29,9 +31,11 @@ cat $TOOLKIT_ROOT/recon/target_priority.txt   # attack highest-score target firs
 sudo ./recon.sh --auto 10.10.10.1 10.10.10.2 10.10.10.3
 
 # 2. Read engagement instructions while it runs, then check summaries
-# summary.txt includes a NEXT-STEP COMMANDS section — copy-paste follow-ons per service
-# quick_wins.txt has anonymous access, default creds, zone transfers + ready-to-run commands
+# summary.txt includes a short high-value preview of grounded next steps
+# next_steps.txt has the full evidence-backed follow-up command library
+# quick_wins.txt has notable anonymous access, default creds, zone transfers, etc.
 cat $TOOLKIT_ROOT/recon/*/summary.txt
+cat $TOOLKIT_ROOT/recon/*/loot/next_steps.txt
 cat $TOOLKIT_ROOT/recon/*/loot/quick_wins.txt
 
 # 3. Start with the box that has the most findings
@@ -119,7 +123,10 @@ $TOOLKIT_ROOT/recon/
     ├── udp/
     │   └── snmp/                  # onesixtyone, snmpwalk (processes, software, ARP)
     ├── loot/
-    │   └── quick_wins.txt         # ★ Anon access, default creds, zone xfers, etc.
+    │   ├── quick_wins.txt         # ★ Anon access, default creds, zone xfers, etc.
+    │   ├── next_steps.txt         # ★ Evidence-backed follow-up command library
+    │   ├── smtp_valid_users.txt   # Created only when SMTP VRFY finds users
+    │   └── snmp_windows_users.txt # Created only when SNMP exposes Windows users
     ├── progress.log               # Phase tracking (START/DONE/FAIL/SKIP)
     └── summary.txt                # Human-readable findings report
 ```
@@ -131,10 +138,13 @@ $TOOLKIT_ROOT/recon/
 ```bash
 IP=10.10.10.1
 
-# Big picture — always read first; scroll to NEXT-STEP COMMANDS section for ready-to-run follow-ons
+# Big picture — always read first; NEXT-STEP COMMANDS is a short preview
 cat $TOOLKIT_ROOT/recon/$IP/summary.txt
 
-# ★ Prioritize these — anonymous access, default creds, and copy-paste exploit commands
+# ★ Full finding-driven command library — commands only appear when backed by evidence
+cat $TOOLKIT_ROOT/recon/$IP/loot/next_steps.txt
+
+# ★ Prioritize these — anonymous access, default creds, and notable findings
 cat $TOOLKIT_ROOT/recon/$IP/loot/quick_wins.txt
 
 # Web findings
@@ -153,6 +163,7 @@ cat $TOOLKIT_ROOT/recon/$IP/udp/snmp/installed_software.txt
 cat $TOOLKIT_ROOT/recon/$IP/udp/snmp/network_interfaces.txt
 
 # Across ALL targets at once
+cat $TOOLKIT_ROOT/recon/*/loot/next_steps.txt
 cat $TOOLKIT_ROOT/recon/*/loot/quick_wins.txt
 cat $TOOLKIT_ROOT/recon/*/summary.txt
 
@@ -178,12 +189,59 @@ cat $TOOLKIT_ROOT/recon/target_priority.txt
 | LDAP | 389, 636, 3268 | nmap scripts, ldapsearch | Anonymous bind |
 | Redis | 6379 | nc, nmap scripts | No-auth access + full SSH-key write trick with `ssh -i` follow-on |
 | RPC/NFS | 111, 2049 | rpcclient, rpcinfo, showmount | NFS exports |
+| MSSQL | 1433 | nmap detection | Grounded `netexec` / `impacket-mssqlclient` follow-ups |
+| RDP | 3389 | nmap detection | Grounded `netexec rdp`, `xfreerdp`, and RDP nmap follow-ups |
+| Kerberos/AD | 88, 464 + SMB/LDAP | nmap detection | Kerberos user/SPN checks and AD workflow commands |
 
 > [!tip] SNMP & FTP are high-value
 > Anonymous FTP auto-mirrors the entire share. SNMP process list frequently reveals running services, credentials in command args, and pivot targets.
 
-> [!tip] NEXT-STEP COMMANDS section is the most important output
-> Every service with a finding generates resolved copy-paste commands in `summary.txt`. VHosts get `/etc/hosts` + `webenum` commands. DNS zone transfers extract hostnames. SMTP valid users go to `loot/smtp_valid_users.txt` ready for spray. Redis no-auth includes the full SSH-key write attack + `ssh -i` follow-on. WinRM includes `crackr --hydra winrm` fallback when no creds are available.
+> [!tip] `loot/next_steps.txt` is the most important action file
+> `summary.txt` prints only a short high-value preview. The full library is in `loot/next_steps.txt`, and every command is tied to a concrete finding.
+
+---
+
+## Finding-Driven Next Steps
+
+`loot/next_steps.txt` is a small rule-based command library generated per host. Each rule has:
+
+1. a finding name
+2. the evidence file or nmap condition that triggered it
+3. 3-6 practical commands to run next
+
+Rules are intentionally strict:
+
+- **No absent service, no command.**
+- **Weak evidence gets verification commands.**
+- **Strong evidence gets direct follow-up commands.**
+- **Anonymous examples only appear after anonymous access/readable output is proven.**
+- **WinRM/HTTPAPI ports (`5985`, `5986`, `47001`) are not treated as real web apps by default.**
+
+Current host/service rules include:
+
+| Trigger | Commands Generated |
+|---------|--------------------|
+| SMTP `vrfy_users.txt` contains `VALID:` | Save `loot/smtp_valid_users.txt`, `cat`, spray/brute SMB, WinRM, SMTP |
+| SMB detected | Credentialed `netexec`, `smbmap`, `smbclient`, AD recon |
+| SMB `smbmap_null.txt`/`smbmap_guest.txt` contains `READ`/`WRITE` | Anonymous `smbmap`, `smbclient`, CIFS mount |
+| WinRM/WSMan detected | `netexec winrm`, `evil-winrm` password/hash examples |
+| Real web target identified | `webenum.sh --url`, `curl -I`, `whatweb` |
+| Risky HTTP method found | `curl OPTIONS`, `nmap http-methods`, TRACE check |
+| POP3/IMAP detected | Capability probes and Hydra templates |
+| Anonymous FTP succeeded | FTP login, recursive `wget`, mirror inspection |
+| SNMP community string found | `snmpwalk` and process-argument OID checks |
+| SNMP process args contain secret keywords | Focused `grep` and process review commands |
+| SNMP Windows users found | Save user list and spray/brute WinRM |
+| NFS export found | `showmount`, mount, file listing |
+| LDAP anonymous bind returned data | `ldapsearch` and anonymous AD recon |
+| Redis no-auth found | `redis-cli INFO`, `KEYS`, `CONFIG` |
+| MySQL detected / no-password access | Default login or verified no-password database commands |
+| PostgreSQL detected / login found | Default login or verified `psql` commands |
+| DNS detected / zone transfer success | `dig`, `dnsrecon`, zone parsing, `/etc/hosts` entries |
+| MSSQL detected | `netexec mssql`, `impacket-mssqlclient`, nmap MSSQL scripts |
+| RDP detected | `netexec rdp`, `xfreerdp`, RDP nmap scripts |
+| Kerberos or AD service combination | Kerberos enum, AS-REP/SPN checks, `adr.sh` workflow |
+| Old SSH banner flagged | `ssh-audit`, `searchsploit` |
 
 ---
 
@@ -194,7 +252,8 @@ cat $TOOLKIT_ROOT/recon/target_priority.txt
 3. **nmap UDP** — top 200 ports (background, runs in parallel)
 4. **Service triage** — auto-launches modules based on findings (up to 5 parallel)
 5. **Post-UDP SNMP check** — re-checks for UDP 161 after UDP scan completes
-6. **Summary** — generates `summary.txt`
+6. **Next-step library** — generates `loot/next_steps.txt` from concrete findings
+7. **Summary** — generates `summary.txt` with a short preview from `next_steps.txt`
 
 UDP scan runs in background and does **not** count against the `--max-parallel` slot limit.
 
