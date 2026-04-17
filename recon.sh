@@ -68,6 +68,16 @@ if [[ -z "${TOOLKIT_ROOT:-}" ]]; then
     fi
 fi
 RECON_DIR="${TOOLKIT_ROOT}/recon"         # Base output directory
+# When running as root via sudo, prepend invoking user's bin dirs so user-installed
+# tools (rustscan in ~/.cargo/bin, etc.) are found regardless of secure_path.
+if [[ $EUID -eq 0 ]] && [[ -n "${SUDO_USER:-}" ]]; then
+    _inv_home_p=$(getent passwd "$SUDO_USER" 2>/dev/null | cut -d: -f6)
+    if [[ -n "$_inv_home_p" ]]; then
+        PATH="${_inv_home_p}/.cargo/bin:${_inv_home_p}/.local/bin:${_inv_home_p}/go/bin:${_inv_home_p}/snap/bin:${PATH}"
+        export PATH
+    fi
+    unset _inv_home_p
+fi
 # Rustscan batch size — derived from current ulimit to avoid "Too many open files" noise
 _ulimit_n=$(ulimit -n 2>/dev/null || echo 1024)
 RUSTSCAN_BATCH_SIZE=$(( _ulimit_n / 2 ))
