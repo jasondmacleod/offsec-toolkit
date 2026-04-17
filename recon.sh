@@ -134,7 +134,9 @@ error()   { echo -e "${RED}[$(ts)] [-]${NC} $*"; }
 header()  { echo -e "\n${BOLD}${CYAN}═══════════════════════════════════════════════════${NC}"; \
             echo -e "${BOLD}${CYAN}  $*${NC}"; \
             echo -e "${BOLD}${CYAN}═══════════════════════════════════════════════════${NC}"; }
-phase()   { echo -e "\n${MAGENTA}[$(ts)] [PHASE]${NC} ${BOLD}$*${NC}"; }
+phase()       { echo -e "\n${MAGENTA}[$(ts)] [PHASE]${NC} ${BOLD}$*${NC}"; }
+_tool_start() { echo -e "${CYAN}[$(ts)] [~]${NC} ${BOLD}$1${NC} → $2  ${YELLOW}(budget: $3)${NC}"; }
+_tool_done()  { local _e=$(( $(date +%s) - $2 )); echo -e "${GREEN}[$(ts)] [✓]${NC} $1 done — ${_e}s"; }
 
 #------------------------------------------------------------------------------
 # PROGRESS TRACKING
@@ -219,13 +221,35 @@ launch_enum() {
     info "Launched $1 (PID: $pid)"
 }
 
-# Wait for all background enumerations to finish
+# Wait for all background enumerations, reporting every 30s so the user knows what's running
 wait_all_enum() {
     if (( ${#CHILD_PIDS[@]} > 0 )); then
-        info "Waiting for ${#CHILD_PIDS[@]} background enumeration job(s)..."
-        for pid in ${CHILD_PIDS[@]+"${CHILD_PIDS[@]}"}; do
-            wait "$pid" 2>/dev/null
+        local _total=${#CHILD_PIDS[@]}
+        info "Waiting for $_total background job(s) to finish..."
+        local _w0
+        _w0=$(date +%s)
+        local _last_report=0
+        while (( ${#CHILD_PIDS[@]} > 0 )); do
+            local _alive=()
+            local _pid
+            for _pid in ${CHILD_PIDS[@]+"${CHILD_PIDS[@]}"}; do
+                if kill -0 "$_pid" 2>/dev/null; then
+                    _alive+=("$_pid")
+                else
+                    wait "$_pid" 2>/dev/null || true
+                fi
+            done
+            CHILD_PIDS=("${_alive[@]+"${_alive[@]}"}")
+            (( ${#CHILD_PIDS[@]} == 0 )) && break
+            local _el=$(( $(date +%s) - _w0 ))
+            if (( _el - _last_report >= 30 )); then
+                info "  ${#CHILD_PIDS[@]}/${_total} job(s) still running... (${_el}s elapsed)"
+                _last_report=$_el
+            fi
+            sleep 2
         done
+        local _waited=$(( $(date +%s) - _w0 ))
+        (( _waited > 2 )) && success "All background jobs finished (waited ${_waited}s)"
     fi
     CHILD_PIDS=()
     RUNNING_JOBS=0
@@ -533,6 +557,9 @@ run_rustscan() {
 
     phase "TCP Port Discovery (rustscan) → $ip"
     progress_log "$target_dir" "START" "rustscan" "batch_size=$RUSTSCAN_BATCH_SIZE"
+    _tool_start "rustscan" "$ip" "300s  batch: $RUSTSCAN_BATCH_SIZE"
+    local _rs_t0
+    _rs_t0=$(date +%s)
 
     # rustscan 2.4.x outputs "Open <IP>:<PORT>" lines when NOT in greppable mode.
     # --scripts none = skip nmap handoff (replaces deprecated --no-nmap)
@@ -546,6 +573,7 @@ run_rustscan() {
         --no-banner \
         2>&1 | tee "$outfile"
     local rustscan_exit=$?
+    _tool_done "rustscan" "$_rs_t0"
     if [[ $rustscan_exit -ne 0 ]]; then
         error "Rustscan failed or timed out for $ip"
         progress_log "$target_dir" "FAIL" "rustscan" "exit=$rustscan_exit"
@@ -618,6 +646,9 @@ run_nmap_tcp() {
         warn "Not running as root — skipping nmap -O (OS detection). Run as root for full results."
     fi
 
+    _tool_start "nmap -sCV" "$ip" "${NMAP_TCP_TIMEOUT}s  ports: $ports"
+    local _nmap_t0
+    _nmap_t0=$(date +%s)
     local tcp_scan_ok=true
     if ! timeout "$NMAP_TCP_TIMEOUT" nmap "${nmap_flags[@]}" \
         "$ip" 2>&1 | tee "$target_dir/scans/nmap_tcp_console.txt"; then
@@ -626,6 +657,7 @@ run_nmap_tcp() {
         progress_log "$target_dir" "FAIL" "nmap_tcp" "timeout=${NMAP_TCP_TIMEOUT}s"
         warn "Partial TCP scan output may still exist in $target_dir/scans/"
     fi
+    _tool_done "nmap -sCV" "$_nmap_t0"
 
     if [[ "$tcp_scan_ok" == "true" ]]; then
         success "Nmap TCP scan complete for $ip"
@@ -660,6 +692,9 @@ run_nmap_udp() {
     fi
 
     # --- Pass 1: Top ports (fast, gets you going) ---
+    _tool_start "nmap -sU" "$ip" "${NMAP_UDP_TIMEOUT}s  top: $UDP_TOP_PORTS ports"
+    local _udp_t0
+    _udp_t0=$(date +%s)
     info "Scanning top $UDP_TOP_PORTS UDP ports (this runs in background)"
 
     local udp_scan_ok=true
@@ -669,6 +704,7 @@ run_nmap_udp() {
         --version-intensity 0 \
         -oA "$outbase" \
         "$ip" 2>&1 | tee "$target_dir/scans/nmap_udp_console.txt" || udp_scan_ok=false
+    _tool_done "nmap -sU" "$_udp_t0"
     if [[ "$udp_scan_ok" == "false" ]]; then
         warn "Nmap UDP scan failed or timed out for $ip (this is normal if not root)"
         progress_log "$target_dir" "FAIL" "nmap_udp" "timeout=${NMAP_UDP_TIMEOUT}s"
@@ -785,17 +821,22 @@ enum_http() {
     if is_web_brute_target "$port"; then
         # --- Nikto (vulnerability scanner) ---
         if check_tool nikto; then
-            info "  → nikto $url (timeout: ${NIKTO_TIMEOUT}s)"
+            _tool_start "nikto" "$url" "${NIKTO_TIMEOUT}s"
+            local _nikto_t0
+            _nikto_t0=$(date +%s)
             # Note: do NOT pass -Format txt when -o already ends in .txt — older nikto
             # versions produce nikto.txt.txt with both flags set.
             timeout "$NIKTO_TIMEOUT" nikto -h "$url" -o "$outdir/nikto.txt" \
                 -nointeractive 2>&1 | tail -5 || true
+            _tool_done "nikto" "$_nikto_t0"
         fi
 
         # --- Gobuster (directory brute-force) ---
         if check_tool gobuster; then
             if [[ -f "$GOBUSTER_WORDLIST" ]]; then
-                info "  → gobuster dir $url"
+                _tool_start "gobuster" "$url" "${GOBUSTER_RUNTIME}s  req-timeout: ${GOBUSTER_TIMEOUT}s"
+                local _gobuster_t0
+                _gobuster_t0=$(date +%s)
                 local gobuster_flags=(-u "$url" -w "$GOBUSTER_WORDLIST" \
                     -t "$GOBUSTER_THREADS" \
                     --timeout "${GOBUSTER_TIMEOUT}s" \
@@ -806,6 +847,7 @@ enum_http() {
                 [[ "$proto" == "https" ]] && gobuster_flags+=(-k)
 
                 timeout "$GOBUSTER_RUNTIME" gobuster dir "${gobuster_flags[@]}" 2>&1 | tail -3 || true
+                _tool_done "gobuster" "$_gobuster_t0"
             else
                 warn "  Gobuster wordlist not found: $GOBUSTER_WORDLIST"
             fi
@@ -818,11 +860,15 @@ enum_http() {
             gobuster_hits=$(grep -c '^/' "$outdir/gobuster_dir.txt" 2>/dev/null); gobuster_hits=${gobuster_hits:-0}
             if (( gobuster_hits < 5 )); then
                 info "  → feroxbuster $url (gobuster found <5 results, trying recursive)"
+                _tool_start "feroxbuster" "$url" "${FEROX_RUNTIME}s"
+                local _ferox_t0
+                _ferox_t0=$(date +%s)
                 local ferox_flags=(-u "$url" -w "$GOBUSTER_WORDLIST" \
                     -t 30 --timeout 30 -d 2 -q \
                     -o "$outdir/feroxbuster.txt")
                 [[ "$proto" == "https" ]] && ferox_flags+=(-k)
                 timeout "$FEROX_RUNTIME" feroxbuster "${ferox_flags[@]}" 2>&1 | tail -3 || true
+                _tool_done "feroxbuster" "$_ferox_t0"
             fi
         fi
     else
@@ -882,14 +928,20 @@ enum_smb() {
 
     # --- enum4linux-ng (comprehensive SMB enumeration) ---
     if check_tool enum4linux-ng; then
-        info "  → enum4linux-ng $ip"
+        _tool_start "enum4linux-ng" "$ip" "${ENUM4LINUX_TIMEOUT}s"
+        local _e4l_t0
+        _e4l_t0=$(date +%s)
         timeout "$ENUM4LINUX_TIMEOUT" enum4linux-ng -A "$ip" \
             -oJ "$outdir/enum4linux" 2>&1 | tee "$outdir/enum4linux_console.txt" | tail -10 || true
+        _tool_done "enum4linux-ng" "$_e4l_t0"
     elif check_tool enum4linux; then
         # Fallback to classic enum4linux
-        info "  → enum4linux (legacy) $ip"
+        _tool_start "enum4linux" "$ip" "${ENUM4LINUX_TIMEOUT}s"
+        local _e4l_t0
+        _e4l_t0=$(date +%s)
         timeout "$ENUM4LINUX_TIMEOUT" enum4linux -a "$ip" \
             > "$outdir/enum4linux.txt" 2>&1 || true
+        _tool_done "enum4linux" "$_e4l_t0"
     fi
 
     # --- smbmap (share enumeration with access levels) ---
@@ -1930,8 +1982,7 @@ generate_summary() {
         [[ "$mail_section" == "true" ]] && echo ""
 
         # --- Next-Step Commands ---
-        # IMPORTANT: each section is gated on actual phase completion or confirmed
-        # file content — NOT directory existence (dirs are pre-created for all services).
+        # Each section is gated on phase completion or file presence, not directory existence.
         echo "═══ ★ NEXT-STEP COMMANDS ★ ══════════════════════════════"
         echo ""
         local tcp_ports_found=""
@@ -2165,9 +2216,9 @@ recon_target() {
     echo "  Started: $(date)"
     echo "  Output:  ${RECON_DIR}/${ip}/"
 
-    # --- Setup directory structure ---
+    # --- Setup directory structure (service dirs created on-demand by each enum function) ---
     local target_dir="${RECON_DIR}/${ip}"
-    mkdir -p "$target_dir"/{scans,tcp/{http,smb,ftp,ssh,mysql,postgres,dns,smtp,pop3,imap,rpc,ldap,redis},udp/snmp,loot}
+    mkdir -p "$target_dir"/{scans,loot}
 
     # Initialize progress log
     if [[ ! -f "$target_dir/progress.log" ]]; then

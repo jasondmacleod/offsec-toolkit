@@ -107,7 +107,9 @@ error()   { echo -e "${RED}[$(ts)] [-]${NC} $*"; }
 header()  { echo -e "\n${BOLD}${CYAN}═══════════════════════════════════════════════════${NC}";
             echo -e "${BOLD}${CYAN}  $*${NC}";
             echo -e "${BOLD}${CYAN}═══════════════════════════════════════════════════${NC}"; }
-phase()   { echo -e "\n${MAGENTA}[$(ts)] [PHASE]${NC} ${BOLD}$*${NC}"; }
+phase()       { echo -e "\n${MAGENTA}[$(ts)] [PHASE]${NC} ${BOLD}$*${NC}"; }
+_tool_start() { echo -e "${CYAN}[$(ts)] [~]${NC} ${BOLD}$1${NC} → $2  ${YELLOW}(budget: $3)${NC}"; }
+_tool_done()  { local _e=$(( $(date +%s) - $2 )); echo -e "${GREEN}[$(ts)] [✓]${NC} $1 done — ${_e}s"; }
 
 #==============================================================================
 # PROGRESS TRACKING (mirrors recon.sh)
@@ -130,10 +132,32 @@ register_pid() { CHILD_PIDS+=("$1"); }
 
 wait_all() {
     if (( ${#CHILD_PIDS[@]} > 0 )); then
-        info "Waiting for ${#CHILD_PIDS[@]} background job(s)..."
-        for pid in "${CHILD_PIDS[@]}"; do
-            wait "$pid" 2>/dev/null
+        local _total=${#CHILD_PIDS[@]}
+        info "Waiting for $_total background job(s) to finish..."
+        local _w0
+        _w0=$(date +%s)
+        local _last_report=0
+        while (( ${#CHILD_PIDS[@]} > 0 )); do
+            local _alive=()
+            local _pid
+            for _pid in "${CHILD_PIDS[@]}"; do
+                if kill -0 "$_pid" 2>/dev/null; then
+                    _alive+=("$_pid")
+                else
+                    wait "$_pid" 2>/dev/null || true
+                fi
+            done
+            CHILD_PIDS=("${_alive[@]+"${_alive[@]}"}")
+            (( ${#CHILD_PIDS[@]} == 0 )) && break
+            local _el=$(( $(date +%s) - _w0 ))
+            if (( _el - _last_report >= 30 )); then
+                info "  ${#CHILD_PIDS[@]}/${_total} job(s) still running... (${_el}s elapsed)"
+                _last_report=$_el
+            fi
+            sleep 2
         done
+        local _waited=$(( $(date +%s) - _w0 ))
+        (( _waited > 2 )) && success "All background jobs finished (waited ${_waited}s)"
     fi
     CHILD_PIDS=()
 }
@@ -263,12 +287,15 @@ phase_fingerprint() {
 
     # --- WhatWeb aggressive ---
     if check_tool whatweb; then
-        info "  → whatweb (aggressive) $url"
+        _tool_start "whatweb" "$url" "${WHATWEB_TIMEOUT}s"
+        local _ww_t0
+        _ww_t0=$(date +%s)
         timeout "$WHATWEB_TIMEOUT" whatweb -a 3 --color never "$url" \
             > "$outdir/whatweb.txt" 2>&1 || true
         # Also run in verbose mode for plugin detail
         timeout "$WHATWEB_TIMEOUT" whatweb -a 3 -v --color never "$url" \
             > "$outdir/whatweb_verbose.txt" 2>&1 || true
+        _tool_done "whatweb" "$_ww_t0"
     fi
 
     # --- Full HTTP headers (follow redirects) ---
@@ -404,13 +431,16 @@ phase_content() {
     local wl_dir=""
     wl_dir=$(check_wordlist "$WL_DIR_MEDIUM" "$WL_DIR_DIRBUSTER" "$WL_DIR_FAST") || true
     if [[ -n "$wl_dir" ]]; then
-        info "  → ffuf directory fuzzing (wordlist: $(basename "$wl_dir"))"
+        _tool_start "ffuf dirs" "${url%/}/FUZZ" "${PHASE_CONTENT_TIMEOUT}s  wl: $(basename "$wl_dir")"
+        local _ffuf_d_t0
+        _ffuf_d_t0=$(date +%s)
         timeout "$PHASE_CONTENT_TIMEOUT" ffuf \
             "${base_flags[@]}" \
             -w "${wl_dir}:FUZZ" \
             -u "${url%/}/FUZZ" \
             -o "$outdir/dirs_medium.json" -of json \
             > "$outdir/dirs_medium_console.txt" 2>&1 || phase_ok=false
+        _tool_done "ffuf dirs" "$_ffuf_d_t0"
 
         # Also save human-readable version
         ffuf_json_to_text "$outdir/dirs_medium.json" > "$outdir/dirs_medium.txt" 2>/dev/null || true
@@ -420,7 +450,9 @@ phase_content() {
     local wl_files=""
     wl_files=$(check_wordlist "$WL_FILES_MEDIUM" "$WL_DIR_MEDIUM" "$WL_DIR_FAST") || true
     if [[ -n "$wl_files" ]]; then
-        info "  → ffuf file fuzzing (extensions: $extensions)"
+        _tool_start "ffuf files" "${url%/}/FUZZ" "${PHASE_CONTENT_TIMEOUT}s  ext: $extensions"
+        local _ffuf_f_t0
+        _ffuf_f_t0=$(date +%s)
         timeout "$PHASE_CONTENT_TIMEOUT" ffuf \
             "${base_flags[@]}" \
             -w "${wl_files}:FUZZ" \
@@ -428,6 +460,7 @@ phase_content() {
             -e ".${extensions//,/,.}" \
             -o "$outdir/files_medium.json" -of json \
             > "$outdir/files_medium_console.txt" 2>&1 || phase_ok=false
+        _tool_done "ffuf files" "$_ffuf_f_t0"
 
         ffuf_json_to_text "$outdir/files_medium.json" > "$outdir/files_medium.txt" 2>/dev/null || true
     fi
@@ -611,12 +644,14 @@ phase_vhosts() {
     info "  Baseline size: ${baseline_size:-0} bytes (will filter this out)"
 
     # Step 2: Vhost fuzz with size filter
-    info "  → ffuf vhost fuzzing (Host: FUZZ.${VHOST_DOMAIN})"
     local phase_ok=true
     local -a fs_flag=()
     if [[ -n "$baseline_size" && "$baseline_size" != "0" ]]; then
         fs_flag=(-fs "$baseline_size")
     fi
+    _tool_start "ffuf vhosts" "Host: FUZZ.${VHOST_DOMAIN}" "${PHASE_VHOST_TIMEOUT}s"
+    local _ffuf_vh_t0
+    _ffuf_vh_t0=$(date +%s)
     # shellcheck disable=SC2054  # commas in -mc value are ffuf syntax, not array separators
     timeout "$PHASE_VHOST_TIMEOUT" ffuf \
         -t "$THREADS" -timeout "$FFUF_TIMEOUT" \
@@ -628,6 +663,7 @@ phase_vhosts() {
         -H "Host: FUZZ.${VHOST_DOMAIN}" \
         -o "$outdir/vhosts.json" -of json \
         > "$outdir/vhosts_console.txt" 2>&1 || phase_ok=false
+    _tool_done "ffuf vhosts" "$_ffuf_vh_t0"
 
     ffuf_json_to_text "$outdir/vhosts.json" > "$outdir/vhosts.txt" 2>/dev/null || true
 
@@ -1477,7 +1513,7 @@ if [[ -z "$PROTO" || -z "$HOST" || ! "$PORT" =~ ^[0-9]+$ ]]; then
 fi
 TARGET_TAG="${HOST}_${PORT}_${PROTO}"
 OUTPUT_DIR="${OUTPUT_ROOT}/${TARGET_TAG}/artifacts/web"
-mkdir -p "${OUTPUT_DIR}"/{fingerprint,content,content/recursive,vhosts,params,summary}
+mkdir -p "${OUTPUT_DIR}"
 
 # Reachability precheck — fail fast instead of wasting engagement time on a dead host
 if ! curl -sS -o /dev/null --max-time 5 -k "$TARGET_URL" 2>/dev/null; then
