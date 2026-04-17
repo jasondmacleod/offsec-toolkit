@@ -2381,7 +2381,7 @@ done
 if [[ $EUID -ne 0 ]] && [[ "$NO_SUDO" != "true" ]]; then
     warn "Not running as root — re-executing with sudo for full scan capability (UDP, OS detect)..."
     warn "Pass --no-sudo to skip this. Sudo may prompt for your password."
-    exec sudo "$0" "${ORIGINAL_ARGS[@]}"
+    exec sudo env PATH="$PATH" "$0" "${ORIGINAL_ARGS[@]}"
     # exec replaces this process; if it fails (no sudo), fall through with a warning
     warn "sudo exec failed — continuing without root (UDP and OS detection will be skipped)"
 fi
