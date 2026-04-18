@@ -20,10 +20,10 @@ copy-paste after human review.
   where scripts already use them.
 - Do not add exploit automation that runs automatically. Suggestions are fine;
   execution should remain user-controlled.
-- Keep SQLmap and similar automatic exploitation behind explicit lab/non-engagement
-  switches. `nuclei` and `wpscan` may appear in default OffSec follow-up output
-  when they are tied to concrete findings, such as Grafana or WordPress
-  evidence.
+- Do not include restricted automatic exploitation tools in scripts, setup,
+  generated commands, or docs. `nuclei` and `wpscan` may appear in default OffSec
+  follow-up output when they are tied to concrete findings, such as Grafana or
+  WordPress evidence.
 - Do not rewrite scripts from scratch. Preserve useful techniques and build on
   existing phases, output paths, and helper functions.
 - Keep coverage OffSec-practical. Add small missing checks when they unlock real
@@ -93,8 +93,8 @@ copy-paste after human review.
   recon evidence, such as `httpx-toolkit`, `gowitness`, `eyewitness`,
   `sslscan`, `wafw00f`, `dnsrecon`, `snmpcheck`, `nbtscan`, `davtest`,
   `cadaver`, `nuclei`, `wpscan`, and `jq`.
-- SQLmap-style automatic exploitation belongs behind `--lab-tools` in setup and
-  in scripts that generate next-step commands.
+- Keep restricted automatic exploitation tools out of `tools_setup.sh` and
+  generated next-step commands.
 - Check-mode package validation should map package names to real binaries when
   they differ, for example `httpx-toolkit` to `httpx` and `samba-common-bin` to
   `nmblookup`.

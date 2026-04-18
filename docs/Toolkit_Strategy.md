@@ -28,7 +28,7 @@ Unified credential log: `$TOOLKIT_ROOT/creds.txt` — populated automatically by
 ./tools_setup.sh --check    # no sudo needed, just verifies
 ```
 
-`tools_setup.sh` installs OffSec-safe recon/web enum helpers by default, including `httpx-toolkit`, `gowitness`, `eyewitness`, `sslscan`, `wafw00f`, `dnsrecon`, `snmpcheck`, `nbtscan`, `davtest`, `cadaver`, `nuclei`, `wpscan`, and `jq` when they are not already present on Kali. Use `--lab-tools` only for non-engagement SQLmap automation.
+`tools_setup.sh` installs OffSec-safe recon/web enum helpers by default, including `httpx-toolkit`, `gowitness`, `eyewitness`, `sslscan`, `wafw00f`, `dnsrecon`, `snmpcheck`, `nbtscan`, `davtest`, `cadaver`, `nuclei`, `wpscan`, and `jq` when they are not already present on Kali.
 
 Verify the evidence-gated next-step rules after script edits:
 ```bash
@@ -1147,7 +1147,7 @@ The table below maps each gap to its phase and the manual technique to fill it.
 
 | Gap | Trigger | Manual Technique |
 |-----|---------|-----------------|
-| SQL injection | Login form, search box, any `?id=` param | Manual `'`, boolean, and error tests first; reserve `sqlmap` for lab/non-engagement use |
+| SQL injection | Login form, search box, any `?id=` param | Manual `'`, boolean, time-delay, and error tests |
 | LFI | `?file=`, `?page=`, `?path=` param | `?file=../../../../etc/passwd` → log poisoning → RCE |
 | File upload bypass | Upload form present | Double-ext, Content-Type spoof, magic bytes, .phar |
 | SSTI | Input reflected back in page | `{{7*7}}` test → if 49 returned → RCE via template engine |

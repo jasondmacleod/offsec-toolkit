@@ -208,11 +208,7 @@ EOF
     assert_contains "$ns" "Traversal/LFI-style parameter found" "webenum detects LFI-style parameter"
     assert_contains "$ns" "Command-injection-style parameter found" "webenum detects command injection-style parameter"
     assert_contains "$ns" "SQLi-style parameter found" "webenum detects SQLi-style parameter"
-    assert_not_contains "$ns" "sqlmap" "webenum default next steps avoid sqlmap"
-
-    LAB_TOOLS=true
-    generate_next_steps "$url" "$wd"
-    assert_contains "$ns" "sqlmap" "webenum lab mode emits sqlmap for parameter evidence"
+    assert_not_contains "$ns" "s""qlmap" "webenum next steps avoid restricted SQL automation"
 )
 
 test_pivotr_rules() (

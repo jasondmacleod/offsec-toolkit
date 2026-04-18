@@ -15,22 +15,19 @@ set -uo pipefail
 
 # ── Mode flags ────────────────────────────────────────────────────────────────
 CHECK_ONLY=false
-LAB_TOOLS=false
 for arg in "$@"; do
     case "$arg" in
-        --check)     CHECK_ONLY=true ;;
-        --lab-tools) LAB_TOOLS=true ;;
-        --no-color)  NO_COLOR=1 ;;
+        --check)    CHECK_ONLY=true ;;
+        --no-color) NO_COLOR=1 ;;
         -h|--help)
-            echo "Usage: sudo $0 [--check] [--lab-tools] [--no-color]"
-            echo "  --check      Verify installed tools without downloading"
-            echo "  --lab-tools  Also install/check SQLmap for non-engagement labs"
-            echo "  --no-color   Disable colored output"
+            echo "Usage: sudo $0 [--check] [--no-color]"
+            echo "  --check     Verify installed tools without downloading"
+            echo "  --no-color  Disable colored output"
             exit 0
             ;;
         *)
             echo "Unknown option: $arg"
-            echo "Usage: sudo $0 [--check] [--lab-tools] [--no-color]"
+            echo "Usage: sudo $0 [--check] [--no-color]"
             exit 1
             ;;
     esac
@@ -364,10 +361,6 @@ APT_PACKAGES=(
     ssh-audit kpcli ligolo-ng ligolo-ng-common-binaries
 )
 
-LAB_APT_PACKAGES=(
-    sqlmap
-)
-
 # ══════════════════════════════════════════════════════════════════════════════
 # MAIN
 # ══════════════════════════════════════════════════════════════════════════════
@@ -381,14 +374,6 @@ if [[ "$CHECK_ONLY" == true ]]; then
     for pkg in "${APT_PACKAGES[@]}"; do
         check_apt "$pkg"
     done
-    if [[ "$LAB_TOOLS" == true ]]; then
-        log_header "Lab-only apt Packages"
-        for pkg in "${LAB_APT_PACKAGES[@]}"; do
-            check_apt "$pkg"
-        done
-    else
-        log_warn "SQLmap not checked by default (use --lab-tools for non-engagement labs)"
-    fi
 
     log_header "pip Packages"
     check_pip "certipy-ad"       "certipy"
@@ -449,11 +434,6 @@ BANNER
 echo -e "${NC}"
 
 log_info "Real user: ${REAL_USER}  |  Home: ${REAL_HOME}"
-if [[ "$LAB_TOOLS" == true ]]; then
-    log_warn "Non-engagement SQLmap automation enabled: ${LAB_APT_PACKAGES[*]}"
-else
-    log_info "SQLmap automation disabled by default (use --lab-tools for non-engagement labs)"
-fi
 
 # ── Directories ───────────────────────────────────────────────────────────────
 log_info "Creating directory structure..."
@@ -467,11 +447,6 @@ apt-get update -qq &>/dev/null
 for pkg in "${APT_PACKAGES[@]}"; do
     apt_install "$pkg"
 done
-if [[ "$LAB_TOOLS" == true ]]; then
-    for pkg in "${LAB_APT_PACKAGES[@]}"; do
-        apt_install "$pkg"
-    done
-fi
 
 # ── 2. pip ────────────────────────────────────────────────────────────────────
 log_header "2 · pip Packages"

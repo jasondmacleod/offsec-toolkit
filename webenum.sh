@@ -71,7 +71,6 @@ PHASE_VHOST_TIMEOUT=600
 PHASE_PARAM_TIMEOUT=300
 
 DEEP_MODE=false
-LAB_TOOLS=false                      # Opt-in: emit SQLmap automation suggestions
 VHOST_DOMAIN=""                      # e.g. "target.htb" — enables vhost fuzzing
 JS_FETCH_LIMIT=30                    # Keep JavaScript review useful without turning into crawling
 
@@ -1492,9 +1491,6 @@ generate_next_steps() {
             param_cmds+=("ffuf -w /usr/share/seclists/Fuzzing/LFI/LFI-Jhaddix.txt -u '${param_url/testvalue/FUZZ}' -mr 'root:' -mc all")
             param_cmds+=("# XSS test:")
             param_cmds+=("curl -sk '${param_url/testvalue/%3Cscript%3Ealert(1)%3C%2Fscript%3E}'")
-            if [[ "$LAB_TOOLS" == "true" ]]; then
-                param_cmds+=("sqlmap -u '${param_url}' --batch --level 2 --risk 2")
-            fi
             if echo "$param_url" | grep -qiE '[?&](file|path|page|include|template|view|doc|download|redirect|url)='; then
                 lfi_cmds+=("curl -sk '${param_url/testvalue/..%2F..%2F..%2F..%2Fetc%2Fpasswd}'")
                 lfi_cmds+=("ffuf -w /usr/share/seclists/Fuzzing/LFI/LFI-Jhaddix.txt -u '${param_url/testvalue/FUZZ}' -mr 'root:' -mc all")
@@ -1513,9 +1509,6 @@ generate_next_steps() {
                 sqli_cmds+=("curl -sk '${param_url/testvalue/1%20and%201=2}' | head -60")
                 sqli_cmds+=("curl -sk '${param_url/testvalue/1%20or%201=1}' | head -60")
                 sqli_cmds+=("curl -sk '${param_url/testvalue/1%22}' | head -60")
-                if [[ "$LAB_TOOLS" == "true" ]]; then
-                    sqli_cmds+=("sqlmap -u '${param_url}' --batch --level 3 --risk 2 --current-user --current-db")
-                fi
             fi
             if echo "$param_url" | grep -qiE '[?&](q|query|search|s|name|msg|message|comment|return|next|redirect|url)='; then
                 xss_cmds+=("curl -sk '${param_url/testvalue/%3Cscript%3Ealert(1)%3C%2Fscript%3E}'")
@@ -1975,9 +1968,6 @@ generate_summary() {
                     echo "  curl -sk '${param_url/testvalue/1%27}' | head -60"
                     echo "  curl -sk '${param_url/testvalue/1%20or%201=1}' | head -60"
                     echo "  curl -sk '${xss_url}'"
-                    if [[ "$LAB_TOOLS" == "true" ]]; then
-                        echo "  sqlmap -u '${param_url}' --batch --level 2"
-                    fi
                 done <<< "${param_lines}"
             else
                 echo "  (none found)"
@@ -2016,7 +2006,6 @@ OPTIONS:
   --threads N        ffuf thread count (default: 40)
   --rate N           ffuf max requests/sec, 0=unlimited (default: 0)
   --ffuf-ac          Enable ffuf autocalibration (-ac) after baseline review
-  --lab-tools        Include SQLmap suggestions for non-engagement labs
   -h, --help         Show this help
 
 EXAMPLES:
@@ -2071,8 +2060,6 @@ NOTES:
   - Ctrl+C cleans up all background jobs
   - Requires: ffuf, curl, python3 (for JSON parsing)
   - Optional: whatweb — fingerprinting degrades gracefully if missing
-  - Default next steps avoid SQLmap-style automatic exploitation; use --lab-tools
-    only in non-engagement labs where SQLmap is allowed
 EOF
 }
 
@@ -2133,10 +2120,6 @@ while [[ $# -gt 0 ]]; do
             ;;
         --ffuf-ac)
             FFUF_AUTOCALIBRATE=true
-            shift
-            ;;
-        --lab-tools)
-            LAB_TOOLS=true
             shift
             ;;
         -*)
@@ -2255,7 +2238,6 @@ info "Output:   $OUTPUT_DIR"
 info "Mode:     $(if [[ "$DEEP_MODE" == "true" ]]; then echo 'DEEP (recursive + params)'; else echo 'STANDARD'; fi)"
 info "Threads:  $THREADS"
 info "ffuf -ac: $(if [[ "$FFUF_AUTOCALIBRATE" == "true" ]]; then echo 'enabled'; else echo 'disabled'; fi)"
-info "Lab tools: $(if [[ "$LAB_TOOLS" == "true" ]]; then echo 'enabled'; else echo 'disabled'; fi)"
 [[ -n "$VHOST_DOMAIN" ]] && info "VHosts:   *.${VHOST_DOMAIN}"
 echo ""
 

