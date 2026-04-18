@@ -1258,7 +1258,7 @@ mode_chain() {
                 echo "  ${cred_line}" >> "$chain_log"
             done
             # Log SAM hashes specifically
-            echo "$dump_out" | grep -oP '\S+:\d+:[a-fA-F0-9]{32}:[a-fA-F0-9]{32}:::' | while IFS=: read -r u rid lm nt _ _ _; do
+            echo "$dump_out" | grep -oP '\S+:\d+:[a-fA-F0-9]{32}:[a-fA-F0-9]{32}:::' | while IFS=: read -r u _rid _lm nt _ _ _; do
                 creds_log "SAM" "$nxc_target" "$u" "$nt" "NTLM"
             done
         done
@@ -1324,7 +1324,7 @@ mode_chain() {
         sam_users_tmp=$(mktemp)
         for f in "${loot_dir}"/*.txt; do
             [[ -f "$f" ]] || continue
-            grep -oP '(\S+):\d+:[a-fA-F0-9]{32}:([a-fA-F0-9]{32}):::' "$f" 2>/dev/null | while IFS=: read -r u rid lm nt _rest; do
+            grep -oP '(\S+):\d+:[a-fA-F0-9]{32}:([a-fA-F0-9]{32}):::' "$f" 2>/dev/null | while IFS=: read -r u _rid _lm nt _rest; do
                 echo "${u}|${nt}"
             done
         done | sort -u > "$sam_users_tmp"
@@ -1777,5 +1777,9 @@ main() {
     success "NEXT STEPS:   ${OUTDIR}/next_steps.txt"
     success "LEGACY ALIAS: ${OUTDIR}/attack_commands.txt"
 }
+
+if [[ "${OffSec_LIB_ONLY:-false}" == "true" ]]; then
+    return 0 2>/dev/null || exit 0
+fi
 
 main "$@"
