@@ -924,6 +924,8 @@ generate_next_steps() {
     local url="$1"
     local work_dir="$2"
     local next_file="$work_dir/loot/next_steps.txt"
+    local HOST_SAFE
+    HOST_SAFE=$(get_host "$url" | tr '.:' '_')
     mkdir -p "$work_dir/loot"
 
     {
@@ -1593,9 +1595,7 @@ generate_summary() {
 
         echo ""
         echo "## VHosts"
-        local vhosts_found=false
         if [[ -s "$work_dir/vhosts/hosts_entries.txt" ]]; then
-            vhosts_found=true
             sed 's/^/  VHOST: /' "$work_dir/vhosts/hosts_entries.txt" 2>/dev/null
             echo ""
             echo "  NEXT: add to /etc/hosts and re-enumerate each vhost:"
