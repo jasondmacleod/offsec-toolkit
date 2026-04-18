@@ -53,6 +53,7 @@ crackr --cewl http://target.htb --cewl-mutate -q -f hashes.txt
 > After each crack run, the script writes `$TOOLKIT_ROOT/crackr/next_steps.txt` and prints a short **POST-CRACK — WHAT TO DO NEXT** preview with fully resolved copy-paste commands:
 > - The first cracked `user:pass` is read from the output file and substituted into every suggestion
 > - Hash-type-specific branches: AS-REP → spray + AD enum, Kerberoast → spray + group check, NTLM → spray + PTH + shell, NTLMv2 → spray + direct shell, Linux hashes → SSH + su, DCC2 → spray, MSSQL → mssqlclient + xp_cmdshell
+> - Extraction-specific branches: SSH private keys → SSH attempts, archives/documents → extract + grep for secrets, VNC/WPA → targeted reuse checks
 > - Commands are emitted only when cracked output or `$TOOLKIT_ROOT/creds.txt` is non-empty
 > - Set **`$OffSec_DOMAIN`** and **`$OffSec_DC`** once at engagement start for domain/DC resolution across all branches:
 > ```bash

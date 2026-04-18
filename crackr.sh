@@ -43,6 +43,7 @@ RULE=""
 TOOL="auto"
 OUTPUT_DIR="${TOOLKIT_ROOT}/crackr"
 EXTRACT_MODE=""
+EXTRACT_CONTEXT=""
 INPUT_FILE=""
 SINGLE_HASH=""
 FORCE_HASHCAT_MODE=""
@@ -120,6 +121,7 @@ write_crack_next_steps() {
 
     local local_desc="${CRACKED_HASH_TYPE:-unknown}"
     local local_mode="${CRACKED_HC_MODE:-}"
+    local extract_context="${EXTRACT_CONTEXT:-${EXTRACT_MODE:-}}"
     local ex_user="<USER>"
     local ex_pass="<PASS>"
     local first_crack
@@ -141,22 +143,51 @@ write_crack_next_steps() {
         echo "============================================================"
         echo ""
 
-        case "${local_mode}" in
-            18200)
+        case "${extract_context}:${local_mode}" in
+            ssh:*)
+                echo "[ SSH PRIVATE KEY PASSPHRASE CRACKED ]"
+                echo "# Evidence: ssh2john extraction plus cracked output"
+                echo "chmod 600 <id_rsa>"
+                echo "ssh -i <id_rsa> '${ex_user}'@${ex_dc}"
+                echo "ssh -i <id_rsa> root@${ex_dc}"
+                echo "./sprayr.sh -u '${ex_user}' -p '${ex_pass}' -t ${ex_dc}"
+                ;;
+            zip:*|rar:*|7z:*|pdf:*|office:*|gpg:*|pfx:*|pkcs12:*|putty:*|enc:*)
+                echo "[ PROTECTED FILE PASSPHRASE CRACKED ]"
+                echo "# Evidence: ${extract_context} extraction plus cracked output"
+                echo "# Open/extract the original protected file with password: '${ex_pass}'"
+                echo "7z x <archive_or_document> -p'${ex_pass}' -o/tmp/cracked_extract"
+                echo "find /tmp/cracked_extract -type f -maxdepth 5 -ls 2>/dev/null"
+                echo "grep -RniE 'pass|password|secret|key|token|cred|user|db_' /tmp/cracked_extract 2>/dev/null | head -50"
+                ;;
+            wpa:*)
+                echo "[ WPA PASSPHRASE CRACKED ]"
+                echo "# Evidence: WPA capture extraction plus cracked output"
+                echo "echo '${ex_pass}'"
+                echo "# Low OffSec priority: record the passphrase and test for password reuse only if relevant."
+                echo "./sprayr.sh -u '${ex_user}' -p '${ex_pass}' -t ${ex_dc}"
+                ;;
+            vnc:*)
+                echo "[ VNC PASSWORD CRACKED ]"
+                echo "# Evidence: vnc2john extraction plus cracked output"
+                echo "vncviewer ${ex_dc}"
+                echo "./sprayr.sh -u '${ex_user}' -p '${ex_pass}' -t ${ex_dc}"
+                ;;
+            *:18200)
                 echo "[ AS-REP ROAST CRACKED ]"
                 echo "# Evidence: hashcat/john output for mode 18200"
                 echo "./sprayr.sh -u '${ex_user}' -p '${ex_pass}' -d ${ex_domain} -t ${ex_dc}"
                 echo "nxc smb ${ex_dc} -u '${ex_user}' -p '${ex_pass}' -d ${ex_domain}"
                 echo "./adr.sh -d ${ex_domain} -u '${ex_user}' -p '${ex_pass}' -dc ${ex_dc}"
                 ;;
-            13100|19600|19700)
+            *:13100|*:19600|*:19700)
                 echo "[ KERBEROAST HASH CRACKED ]"
                 echo "# Evidence: Kerberoast hash mode ${local_mode} (${local_desc})"
                 echo "./sprayr.sh -u '${ex_user}' -p '${ex_pass}' -d ${ex_domain} -t ${ex_dc}"
                 echo "nxc ldap ${ex_dc} -u '${ex_user}' -p '${ex_pass}' -d ${ex_domain} --groups"
                 echo "./adr.sh -d ${ex_domain} -u '${ex_user}' -p '${ex_pass}' -dc ${ex_dc}"
                 ;;
-            1000)
+            *:1000)
                 echo "[ NTLM HASH CRACKED ]"
                 echo "# Evidence: NTLM hash mode 1000"
                 echo "./sprayr.sh -u '${ex_user}' -p '${ex_pass}' -d ${ex_domain} -t ${ex_dc}"
@@ -164,35 +195,35 @@ write_crack_next_steps() {
                 echo "evil-winrm -i ${ex_dc} -u '${ex_user}' -p '${ex_pass}'"
                 echo "impacket-psexec ${ex_domain}/'${ex_user}':'${ex_pass}'@${ex_dc}"
                 ;;
-            5600)
+            *:5600)
                 echo "[ NET-NTLMV2 CRACKED ]"
                 echo "# Evidence: Net-NTLMv2 hash mode 5600; plaintext only, no pass-the-hash"
                 echo "./sprayr.sh -u '${ex_user}' -p '${ex_pass}' -d ${ex_domain} -t ${ex_dc}"
                 echo "evil-winrm -i ${ex_dc} -u '${ex_user}' -p '${ex_pass}'"
                 echo "nxc smb ${ex_dc} -u '${ex_user}' -p '${ex_pass}' --shares"
                 ;;
-            1800|500|400|3200)
+            *:1800|*:500|*:400|*:3200)
                 echo "[ LINUX SYSTEM HASH CRACKED ]"
                 echo "# Evidence: Linux crypt hash mode ${local_mode} (${local_desc})"
                 echo "ssh '${ex_user}'@${ex_dc}"
                 echo "su - '${ex_user}'"
                 echo "./sprayr.sh -u '${ex_user}' -p '${ex_pass}' -t ${ex_dc}"
                 ;;
-            2100)
+            *:2100)
                 echo "[ DCC2 / MSCACHE2 CRACKED ]"
                 echo "# Evidence: cached domain credential mode 2100; plaintext only"
                 echo "./sprayr.sh -u '${ex_user}' -p '${ex_pass}' -d ${ex_domain} -t ${ex_dc}"
                 echo "evil-winrm -i ${ex_dc} -u '${ex_user}' -p '${ex_pass}'"
                 echo "./adr.sh -d ${ex_domain} -u '${ex_user}' -p '${ex_pass}' -dc ${ex_dc}"
                 ;;
-            13400)
+            *:13400)
                 echo "[ KEEPASS MASTER PASSWORD CRACKED ]"
                 echo "# Evidence: KeePass hash mode 13400"
                 echo "kpcli --kdb <database.kdbx>"
                 echo "keepassxc-cli export <database.kdbx>"
                 echo "./sprayr.sh --from-creds"
                 ;;
-            131|1731)
+            *:131|*:1731)
                 echo "[ MSSQL HASH CRACKED ]"
                 echo "# Evidence: MSSQL hash mode ${local_mode} (${local_desc})"
                 echo "impacket-mssqlclient ${ex_domain}/'${ex_user}':'${ex_pass}'@${ex_dc}"
@@ -649,6 +680,7 @@ identify_hash() {
 extract_hash() {
     local extract_type="$1"
     local source_file="$2"
+    EXTRACT_CONTEXT="$extract_type"
 
     if [[ -z "${EXTRACT_TOOLS[$extract_type]+_}" ]]; then
         log_error "Unknown extract type: $extract_type"
@@ -1617,6 +1649,9 @@ crack() {
 # ═══════════════════════════════════════════════════════════════════════════
 # ── Argument Parsing ────────────────────────────────────────────────────
 # ═══════════════════════════════════════════════════════════════════════════
+if [[ "${OffSec_LIB_ONLY:-false}" == "true" ]]; then
+    return 0 2>/dev/null || exit 0
+fi
 
 SHOW_MODE=0
 ORIGINAL_ARGS="$*"  # Save before argument parsing consumes them via shift

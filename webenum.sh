@@ -943,6 +943,17 @@ generate_next_steps() {
             "curl -skI -X TRACE ${url%/}/ 2>/dev/null | sed -n '1,20p'"
     fi
 
+    if is_nonempty_file "$work_dir/fingerprint/http_methods.txt" && \
+       grep -qiE 'PUT|PROPFIND|MOVE|COPY|MKCOL' "$work_dir/fingerprint/http_methods.txt" 2>/dev/null; then
+        append_next_finding "$next_file" \
+            "WebDAV or upload-capable methods found" \
+            "$work_dir/fingerprint/http_methods.txt contains PUT/PROPFIND/WebDAV-style methods" \
+            "curl -skIX OPTIONS ${url%/}/" \
+            "davtest -url ${url%/}/" \
+            "cadaver ${url%/}/" \
+            "printf 'webdav-test' > /tmp/webdav_test.txt && curl -sk -T /tmp/webdav_test.txt ${url%/}/webdav_test.txt && curl -sk ${url%/}/webdav_test.txt"
+    fi
+
     local disallow_paths
     disallow_paths=$(grep -i 'Disallow:' "$work_dir/fingerprint/robots.txt" 2>/dev/null \
         | grep -oP 'Disallow:\s*\K\S+' | grep -v '^\*$' | head -3)
@@ -998,6 +1009,33 @@ generate_next_steps() {
             "Sensitive file discovered" \
             "content ffuf output contains sensitive extension with HTTP 200" \
             "${sens_cmds[@]}"
+    fi
+
+    if grep -qiE '/\.env.*(\| 200 \||HTTP/[0-9.]+ 200)|APP_KEY=|DB_PASSWORD=|Laravel' "$work_dir/fingerprint/sensitive_paths.txt" "$work_dir/content/"*.txt "$work_dir/fingerprint/homepage_source.html" 2>/dev/null; then
+        append_next_finding "$next_file" \
+            "Laravel/.env indicators found" \
+            "sensitive path/source/content output matched .env, APP_KEY, DB_PASSWORD, or Laravel" \
+            "curl -sk ${url%/}/.env | tee /tmp/${HOST_SAFE:-web}_env.txt" \
+            "grep -iE 'APP_KEY|DB_|MAIL_|REDIS_|PASSWORD|SECRET' /tmp/${HOST_SAFE:-web}_env.txt" \
+            "searchsploit laravel"
+    fi
+
+    if grep -qiE 'Werkzeug|Django.*DEBUG|Traceback \(most recent call last\)|debugger|__debugger__' "$work_dir/fingerprint/headers.txt" "$work_dir/fingerprint/homepage_source.html" "$work_dir/content/"*.txt 2>/dev/null; then
+        append_next_finding "$next_file" \
+            "Debug framework indicators found" \
+            "headers/source/content matched Werkzeug, Django DEBUG, traceback, or debugger markers" \
+            "curl -sk ${url%/}/?__debugger__=yes | sed -n '1,80p'" \
+            "curl -sk ${url%/}/debug | sed -n '1,80p'" \
+            "searchsploit werkzeug django debug"
+    fi
+
+    if grep -qiE 'Index of /|Directory listing for|Parent Directory' "$work_dir/fingerprint/homepage_source.html" "$work_dir/content/"*.txt 2>/dev/null; then
+        append_next_finding "$next_file" \
+            "Directory listing found" \
+            "source/content output matched directory listing markers" \
+            "curl -sk ${url%/}/ | sed -n '1,120p'" \
+            "wget -r -np -nH --cut-dirs=1 ${url%/}/" \
+            "grep -RniE 'pass|secret|key|token|cred|db_' . 2>/dev/null | head -50"
     fi
 
     local interesting_hits
@@ -1685,6 +1723,10 @@ EOF
 #==============================================================================
 # ARGUMENT PARSING
 #==============================================================================
+if [[ "${OffSec_LIB_ONLY:-false}" == "true" ]]; then
+    return 0 2>/dev/null || exit 0
+fi
+
 TARGET_URL=""
 FROM_RECON_IP=""
 

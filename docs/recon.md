@@ -242,6 +242,13 @@ Current host/service rules include:
 | RDP detected | `netexec rdp`, `xfreerdp`, RDP nmap scripts |
 | Kerberos or AD service combination | Kerberos enum, AS-REP/SPN checks, `adr.sh` workflow |
 | Old SSH banner flagged | `ssh-audit`, `searchsploit` |
+| rsync detected | Module listing and recursive pull commands |
+| VNC detected | VNC nmap scripts, `vncviewer`, Hydra template |
+| Docker API detected | Version/container checks and host mount escape test |
+| Kubernetes API/kubelet detected | Version/pod checks with `curl`/`kubectl` |
+| Squid/open proxy detected | Proxy curl checks and pivot scan reminder |
+| TFTP detected | `tftp-enum` and common config pulls |
+| Legacy rlogin/rexec/rsh detected | r-service probes and login attempts |
 
 ---
 

@@ -211,6 +211,10 @@ Aggregates everything into `summary/summary.md` (structured report), `summary/su
 - **sensitive files** — resolved `curl -sk <actual-url> -o /tmp/loot_<file>` + credential grep
 - **vhosts** — `/etc/hosts` entry plus `webenum` re-run for each discovered host
 - **risky HTTP methods** — `curl OPTIONS`, `nmap http-methods`, TRACE check
+- **WebDAV/upload-capable methods** — `davtest`, `cadaver`, and PUT upload verification
+- **directory listing** — recursive `wget` and credential grep
+- **Laravel/.env indicators** — `.env` pull, `APP_KEY`/DB secret grep, Laravel CVE lookup
+- **debug framework indicators** — Werkzeug/Django/traceback probes
 - **specific tech matches** — WordPress, Joomla, Drupal, Tomcat, Jenkins, phpMyAdmin, Adminer, Grafana, Webmin, JBoss/WildFly, Spring actuator, Elasticsearch
 - **exposed `.git`** — `git-dumper` and secret grep
 - **Swagger/OpenAPI** — `curl`/`jq` inspection and API object fuzzing

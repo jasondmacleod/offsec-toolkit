@@ -28,6 +28,11 @@ Unified credential log: `$TOOLKIT_ROOT/creds.txt` — populated automatically by
 ./tools_setup.sh --check    # no sudo needed, just verifies
 ```
 
+Verify the evidence-gated next-step rules after script edits:
+```bash
+./tests/test_next_steps.sh       # offline fixture tests, no network required
+```
+
 **Quick reference** if you blank on syntax under pressure:
 ```bash
 ./workflow.sh              # full cheatsheet

