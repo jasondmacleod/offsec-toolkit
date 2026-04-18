@@ -90,7 +90,8 @@ Stable shell obtained?
 ```bash
 loot/<hostname>/
 ├── summary.txt          # ★ Findings overview
-├── attack_commands.txt  # ★ START HERE — fully resolved exploit commands
+├── next_steps.txt       # ★ START HERE — evidence-backed exploit commands
+├── attack_commands.txt  # Legacy alias with the same commands
 ├── progress.log
 ├── proof/
 ├── system/
@@ -104,7 +105,8 @@ loot/<hostname>/
 ```powershell
 loot\<hostname>\
 ├── summary.txt          # ★ Findings overview
-├── attack_commands.txt  # ★ START HERE — fully resolved exploit commands
+├── next_steps.txt       # ★ START HERE — evidence-backed exploit commands
+├── attack_commands.txt  # Legacy alias with the same commands
 ├── progress.log
 ├── proof\
 ├── system\
@@ -161,7 +163,7 @@ The scripts handle all collection logic. This section tells you **what to look f
 HOST=$(hostname)
 
 # 1. ★ START HERE — pre-built exploit commands for every finding
-cat loot/$HOST/attack_commands.txt
+cat loot/$HOST/next_steps.txt
 
 # 2. Full findings summary
 cat loot/$HOST/summary.txt
@@ -195,7 +197,7 @@ $HOSTNAME = $env:COMPUTERNAME
 $ROOT = ".\loot\$HOSTNAME"
 
 # 1. ★ START HERE — pre-built exploit commands for every finding
-Get-Content "$ROOT\attack_commands.txt"
+Get-Content "$ROOT\next_steps.txt"
 
 # 2. Full findings summary
 Get-Content "$ROOT\summary.txt"
@@ -229,24 +231,24 @@ Get-Content "$ROOT\network\hosts.txt"
 > [!important] Do Not Let Findings Sit
 > Every lootr finding maps to an immediate next action. If you finish reviewing and haven't acted on anything yet, you wasted the collection.
 
-> [!tip] attack_commands.txt generates all of the below automatically
-> Every finding lootr.sh surfaces also writes a ready-to-run command into `attack_commands.txt`. Read that file first — the table below is your fallback if the finding isn't covered or you need to understand the why.
+> [!tip] next_steps.txt generates all of the below automatically
+> Every finding lootr surfaces also writes a ready-to-run command into `next_steps.txt`. `attack_commands.txt` remains as a legacy alias.
 
 | Finding | Immediate action |
 |---------|-----------------|
 | Flags found | `cat`/`type`, screenshot with `whoami` and path, note in report — **do this first** |
-| Shadow hashes | `attack_commands.txt` has `unshadow` + `crackr.sh` pipeline |
-| SSH keys | `attack_commands.txt` has `ssh -i key USER@HOST` per user per key |
+| Shadow hashes | `next_steps.txt` has `unshadow` + `crackr.sh` pipeline |
+| SSH keys | `next_steps.txt` has `ssh -i key USER@HOST` per user per key |
 | Stored creds (cmdkey, autologon, wifi, cleartext) | Test reuse now — feed to `sprayr.sh` if AD context |
 | Kerberos tickets | Import and test with `impacket` tools now |
-| SeImpersonatePrivilege | `attack_commands.txt` has Potato command for detected OS version |
-| SeBackupPrivilege / SeDebugPrivilege | `attack_commands.txt` has `reg save` / `procdump` command |
-| AlwaysInstallElevated | `attack_commands.txt` has `msfvenom` MSI + `msiexec` command |
-| Unquoted service paths / writable service binaries | `attack_commands.txt` has payload placement + restart command |
-| SUID / capabilities hits | `attack_commands.txt` has GTFOBins one-liner per binary |
-| Writable cron jobs | `attack_commands.txt` has injection template |
-| sudo rights | `attack_commands.txt` has GTFOBins command per allowed binary |
-| Internal listeners on 127.x | `attack_commands.txt` has `pivotr.sh` command per port |
+| SeImpersonatePrivilege | `next_steps.txt` has Potato command for detected OS version |
+| SeBackupPrivilege / SeDebugPrivilege | `next_steps.txt` has `reg save` / `procdump` command |
+| AlwaysInstallElevated | `next_steps.txt` has `msfvenom` MSI + `msiexec` command |
+| Unquoted service paths / writable service binaries | `next_steps.txt` has payload placement + restart command |
+| SUID / capabilities hits | `next_steps.txt` has GTFOBins one-liner per binary |
+| Writable cron jobs | `next_steps.txt` has injection template |
+| sudo rights | `next_steps.txt` has GTFOBins command per allowed binary |
+| Internal listeners on 127.x | `next_steps.txt` has `pivotr.sh` command per port |
 | New subnets / hosts discovered | Add to target list, scan with `recon.sh` now |
 | SMB shares / mapped drives | Enumerate for creds and data now |
 
@@ -305,7 +307,7 @@ powershell -ep bypass -File .\lootr.ps1 -OutDir C:\Windows\Temp\loot -KaliIp <ka
 > The output may contain flags, hashes, private keys, Wi-Fi passwords, registry-derived creds, and ticket material. Treat the loot directory like evidence and keep host folders separated.
 
 > [!important] High-ROI Checks
-> Start with `attack_commands.txt` — it synthesizes every finding into ready-to-run commands. Then:
+> Start with `next_steps.txt` — it synthesizes every finding into ready-to-run commands. Then:
 > Linux: `summary.txt`, `shadow_hashes.txt`, SSH keys, `sudo_rights.txt`, `capabilities.txt`, `internal_listeners.txt`.
 > Windows: `summary.txt`, `always_install_elevated.txt`, `privileges.txt`, `autologon.txt`, `cmdkey.txt`, `wifi_passwords.txt`, `unquoted_service_paths.txt`.
 

@@ -12,7 +12,7 @@ tags:
 # adr.sh
 
 ## What It Is
-Active Directory enumeration and attack-prep script. OffSec-focused, Kali-side only. Given valid domain credentials, it runs eight enumeration phases across users, groups, Kerberos targets, computers, SMB signing, BloodHound, shares, and sessions — then produces a `summary.txt` and a `attack_commands.txt` with fully resolved copy-paste next steps.
+Active Directory enumeration and attack-prep script. OffSec-focused, Kali-side only. Given valid domain credentials, it runs eight enumeration phases across users, groups, Kerberos targets, computers, SMB signing, BloodHound, shares, and sessions — then produces `summary.txt`, `next_steps.txt`, and a legacy `attack_commands.txt` alias with fully resolved copy-paste next steps.
 
 > [!important] Enumeration only — no exploitation
 > OffSec compliant. Resume-safe — re-running skips completed phases unless `--force` is passed.
@@ -75,6 +75,7 @@ Active Directory enumeration and attack-prep script. OffSec-focused, Kali-side o
 ```
 $TOOLKIT_ROOT/ad/<DOMAIN>/
 ├── summary.txt                  # ★ READ FIRST — structured findings
+├── next_steps.txt               # ★ START HERE — evidence-backed AD follow-up commands
 ├── attack_commands.txt          # Fully resolved copy-paste next steps
 ├── summary_notes.txt            # Machine-readable key=value state
 ├── progress.log                 # Phase tracking (START/DONE/FAIL/SKIP)
@@ -141,7 +142,7 @@ DOMAIN=corp.local
 
 # Always read first
 cat $TOOLKIT_ROOT/ad/$DOMAIN/summary.txt
-cat $TOOLKIT_ROOT/ad/$DOMAIN/attack_commands.txt
+cat $TOOLKIT_ROOT/ad/$DOMAIN/next_steps.txt
 
 # ★ High-value immediate wins
 cat $TOOLKIT_ROOT/ad/$DOMAIN/users/suspicious_descriptions.txt   # Creds in descriptions
@@ -174,7 +175,7 @@ Hash input formats all accepted: `:NTLMHASH`, `LMHASH:NTHASH`, or plain 32-char 
 
 ---
 
-## What Gets Auto-Generated in `attack_commands.txt`
+## What Gets Auto-Generated in `next_steps.txt`
 
 The script writes fully resolved commands as each phase finds something. Always review before running:
 
@@ -190,7 +191,7 @@ The script writes fully resolved commands as each phase finds something. Always 
 | SMB signing disabled | `responder` + `impacket-ntlmrelayx` with payload template |
 | Groups.xml in SYSVOL | Extracts actual `cpassword` value from downloaded XML → `gpp-decrypt '<actual_value>'` (no placeholder) |
 | Browser creds dumped | Parses `browser_creds.txt` for cleartext passwords → `browser_passwords.txt` + `sprayr.sh -P` command |
-| BloodHound zip collected | `bloodhound-cli upload` command + 4 key post-import queries in `attack_commands.txt` |
+| BloodHound zip collected | `bloodhound-cli upload` command + 4 key post-import queries in `next_steps.txt` |
 | Active privileged sessions (`PRIV_SESSIONS=YES`) | Token impersonation (Meterpreter `incognito`, `Invoke-TokenManipulation`) + targeted Kerberoast against those users |
 | Legacy OS detected (`OLD_OS=YES`) | Per-OS CVE exploit commands: Win7/2008/XP → MS17-010 (`impacket-eternalblue`), 2019/Win10 → PrintNightmare (`rpcdump` check), unknown → `searchsploit` |
 
@@ -214,13 +215,13 @@ The script writes fully resolved commands as each phase finds something. Always 
 # 1. adr.sh collects the zip automatically in phase 6
 ls $TOOLKIT_ROOT/ad/corp.local/bloodhound/*.zip
 
-# 2. attack_commands.txt has the import command already:
+# 2. next_steps.txt has the import command already:
 #    bloodhound-cli upload --path <zip> --url http://localhost:8080 --username admin --password <pass>
 
 # 3. Or manually: Open BloodHound CE in browser → File Ingest → upload zip
 
 # 4. Mark your current user as Owned
-# 5. Run pre-built queries (attack_commands.txt lists these):
+# 5. Run pre-built queries (next_steps.txt lists these):
 #    - Shortest Path to Domain Admins from Owned Principals
 #    - Find Kerberoastable Users with Path to DA
 #    - Users with DCSync Rights

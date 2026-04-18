@@ -94,8 +94,8 @@ Now proceed to Phase 1 below for your #1 target. As scans finish for other targe
 > [!important] If nothing is weird, this is the order. Every target, every time.
 
 ```
-recon.sh → read quick_wins.txt + summary.txt
-  HTTP found? → webenum.sh → read summary.md + quick_wins.txt
+recon.sh → read next_steps.txt + quick_wins.txt + summary.txt
+  HTTP found? → webenum.sh → read summary.txt + next_steps.txt + quick_wins.txt
   → exploit for foothold → SHELL
   → servr.sh → lootr (on target) + escalatr.sh (from Kali)
   → read lootr summary.txt → act on findings (see Linux_PrivEsc.md / Windows_PrivEsc.md)
@@ -324,7 +324,7 @@ bash /tmp/lootr.sh
 
 ```bash
 HOST=$(hostname)
-cat ~/loot/$HOST/attack_commands.txt    # ★ START HERE — pre-built exploit commands per finding
+cat ~/loot/$HOST/next_steps.txt         # ★ START HERE — pre-built exploit commands per finding
 cat ~/loot/$HOST/summary.txt            # full findings overview
 ```
 
@@ -373,7 +373,7 @@ powershell -ep bypass -File .\lootr.ps1
 
 ```powershell
 $H = $env:COMPUTERNAME; $R = ".\loot\$H"
-Get-Content "$R\attack_commands.txt"    # ★ START HERE — pre-built exploit commands per finding
+Get-Content "$R\next_steps.txt"         # ★ START HERE — pre-built exploit commands per finding
 Get-Content "$R\summary.txt"            # full findings overview
 ```
 
@@ -482,7 +482,7 @@ C:\Windows\Temp\winPEASx64.exe | Tee-Object C:\Windows\Temp\winpeas_output.txt
 
 ```bash
 ./escalatr.sh --parse /tmp/linpeas_output.txt
-cat $TOOLKIT_ROOT/privesc/TARGET_IP/attack_commands.txt    # ★ START HERE — ready-to-run exploit commands
+cat $TOOLKIT_ROOT/privesc/TARGET_IP/next_steps.txt         # ★ START HERE — ready-to-run exploit commands
 cat $TOOLKIT_ROOT/privesc/TARGET_IP/quick-wins.txt         # full parsed findings
 ```
 
@@ -726,7 +726,7 @@ Note the lockout threshold and observation window. You need this before any doma
 
 ```bash
 # Auto-generated next-step commands based on everything found
-cat $TOOLKIT_ROOT/ad/corp.local/attack_commands.txt
+cat $TOOLKIT_ROOT/ad/corp.local/next_steps.txt
 
 # Legacy OS machines — easier targets for exploits
 cat $TOOLKIT_ROOT/ad/corp.local/computers/old_os.txt
@@ -740,7 +740,7 @@ cat $TOOLKIT_ROOT/ad/corp.local/chain_log.txt
 
 **Decision on each:**
 
-- **`attack_commands.txt` has entries?** → These are copy-paste ready. Execute them in order.
+- **`next_steps.txt` has entries?** → These are copy-paste ready. Execute them in order.
 - **`old_os.txt` shows Server 2008/2003/XP/7?** → These are likely vulnerable to EternalBlue, PrintNightmare, or other known exploits. Run `searchsploit` for the specific OS version.
 - **`sysvol_interesting.txt` has GPP files?** → Decrypt the cPassword:
   ```bash
@@ -927,7 +927,7 @@ Do this right now, not later. Copy the flag value and submit it in the OffSec en
    Linux? → servr.sh http → transfer + run lootr.sh on target
    Windows? → servr.sh smb → transfer + run lootr.ps1 on target
 5. While lootr runs → run escalatr.sh from Kali
-6. Read lootr attack_commands.txt → copy-paste exploits per finding (then summary.txt for context)
+6. Read lootr next_steps.txt → copy-paste exploits per finding (then summary.txt for context)
 7. Feed any hashes to crackr.sh -q immediately
 8. Spray any cracked cred immediately: sprayr.sh --from-creds
 9. Root/SYSTEM? → evidencr.sh IMMEDIATELY → screenshot → submit flag
@@ -987,7 +987,7 @@ Do this right now, not later. Copy the flag value and submit it in the OffSec en
    f. writable_service_binaries.txt → replace binary + restart service
 
 3. None of the above?
-   → Run winPEAS via escalatr.sh → parse output → check attack_commands.txt first, then quick-wins.txt
+   → Run winPEAS via escalatr.sh → parse output → check next_steps.txt first, then quick-wins.txt
    → Check PowerShell history: type $env:APPDATA\Microsoft\Windows\PowerShell\PSReadLine\ConsoleHost_history.txt
    → Check for saved WiFi passwords, browser creds, KeePass databases
    → Look for non-standard services or scheduled tasks running as SYSTEM
@@ -1014,7 +1014,7 @@ Do this right now, not later. Copy the flag value and submit it in the OffSec en
    Step 4 (cred dump) will fail if you're not admin — that's expected, skip it
 
 5. After chain completes:
-   attack_commands.txt has entries? → execute them in order
+   next_steps.txt has entries? → execute them in order
    old_os.txt shows legacy OS? → searchsploit for known exploits
    sysvol_interesting.txt has GPP? → gpp-decrypt the cPassword
 

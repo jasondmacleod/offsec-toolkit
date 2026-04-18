@@ -40,7 +40,7 @@ Privilege escalation enumeration orchestrator for OffSec. Run it on Kali after y
 ./escalatr.sh --parse /tmp/winpeas_output.txt --os windows
 
 # 4. ★ START HERE — pre-built exploit commands for every finding
-cat $TOOLKIT_ROOT/privesc/10.10.10.1/attack_commands.txt
+cat $TOOLKIT_ROOT/privesc/10.10.10.1/next_steps.txt
 
 # 5. Full parsed findings
 cat $TOOLKIT_ROOT/privesc/10.10.10.1/quick-wins.txt
@@ -100,7 +100,8 @@ $TOOLKIT_ROOT/privesc/<IP>/
 ├── tools/              # Downloaded tools ready for transfer
 ├── commands.txt        # Prioritized copy-paste enumeration commands
 ├── quick-wins.txt      # Parsed findings report (after --parse)
-├── attack_commands.txt # ★ START HERE — fully resolved exploit commands (after --parse)
+├── next_steps.txt      # ★ START HERE — evidence-backed exploit commands (after --parse)
+├── attack_commands.txt # Legacy alias with the same commands
 ├── raw/                # Raw tool output copies
 └── progress.log        # Phase tracking (START/DONE/FAIL)
 ```
@@ -418,7 +419,8 @@ Kernel (last resort)
 
 # Two output files written:
 $TOOLKIT_ROOT/privesc/parsed_YYYYMMDD_HHMMSS/quick-wins.txt      # findings summary
-$TOOLKIT_ROOT/privesc/parsed_YYYYMMDD_HHMMSS/attack_commands.txt  # ★ ready-to-run exploits
+$TOOLKIT_ROOT/privesc/parsed_YYYYMMDD_HHMMSS/next_steps.txt       # ★ ready-to-run exploits
+$TOOLKIT_ROOT/privesc/parsed_YYYYMMDD_HHMMSS/attack_commands.txt  # legacy alias
 ```
 
 **Parser extracts and generates commands for:**

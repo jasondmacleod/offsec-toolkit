@@ -1149,9 +1149,12 @@ generate_attack_commands() {
 
     } > "${acfile}"
 
+    cp "${acfile}" "${OUTDIR}/next_steps.txt" 2>/dev/null || true
+
     if [[ "${has_actions}" == "true" ]]; then
         echo ""
         success "Attack commands → ${acfile}"
+        success "Next steps alias → ${OUTDIR}/next_steps.txt"
         echo -e "${RED}${BOLD}  ╔════════════════════════════════════════════════════════════╗${NC}"
         echo -e "${RED}${BOLD}  ║  ★ ATTACK COMMANDS READY — START HERE:                   ║${NC}"
         echo -e "${RED}${BOLD}  ║    cat ${acfile}${NC}"
@@ -1205,7 +1208,7 @@ generate_summary() {
         echo "------------------------------------------------------------"
         if [[ -r "${OUTDIR}/creds/shadow.txt" ]]; then
             echo "  [!] /etc/shadow was readable — hashes in creds/shadow_hashes.txt"
-            echo "  NEXT → crack: see attack_commands.txt [ SHADOW HASH CRACKING ]"
+            echo "  NEXT → crack: see next_steps.txt [ SHADOW HASH CRACKING ]"
         fi
         if [[ -r "${OUTDIR}/creds/passwd.txt" ]]; then
             echo "  [*] /etc/passwd copied to creds/passwd.txt"
@@ -1223,7 +1226,7 @@ generate_summary() {
                 [[ -f "${kf}" ]] || continue
                 echo "  ${kf}"
             done
-            echo "  NEXT → ssh commands: see attack_commands.txt [ SSH KEY ]"
+            echo "  NEXT → ssh commands: see next_steps.txt [ SSH KEY ]"
         fi
         echo ""
 
@@ -1235,7 +1238,7 @@ generate_summary() {
             nopasswd_found=$(grep -i "NOPASSWD" "${OUTDIR}/system/sudo_rights.txt" 2>/dev/null)
             if [[ -n "${nopasswd_found}" ]]; then
                 echo "${nopasswd_found}" | sed 's/^/  /'
-                echo "  NEXT → exploit commands: see attack_commands.txt [ SUDO NOPASSWD ]"
+                echo "  NEXT → exploit commands: see next_steps.txt [ SUDO NOPASSWD ]"
             else
                 echo "  No NOPASSWD entries"
             fi
@@ -1249,7 +1252,7 @@ generate_summary() {
         echo "------------------------------------------------------------"
         if [[ -s "${OUTDIR}/network/internal_listeners.txt" ]]; then
             sed 's/^/  /' "${OUTDIR}/network/internal_listeners.txt" 2>/dev/null
-            echo "  NEXT → tunnel commands: see attack_commands.txt [ INTERNAL LISTENERS ]"
+            echo "  NEXT → tunnel commands: see next_steps.txt [ INTERNAL LISTENERS ]"
         else
             echo "  None identified"
         fi
@@ -1263,7 +1266,7 @@ generate_summary() {
             suid_interesting=$(grep -vE "${common_suid}" "${OUTDIR}/files/suid_binaries.txt" 2>/dev/null)
             if [[ -n "${suid_interesting}" ]]; then
                 echo "${suid_interesting}" | sed 's/^/  /'
-                echo "  NEXT → GTFObins hints: see attack_commands.txt [ SUID BINARIES ]"
+                echo "  NEXT → GTFObins hints: see next_steps.txt [ SUID BINARIES ]"
             else
                 echo "  Only common/expected SUID binaries found"
             fi
@@ -1277,7 +1280,7 @@ generate_summary() {
         echo "------------------------------------------------------------"
         if [[ -s "${OUTDIR}/files/capabilities.txt" ]]; then
             sed 's/^/  /' "${OUTDIR}/files/capabilities.txt" 2>/dev/null
-            echo "  NEXT → exploit commands: see attack_commands.txt [ FILE CAPABILITIES ]"
+            echo "  NEXT → exploit commands: see next_steps.txt [ FILE CAPABILITIES ]"
         else
             echo "  No special capabilities found"
         fi
@@ -1305,7 +1308,8 @@ generate_summary() {
 
         echo "============================================================"
         echo "  Full data:       ${OUTDIR}/"
-        echo "  Attack commands: ${OUTDIR}/attack_commands.txt  ← START HERE"
+        echo "  Next steps:      ${OUTDIR}/next_steps.txt  ← START HERE"
+        echo "  Legacy alias:    ${OUTDIR}/attack_commands.txt"
         echo "============================================================"
 
     } > "${sfile}"

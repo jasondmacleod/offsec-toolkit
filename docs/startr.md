@@ -140,10 +140,11 @@ startr complete → recon running on all 6 targets
 │      → If not: flag it, don't assume — spray with crackr/sprayr once you find hashes
 │
 ├── 2. Monitor recon results — read these first as each scan lands
-│      cat $TOOLKIT_ROOT/recon/$SA1/summary.txt          # NEXT-STEP COMMANDS section
-│      cat $TOOLKIT_ROOT/recon/$SA1/loot/quick_wins.txt  # anonymous access, default creds, exploits
+│      cat $TOOLKIT_ROOT/recon/$SA1/summary.txt          # summary + short next-step preview
+│      cat $TOOLKIT_ROOT/recon/$SA1/loot/next_steps.txt  # evidence-backed commands
+│      cat $TOOLKIT_ROOT/recon/$SA1/loot/quick_wins.txt  # anonymous access, default creds, risky findings
 │      cat $TOOLKIT_ROOT/recon/*/loot/quick_wins.txt     # all targets at once
-│      → scroll to NEXT-STEP COMMANDS in summary.txt for ready-to-run follow-ons
+│      → run only commands grounded in the scan output
 │      → don't wait for all scans to finish; act on the first result that lands
 │
 ├── 3. Pick first standalone target

@@ -33,9 +33,11 @@ show_recon() {
     echo ""
     note "★ Read these first (generated per target):"
     cmd "cat \$TOOLKIT_ROOT/recon/10.10.10.1/summary.txt"
-    note "  └─ scroll to NEXT-STEP COMMANDS section for ready-to-run follow-ons"
+    note "  └─ summary includes a short next-step preview"
+    cmd "cat \$TOOLKIT_ROOT/recon/10.10.10.1/loot/next_steps.txt"
+    note "  └─ evidence-backed follow-on commands"
     cmd "cat \$TOOLKIT_ROOT/recon/10.10.10.1/loot/quick_wins.txt"
-    note "  └─ anonymous access, default creds, zone transfers, copy-paste exploit commands"
+    note "  └─ anonymous access, default creds, zone transfers, risky findings"
     echo ""
     note "Across all targets at once:"
     cmd "cat \$TOOLKIT_ROOT/recon/*/loot/quick_wins.txt"
@@ -84,9 +86,9 @@ show_privesc() {
     cmd "powershell -ep bypass .\\lootr.ps1"
     note "Output: \$TOOLKIT_ROOT/privesc/ (Linux) | .\\loot\\ (Windows)"
     echo ""
-    note "★ Read attack_commands.txt first — contains resolved exploit commands per finding:"
-    cmd "cat \$TOOLKIT_ROOT/privesc/10.10.10.1/attack_commands.txt  # Linux"
-    cmd "type C:\\loot\\attack_commands.txt                        # Windows (on target)"
+    note "★ Read next_steps.txt first — contains resolved exploit commands per finding:"
+    cmd "cat \$TOOLKIT_ROOT/privesc/10.10.10.1/next_steps.txt  # Linux"
+    cmd "type C:\\loot\\next_steps.txt                       # Windows (on target)"
 }
 
 show_pivot() {
@@ -107,9 +109,9 @@ show_loot() {
     cmd "powershell -ep bypass .\\lootr.ps1"
     note "Finds proof.txt/local.txt, creds, network info, privesc vectors"
     echo ""
-    note "★ Read attack_commands.txt — generated per finding, no placeholders:"
-    cmd "cat loot/attack_commands.txt   # Linux output dir"
-    cmd "type loot\\attack_commands.txt  # Windows output dir"
+    note "★ Read next_steps.txt — generated per finding, no placeholders:"
+    cmd "cat loot/next_steps.txt   # Linux output dir"
+    cmd "type loot\\next_steps.txt  # Windows output dir"
     note "  └─ SeImpersonate → Potato command, SUID → exploit, creds → spray, etc."
 }
 

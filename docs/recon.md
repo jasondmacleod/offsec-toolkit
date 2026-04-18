@@ -11,7 +11,7 @@ tags:
 # recon.sh
 
 ## What It Is
-Automated enumeration orchestrator for OffSec. Runs rustscan → nmap TCP → nmap UDP → targeted service enumeration in parallel. Generates `summary.txt`, `loot/quick_wins.txt`, and a finding-driven `loot/next_steps.txt` per target.
+Automated enumeration orchestrator for OffSec. Runs rustscan → nmap TCP → nmap UDP → targeted service enumeration in parallel. Generates `summary.txt`, a high-confidence `loot/quick_wins.txt`, and a finding-driven `loot/next_steps.txt` per target.
 
 `next_steps.txt` is intentionally evidence-gated: commands are emitted only when the script has concrete support from nmap results or non-empty output files. It does not print anonymous SMB commands unless anonymous/readable shares were actually found, and it does not treat WinRM/HTTPAPI ports as real web app targets.
 
@@ -33,7 +33,7 @@ sudo ./recon.sh --auto 10.10.10.1 10.10.10.2 10.10.10.3
 # 2. Read engagement instructions while it runs, then check summaries
 # summary.txt includes a short high-value preview of grounded next steps
 # next_steps.txt has the full evidence-backed follow-up command library
-# quick_wins.txt has notable anonymous access, default creds, zone transfers, etc.
+# quick_wins.txt has only high-confidence actionable findings, not plain service detections
 cat $TOOLKIT_ROOT/recon/*/summary.txt
 cat $TOOLKIT_ROOT/recon/*/loot/next_steps.txt
 cat $TOOLKIT_ROOT/recon/*/loot/quick_wins.txt
@@ -123,7 +123,7 @@ $TOOLKIT_ROOT/recon/
     ├── udp/
     │   └── snmp/                  # onesixtyone, snmpwalk (processes, software, ARP)
     ├── loot/
-    │   ├── quick_wins.txt         # ★ Anon access, default creds, zone xfers, etc.
+    │   ├── quick_wins.txt         # ★ High-confidence wins only, not service detections
     │   ├── next_steps.txt         # ★ Evidence-backed follow-up command library
     │   ├── smtp_valid_users.txt   # Created only when SMTP VRFY finds users
     │   └── snmp_windows_users.txt # Created only when SNMP exposes Windows users
@@ -144,7 +144,7 @@ cat $TOOLKIT_ROOT/recon/$IP/summary.txt
 # ★ Full finding-driven command library — commands only appear when backed by evidence
 cat $TOOLKIT_ROOT/recon/$IP/loot/next_steps.txt
 
-# ★ Prioritize these — anonymous access, default creds, and notable findings
+# ★ Prioritize these — anonymous access, valid users, default creds, and no-auth findings
 cat $TOOLKIT_ROOT/recon/$IP/loot/quick_wins.txt
 
 # Web findings

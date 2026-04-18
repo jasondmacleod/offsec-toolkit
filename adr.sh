@@ -262,6 +262,11 @@ attack_cmd() {
     } >> "${OUTDIR}/attack_commands.txt"
 }
 
+sync_next_steps_file() {
+    [[ -f "${OUTDIR}/attack_commands.txt" ]] || return 0
+    cp "${OUTDIR}/attack_commands.txt" "${OUTDIR}/next_steps.txt" 2>/dev/null || true
+}
+
 #------------------------------------------------------------------------------
 # PRE-FLIGHT TOOL CHECK
 #------------------------------------------------------------------------------
@@ -1525,8 +1530,9 @@ write_summary() {
         fi
         echo ""
 
-        echo "ATTACK COMMANDS"
-        echo "  Fully resolved copy-paste commands: ${OUTDIR}/attack_commands.txt"
+        echo "NEXT STEPS"
+        echo "  Fully resolved copy-paste commands: ${OUTDIR}/next_steps.txt"
+        echo "  Legacy alias: ${OUTDIR}/attack_commands.txt"
         echo ""
         echo "════════════════════════════════════════════════════════════════"
     } > "$summary"
@@ -1584,7 +1590,8 @@ OUTPUT STRUCTURE:
     shares/        all_shares.txt, sysvol contents
     sessions/      smb_sessions.txt, loggedon_users.txt
     summary.txt              READ THIS FIRST
-    attack_commands.txt      copy-paste next steps
+    next_steps.txt           copy-paste next steps
+    attack_commands.txt      legacy alias
 
 HASH AUTH NOTES:
   - ldapsearch does not support NTLM hash auth — LDAP phases skipped
@@ -1685,6 +1692,7 @@ main() {
     if [[ "$FORCE_MODE" == true ]]; then
         : > "${OUTDIR}/summary_notes.txt"
         : > "${OUTDIR}/attack_commands.txt"
+        : > "${OUTDIR}/next_steps.txt"
     fi
     touch "${OUTDIR}/summary_notes.txt"
 
@@ -1697,6 +1705,7 @@ main() {
             echo ""
         } > "${OUTDIR}/attack_commands.txt"
     fi
+    sync_next_steps_file
 
     # Banner
     echo ""
@@ -1720,6 +1729,7 @@ main() {
         build_rpc_auth
         build_smbc_auth
         mode_chain
+        sync_next_steps_file
         exit 0
     fi
 
@@ -1759,11 +1769,13 @@ main() {
     fi
 
     write_summary
+    sync_next_steps_file
 
     echo ""
     success "Enumeration complete — ${OUTDIR}/"
     success "READ FIRST:   ${OUTDIR}/summary.txt"
-    success "NEXT STEPS:   ${OUTDIR}/attack_commands.txt"
+    success "NEXT STEPS:   ${OUTDIR}/next_steps.txt"
+    success "LEGACY ALIAS: ${OUTDIR}/attack_commands.txt"
 }
 
 main "$@"

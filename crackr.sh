@@ -108,6 +108,117 @@ declare -A RULES_JTR=(
     [korelogic]="KoreLogic"
 )
 
+# ── Finding-driven next-step rules ─────────────────────────────────────────
+# This library is intentionally broad, but output is evidence-gated: commands
+# are written only when this run produced cracked material or central creds.
+write_crack_next_steps() {
+    local cracked_lines="$1"
+    local central_creds="$2"
+    local ns_file="${OUTPUT_DIR}/next_steps.txt"
+
+    (( cracked_lines > 0 )) || [[ -s "${central_creds}" ]] || return 0
+
+    local local_desc="${CRACKED_HASH_TYPE:-unknown}"
+    local local_mode="${CRACKED_HC_MODE:-}"
+    local ex_user="<USER>"
+    local ex_pass="<PASS>"
+    local first_crack
+    first_crack=$(find "$OUTPUT_DIR" -maxdepth 1 \( -name "hashcat_cracked_*.txt" -o -name "hashcat_mask_cracked_*.txt" -o -name "hashcat_hybrid_cracked_*.txt" -o -name "jtr_cracked_*.txt" \) 2>/dev/null \
+        | xargs grep -h '.' 2>/dev/null | grep -v '^#' | grep ':' | head -1 || true)
+    if [[ -n "${first_crack:-}" ]]; then
+        ex_user="${first_crack%%:*}"
+        ex_pass="${first_crack#*:}"
+    fi
+
+    local ex_domain="${OffSec_DOMAIN:-<DOMAIN>}"
+    local ex_dc="${OffSec_DC:-<DC_IP>}"
+
+    {
+        echo "============================================================"
+        echo "  CRACKR NEXT STEPS"
+        echo "  Generated: $(date '+%Y-%m-%d %H:%M:%S')"
+        echo "  Evidence: cracked lines=${cracked_lines}; central creds=${central_creds}"
+        echo "============================================================"
+        echo ""
+
+        case "${local_mode}" in
+            18200)
+                echo "[ AS-REP ROAST CRACKED ]"
+                echo "# Evidence: hashcat/john output for mode 18200"
+                echo "./sprayr.sh -u '${ex_user}' -p '${ex_pass}' -d ${ex_domain} -t ${ex_dc}"
+                echo "nxc smb ${ex_dc} -u '${ex_user}' -p '${ex_pass}' -d ${ex_domain}"
+                echo "./adr.sh -d ${ex_domain} -u '${ex_user}' -p '${ex_pass}' -dc ${ex_dc}"
+                ;;
+            13100|19600|19700)
+                echo "[ KERBEROAST HASH CRACKED ]"
+                echo "# Evidence: Kerberoast hash mode ${local_mode} (${local_desc})"
+                echo "./sprayr.sh -u '${ex_user}' -p '${ex_pass}' -d ${ex_domain} -t ${ex_dc}"
+                echo "nxc ldap ${ex_dc} -u '${ex_user}' -p '${ex_pass}' -d ${ex_domain} --groups"
+                echo "./adr.sh -d ${ex_domain} -u '${ex_user}' -p '${ex_pass}' -dc ${ex_dc}"
+                ;;
+            1000)
+                echo "[ NTLM HASH CRACKED ]"
+                echo "# Evidence: NTLM hash mode 1000"
+                echo "./sprayr.sh -u '${ex_user}' -p '${ex_pass}' -d ${ex_domain} -t ${ex_dc}"
+                echo "./sprayr.sh -u '${ex_user}' -H '<NTLM_HASH>' -d ${ex_domain} -t ${ex_dc}"
+                echo "evil-winrm -i ${ex_dc} -u '${ex_user}' -p '${ex_pass}'"
+                echo "impacket-psexec ${ex_domain}/'${ex_user}':'${ex_pass}'@${ex_dc}"
+                ;;
+            5600)
+                echo "[ NET-NTLMV2 CRACKED ]"
+                echo "# Evidence: Net-NTLMv2 hash mode 5600; plaintext only, no pass-the-hash"
+                echo "./sprayr.sh -u '${ex_user}' -p '${ex_pass}' -d ${ex_domain} -t ${ex_dc}"
+                echo "evil-winrm -i ${ex_dc} -u '${ex_user}' -p '${ex_pass}'"
+                echo "nxc smb ${ex_dc} -u '${ex_user}' -p '${ex_pass}' --shares"
+                ;;
+            1800|500|400|3200)
+                echo "[ LINUX SYSTEM HASH CRACKED ]"
+                echo "# Evidence: Linux crypt hash mode ${local_mode} (${local_desc})"
+                echo "ssh '${ex_user}'@${ex_dc}"
+                echo "su - '${ex_user}'"
+                echo "./sprayr.sh -u '${ex_user}' -p '${ex_pass}' -t ${ex_dc}"
+                ;;
+            2100)
+                echo "[ DCC2 / MSCACHE2 CRACKED ]"
+                echo "# Evidence: cached domain credential mode 2100; plaintext only"
+                echo "./sprayr.sh -u '${ex_user}' -p '${ex_pass}' -d ${ex_domain} -t ${ex_dc}"
+                echo "evil-winrm -i ${ex_dc} -u '${ex_user}' -p '${ex_pass}'"
+                echo "./adr.sh -d ${ex_domain} -u '${ex_user}' -p '${ex_pass}' -dc ${ex_dc}"
+                ;;
+            13400)
+                echo "[ KEEPASS MASTER PASSWORD CRACKED ]"
+                echo "# Evidence: KeePass hash mode 13400"
+                echo "kpcli --kdb <database.kdbx>"
+                echo "keepassxc-cli export <database.kdbx>"
+                echo "./sprayr.sh --from-creds"
+                ;;
+            131|1731)
+                echo "[ MSSQL HASH CRACKED ]"
+                echo "# Evidence: MSSQL hash mode ${local_mode} (${local_desc})"
+                echo "impacket-mssqlclient ${ex_domain}/'${ex_user}':'${ex_pass}'@${ex_dc}"
+                echo "nxc mssql ${ex_dc} -u '${ex_user}' -p '${ex_pass}' -q 'SELECT @@version'"
+                echo "./sprayr.sh -u '${ex_user}' -p '${ex_pass}' -t ${ex_dc}"
+                ;;
+            *)
+                echo "[ CRACKED CREDENTIALS FOUND ]"
+                echo "# Evidence: non-empty cracked output or ${central_creds}"
+                echo "./sprayr.sh -u '${ex_user}' -p '${ex_pass}' -d ${ex_domain} -t ${ex_dc}"
+                echo "ssh '${ex_user}'@${ex_dc}"
+                echo "cat ${central_creds}"
+                ;;
+        esac
+
+        echo ""
+        echo "[ RETRY IF LOW YIELD ]"
+        echo "./crackr.sh -f <hashfile> -r best64"
+        echo "./crackr.sh -f <hashfile> -r rockyou-30000"
+        echo "./crackr.sh -f <hashfile> -m ${local_mode:-1000} --mask '?u?l?l?l?d?d'"
+        echo "============================================================"
+    } > "${ns_file}"
+
+    log_success "Next steps written: ${ns_file}"
+}
+
 # ── Hash patterns → hashcat mode + JTR format ──────────────────────────────
 # Format: "regex|hashcat_mode|jtr_format|description"
 # Order matters — more specific patterns must come before generic ones.
@@ -1765,15 +1876,18 @@ echo -e "${CYAN}Tip: Use 'crackr --show -f <hashfile>' to view cracked passwords
 
 # ── Post-crack next-step guidance ────────────────────────────────────────────
 # Check if anything was actually cracked before printing guidance
-_cracked_lines=$(find "$OUTPUT_DIR" -maxdepth 1 -name "hashcat_cracked_*.txt" -o -name "jtr_cracked_*.txt" 2>/dev/null | \
+_cracked_lines=$(find "$OUTPUT_DIR" -maxdepth 1 \( -name "hashcat_cracked_*.txt" -o -name "hashcat_mask_cracked_*.txt" -o -name "hashcat_hybrid_cracked_*.txt" -o -name "jtr_cracked_*.txt" \) 2>/dev/null | \
     xargs grep -h '.' 2>/dev/null | grep -v '^#' | grep -c '.' 2>/dev/null || echo 0)
 _central_creds="${TOOLKIT_ROOT}/creds.txt"
 
 if (( _cracked_lines > 0 )) || [[ -s "${_central_creds}" ]]; then
+    write_crack_next_steps "${_cracked_lines}" "${_central_creds}"
+
     echo ""
     echo -e "${BOLD}═══════════════════════════════════════${NC}"
     echo -e "${BOLD}  ★ POST-CRACK — WHAT TO DO NEXT${NC}"
     echo -e "${BOLD}═══════════════════════════════════════${NC}"
+    echo "  Full evidence-backed command file: ${OUTPUT_DIR}/next_steps.txt"
 
     local_desc="${CRACKED_HASH_TYPE:-unknown}"
     local_mode="${CRACKED_HC_MODE:-}"
@@ -1781,7 +1895,7 @@ if (( _cracked_lines > 0 )) || [[ -s "${_central_creds}" ]]; then
     # Pull first cracked user:pass from output files for resolved copy-paste examples
     _ex_user="<USER>"
     _ex_pass="<PASS>"
-    _first_crack=$(find "$OUTPUT_DIR" -maxdepth 1 \( -name "hashcat_cracked_*.txt" -o -name "jtr_cracked_*.txt" \) 2>/dev/null \
+    _first_crack=$(find "$OUTPUT_DIR" -maxdepth 1 \( -name "hashcat_cracked_*.txt" -o -name "hashcat_mask_cracked_*.txt" -o -name "hashcat_hybrid_cracked_*.txt" -o -name "jtr_cracked_*.txt" \) 2>/dev/null \
         | xargs grep -h '.' 2>/dev/null | grep -v '^#' | grep ':' | head -1 || true)
     if [[ -n "${_first_crack:-}" ]]; then
         _ex_user="${_first_crack%%:*}"

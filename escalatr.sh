@@ -1147,9 +1147,11 @@ CEOF
     # Resolve known values — no placeholders in copy-paste commands
     sed -i "s/<KALI_IP>/${kali_ip}/g" "${acfile}" 2>/dev/null
     [[ -n "${target_ip}" ]] && sed -i "s/<TARGET_IP>/${target_ip}/g" "${acfile}" 2>/dev/null
+    cp "${acfile}" "${output_dir}/next_steps.txt" 2>/dev/null || true
 
     success "Attack commands → ${acfile}"
-    warn "cat ${acfile}  # ← START HERE for exploitation"
+    success "Next steps alias → ${output_dir}/next_steps.txt"
+    warn "cat ${output_dir}/next_steps.txt  # ← START HERE for exploitation"
 }
 
 parse_windows_output() {
@@ -1454,9 +1456,11 @@ parse_windows_output() {
     # Resolve known values — no placeholders in copy-paste commands
     sed -i "s/<KALI_IP>/${kali_ip}/g" "${acfile}" 2>/dev/null
     [[ -n "${target_ip}" ]] && sed -i "s/<TARGET_IP>/${target_ip}/g" "${acfile}" 2>/dev/null
+    cp "${acfile}" "${output_dir}/next_steps.txt" 2>/dev/null || true
 
     success "Attack commands → ${acfile}"
-    warn "cat ${acfile}  # ← START HERE for exploitation"
+    success "Next steps alias → ${output_dir}/next_steps.txt"
+    warn "cat ${output_dir}/next_steps.txt  # ← START HERE for exploitation"
 }
 
 #==============================================================================
@@ -1928,7 +1932,7 @@ main() {
     echo "     ./escalatr.sh --parse <output_file> --os ${target_os}"
     echo ""
     echo "  5. Read prioritised findings:"
-    echo "     cat $target_dir/attack_commands.txt"
+    echo "     cat $target_dir/next_steps.txt"
     echo ""
 
     # Potato guide reminder for Windows

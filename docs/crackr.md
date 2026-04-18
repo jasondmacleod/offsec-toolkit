@@ -16,7 +16,7 @@ tags:
 OffSec password cracking suite (v3). Wraps hashcat, John the Ripper, Hydra, and CeWL into a single interface with auto hash identification, tool selection, `*2john` extraction, mask/hybrid attacks, quick-mode escalation, and session logging for report reproducibility.
 
 > [!important] Output directory: `$TOOLKIT_ROOT/crackr/`
-> Every run saves a timestamped session log with exact commands for your OffSec report. Cracked credentials are also automatically appended to `$TOOLKIT_ROOT/creds.txt` for use with `sprayr.sh --from-creds`.
+> Every run saves a timestamped session log with exact commands for your OffSec report. Cracked credentials are also automatically appended to `$TOOLKIT_ROOT/creds.txt` for use with `sprayr.sh --from-creds`. When cracked material exists, `next_steps.txt` is generated from the hash type and cracked output.
 
 ---
 
@@ -50,9 +50,10 @@ crackr --cewl http://target.htb --cewl-mutate -q -f hashes.txt
 > ```
 
 > [!tip] **Post-crack next steps — auto-resolved**
-> After each crack run, the script prints a **POST-CRACK — WHAT TO DO NEXT** block with fully resolved copy-paste commands:
+> After each crack run, the script writes `$TOOLKIT_ROOT/crackr/next_steps.txt` and prints a short **POST-CRACK — WHAT TO DO NEXT** preview with fully resolved copy-paste commands:
 > - The first cracked `user:pass` is read from the output file and substituted into every suggestion
 > - Hash-type-specific branches: AS-REP → spray + AD enum, Kerberoast → spray + group check, NTLM → spray + PTH + shell, NTLMv2 → spray + direct shell, Linux hashes → SSH + su, DCC2 → spray, MSSQL → mssqlclient + xp_cmdshell
+> - Commands are emitted only when cracked output or `$TOOLKIT_ROOT/creds.txt` is non-empty
 > - Set **`$OffSec_DOMAIN`** and **`$OffSec_DC`** once at engagement start for domain/DC resolution across all branches:
 > ```bash
 > export OffSec_DOMAIN=corp.local

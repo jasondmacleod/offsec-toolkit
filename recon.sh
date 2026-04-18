@@ -1703,9 +1703,6 @@ enum_pop3_imap() {
             -p "$port" -oN "$outdir/nmap_imap_${port}.txt" "$ip" 2>&1 | tail -3 || true
     fi
 
-    echo "${proto^^} detected on $ip:$port — check $outdir/ for capabilities/banner" \
-        >> "$target_dir/loot/quick_wins.txt"
-
     success "${proto^^} enumeration complete for $ip:$port"
     progress_log "$target_dir" "DONE" "$phase_key" ""
 }
@@ -1846,6 +1843,135 @@ triage_and_enumerate() {
 # Writes concise commands only when backed by nmap detections or non-empty result
 # files produced by this script.
 #------------------------------------------------------------------------------
+generate_quick_wins() {
+    local ip="$1"
+    local target_dir="$2"
+    local qw_file="$target_dir/loot/quick_wins.txt"
+    local tmp_file="${qw_file}.tmp"
+    mkdir -p "$target_dir/loot"
+    : > "$tmp_file"
+
+    local vrfy_file="$target_dir/tcp/smtp/vrfy_users.txt"
+    if is_nonempty_file "$vrfy_file" && grep -q '^VALID:' "$vrfy_file" 2>/dev/null; then
+        local smtp_users_loot="$target_dir/loot/smtp_valid_users.txt"
+        grep -oP '^VALID:\s*\K\S+' "$vrfy_file" 2>/dev/null | sort -u > "$smtp_users_loot" || true
+        if is_nonempty_file "$smtp_users_loot"; then
+            local smtp_ucount
+            smtp_ucount=$(wc -l < "$smtp_users_loot" 2>/dev/null); smtp_ucount=${smtp_ucount:-0}
+            echo "SMTP VRFY valid usernames: ${smtp_ucount} saved to ${smtp_users_loot}" >> "$tmp_file"
+        fi
+    fi
+
+    if grep -qiE 'READ|WRITE' "$target_dir/tcp/smb/smbmap_null.txt" "$target_dir/tcp/smb/smbmap_guest.txt" 2>/dev/null; then
+        echo "SMB readable share via null/guest session — see $target_dir/tcp/smb/smb_quick_findings.txt" >> "$tmp_file"
+    fi
+
+    if is_nonempty_file "$target_dir/tcp/ftp/ANONYMOUS_ACCESS.txt"; then
+        echo "Anonymous FTP login succeeded on $ip — mirrored files under $target_dir/tcp/ftp/mirror/" >> "$tmp_file"
+    fi
+
+    if is_nonempty_file "$target_dir/udp/snmp/valid_community_strings.txt"; then
+        local community_count
+        community_count=$(wc -l < "$target_dir/udp/snmp/valid_community_strings.txt" 2>/dev/null); community_count=${community_count:-0}
+        echo "SNMP community string found (${community_count}) — see $target_dir/udp/snmp/valid_community_strings.txt" >> "$tmp_file"
+    fi
+
+    if is_nonempty_file "$target_dir/udp/snmp/process_args.txt" && \
+       grep -qiE 'pass|pwd|secret|key|token|cred|-p[[:space:]]' "$target_dir/udp/snmp/process_args.txt" 2>/dev/null; then
+        echo "SNMP process arguments contain credential keywords — see $target_dir/udp/snmp/process_args.txt" >> "$tmp_file"
+    fi
+
+    if is_nonempty_file "$target_dir/udp/snmp/windows_users.txt"; then
+        local snmp_users_loot="$target_dir/loot/snmp_windows_users.txt"
+        grep -oP 'STRING:\s*"?\K[^"]+' "$target_dir/udp/snmp/windows_users.txt" 2>/dev/null | sort -u > "$snmp_users_loot" || true
+        if is_nonempty_file "$snmp_users_loot"; then
+            local snmp_ucount
+            snmp_ucount=$(wc -l < "$snmp_users_loot" 2>/dev/null); snmp_ucount=${snmp_ucount:-0}
+            echo "Windows usernames exposed via SNMP: ${snmp_ucount} saved to ${snmp_users_loot}" >> "$tmp_file"
+        fi
+    fi
+
+    local zt_file
+    zt_file=$(find "$target_dir/tcp/dns" -name 'zone_transfer_*.txt' -type f 2>/dev/null | head -1)
+    if is_nonempty_file "$zt_file" && grep -q 'XFR size' "$zt_file" 2>/dev/null; then
+        echo "DNS zone transfer succeeded — see $zt_file" >> "$tmp_file"
+    fi
+
+    if is_nonempty_file "$target_dir/tcp/ldap/ldap_full_dump.txt"; then
+        local ldap_entries
+        ldap_entries=$(grep -c '^dn:' "$target_dir/tcp/ldap/ldap_full_dump.txt" 2>/dev/null); ldap_entries=${ldap_entries:-0}
+        if (( ldap_entries > 0 )); then
+            echo "LDAP anonymous bind returned ${ldap_entries} entries — see $target_dir/tcp/ldap/ldap_full_dump.txt" >> "$tmp_file"
+        fi
+    fi
+
+    if grep -qi 'empty password' "$target_dir/tcp/mysql/nmap_mysql_scripts.txt" 2>/dev/null; then
+        echo "MySQL empty password reported by nmap scripts on $ip" >> "$tmp_file"
+    fi
+    if is_nonempty_file "$target_dir/tcp/mysql/root_nopass.txt" && \
+       ! grep -qi 'ERROR\|denied\|refused' "$target_dir/tcp/mysql/root_nopass.txt" 2>/dev/null; then
+        echo "MySQL root no-password login succeeded on $ip — see $target_dir/tcp/mysql/root_nopass.txt" >> "$tmp_file"
+    fi
+
+    local pg_login
+    pg_login=$(find "$target_dir/tcp/postgres" -maxdepth 1 -name 'login_*.txt' -type f 2>/dev/null | while IFS= read -r f; do
+        if is_nonempty_file "$f" && ! grep -qi 'FATAL\|refused\|denied\|error' "$f" 2>/dev/null; then
+            basename "$f" | sed 's/^login_//;s/\.txt$//;s/_/:/'
+            break
+        fi
+    done)
+    if [[ -n "$pg_login" ]]; then
+        pg_login="${pg_login/:empty/:<empty>}"
+        echo "PostgreSQL LOGIN: ${pg_login} on $ip — see $target_dir/tcp/postgres/" >> "$tmp_file"
+    fi
+
+    if is_nonempty_file "$target_dir/tcp/redis/info_noauth.txt" && \
+       grep -qi 'redis_version' "$target_dir/tcp/redis/info_noauth.txt" 2>/dev/null; then
+        echo "REDIS NO-AUTH on $ip — see $target_dir/tcp/redis/info_noauth.txt" >> "$tmp_file"
+    fi
+
+    if grep -qP '^\s*/' "$target_dir/tcp/rpc/nfs_exports.txt" 2>/dev/null; then
+        echo "NFS exports found on $ip — see $target_dir/tcp/rpc/nfs_exports.txt" >> "$tmp_file"
+    fi
+
+    local httpdir
+    for httpdir in "$target_dir/tcp/http"/port_*; do
+        [[ -d "$httpdir" ]] || continue
+        local p
+        p=$(basename "$httpdir" | sed 's/port_//')
+        if is_nonempty_file "$httpdir/http_methods.txt" && \
+           grep -qiE 'Allow:.*(TRACE|PUT|DELETE|CONNECT|PROPFIND)|Public:.*(TRACE|PUT|DELETE|CONNECT|PROPFIND)' "$httpdir/http_methods.txt" 2>/dev/null; then
+            echo "Risky HTTP method on $ip:$p — see $httpdir/http_methods.txt" >> "$tmp_file"
+        fi
+        if is_nonempty_file "$httpdir/ffuf_vhosts.json"; then
+            local vhost_count
+            if command -v jq &>/dev/null; then
+                vhost_count=$(jq '.results | length' "$httpdir/ffuf_vhosts.json" 2>/dev/null || echo 0)
+            else
+                vhost_count=$(grep -c '"url"' "$httpdir/ffuf_vhosts.json" 2>/dev/null); vhost_count=${vhost_count:-0}
+            fi
+            if (( vhost_count > 0 )); then
+                echo "Vhosts discovered on $ip:$p (${vhost_count}) — see $httpdir/ffuf_vhosts.json" >> "$tmp_file"
+            fi
+        fi
+    done
+
+    if is_nonempty_file "$target_dir/tcp/ssh/version_info.txt"; then
+        local ssh_version
+        ssh_version=$(head -1 "$target_dir/tcp/ssh/version_info.txt" 2>/dev/null | sed 's/^SSH Version: //')
+        if echo "$ssh_version" | grep -qiE 'OpenSSH_[1-6]\.|OpenSSH_7\.[0-1]|dropbear'; then
+            echo "POTENTIALLY VULNERABLE SSH: ${ssh_version} on $ip — see $target_dir/tcp/ssh/version_info.txt" >> "$tmp_file"
+        fi
+    fi
+
+    if [[ -s "$tmp_file" ]]; then
+        sort -u "$tmp_file" > "$qw_file"
+    else
+        : > "$qw_file"
+    fi
+    rm -f "$tmp_file"
+}
+
 generate_next_steps() {
     local ip="$1"
     local target_dir="$2"
@@ -2194,6 +2320,7 @@ generate_summary() {
     local summary="$target_dir/summary.txt"
 
     header "Generating Summary Report → $ip"
+    generate_quick_wins "$ip" "$target_dir"
     generate_next_steps "$ip" "$target_dir"
 
     {
