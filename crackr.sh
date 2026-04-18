@@ -125,8 +125,8 @@ write_crack_next_steps() {
     local ex_user="<USER>"
     local ex_pass="<PASS>"
     local first_crack
-    first_crack=$(find "$OUTPUT_DIR" -maxdepth 1 \( -name "hashcat_cracked_*.txt" -o -name "hashcat_mask_cracked_*.txt" -o -name "hashcat_hybrid_cracked_*.txt" -o -name "jtr_cracked_*.txt" \) 2>/dev/null \
-        | xargs grep -h '.' 2>/dev/null | grep -v '^#' | grep ':' | head -1 || true)
+    first_crack=$(find "$OUTPUT_DIR" -maxdepth 1 \( -name "hashcat_cracked_*.txt" -o -name "hashcat_mask_cracked_*.txt" -o -name "hashcat_hybrid_cracked_*.txt" -o -name "jtr_cracked_*.txt" \) -print0 2>/dev/null \
+        | xargs -0 grep -h '.' 2>/dev/null | grep -v '^#' | grep ':' | head -1 || true)
     if [[ -n "${first_crack:-}" ]]; then
         ex_user="${first_crack%%:*}"
         ex_pass="${first_crack#*:}"
@@ -1911,8 +1911,8 @@ echo -e "${CYAN}Tip: Use 'crackr --show -f <hashfile>' to view cracked passwords
 
 # ── Post-crack next-step guidance ────────────────────────────────────────────
 # Check if anything was actually cracked before printing guidance
-_cracked_lines=$(find "$OUTPUT_DIR" -maxdepth 1 \( -name "hashcat_cracked_*.txt" -o -name "hashcat_mask_cracked_*.txt" -o -name "hashcat_hybrid_cracked_*.txt" -o -name "jtr_cracked_*.txt" \) 2>/dev/null | \
-    xargs grep -h '.' 2>/dev/null | grep -v '^#' | grep -c '.' 2>/dev/null || echo 0)
+_cracked_lines=$(find "$OUTPUT_DIR" -maxdepth 1 \( -name "hashcat_cracked_*.txt" -o -name "hashcat_mask_cracked_*.txt" -o -name "hashcat_hybrid_cracked_*.txt" -o -name "jtr_cracked_*.txt" \) -print0 2>/dev/null | \
+    xargs -0 grep -h '.' 2>/dev/null | grep -v '^#' | grep -c '.' 2>/dev/null || echo 0)
 _central_creds="${TOOLKIT_ROOT}/creds.txt"
 
 if (( _cracked_lines > 0 )) || [[ -s "${_central_creds}" ]]; then
@@ -1930,8 +1930,8 @@ if (( _cracked_lines > 0 )) || [[ -s "${_central_creds}" ]]; then
     # Pull first cracked user:pass from output files for resolved copy-paste examples
     _ex_user="<USER>"
     _ex_pass="<PASS>"
-    _first_crack=$(find "$OUTPUT_DIR" -maxdepth 1 \( -name "hashcat_cracked_*.txt" -o -name "hashcat_mask_cracked_*.txt" -o -name "hashcat_hybrid_cracked_*.txt" -o -name "jtr_cracked_*.txt" \) 2>/dev/null \
-        | xargs grep -h '.' 2>/dev/null | grep -v '^#' | grep ':' | head -1 || true)
+    _first_crack=$(find "$OUTPUT_DIR" -maxdepth 1 \( -name "hashcat_cracked_*.txt" -o -name "hashcat_mask_cracked_*.txt" -o -name "hashcat_hybrid_cracked_*.txt" -o -name "jtr_cracked_*.txt" \) -print0 2>/dev/null \
+        | xargs -0 grep -h '.' 2>/dev/null | grep -v '^#' | grep ':' | head -1 || true)
     if [[ -n "${_first_crack:-}" ]]; then
         _ex_user="${_first_crack%%:*}"
         _ex_pass="${_first_crack#*:}"
