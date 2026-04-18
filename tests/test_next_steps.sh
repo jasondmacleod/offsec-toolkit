@@ -175,7 +175,7 @@ DB_PASSWORD=secret
 Werkzeug debugger
 <form method="post"><input type="password" name="password"></form>
 EOF
-    echo "Apache" > "$wd/fingerprint/whatweb.txt"
+    echo "Apache WordPress Grafana" > "$wd/fingerprint/whatweb.txt"
     : > "$wd/fingerprint/headers.txt"
     echo "http://10.10.10.5/static/app.js" > "$wd/fingerprint/js_urls.txt"
     echo "/api/users" > "$wd/fingerprint/js_endpoints.txt"
@@ -203,6 +203,8 @@ EOF
     assert_contains "$ns" "API endpoint discovered" "webenum detects API endpoint evidence"
     assert_contains "$ns" "JavaScript endpoints found" "webenum detects JS endpoint evidence"
     assert_contains "$ns" "JavaScript secret-looking strings found" "webenum detects JS secret hints"
+    assert_contains "$ns" "wpscan --url" "webenum default next steps include WPScan for WordPress evidence"
+    assert_contains "$ns" "nuclei -u" "webenum default next steps include nuclei for Grafana evidence"
     assert_contains "$ns" "Traversal/LFI-style parameter found" "webenum detects LFI-style parameter"
     assert_contains "$ns" "Command-injection-style parameter found" "webenum detects command injection-style parameter"
     assert_contains "$ns" "SQLi-style parameter found" "webenum detects SQLi-style parameter"

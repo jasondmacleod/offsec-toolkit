@@ -71,7 +71,7 @@ PHASE_VHOST_TIMEOUT=600
 PHASE_PARAM_TIMEOUT=300
 
 DEEP_MODE=false
-LAB_TOOLS=false                      # Opt-in: emit sqlmap/nuclei/wpscan aggressive lab commands
+LAB_TOOLS=false                      # Opt-in: emit SQLmap automation suggestions
 VHOST_DOMAIN=""                      # e.g. "target.htb" — enables vhost fuzzing
 JS_FETCH_LIMIT=30                    # Keep JavaScript review useful without turning into crawling
 
@@ -1344,9 +1344,7 @@ generate_next_steps() {
             "curl -sk ${url%/}/login | sed -n '1,80p'"
             "curl -sk ${url%/}/api/health"
         )
-        if [[ "$LAB_TOOLS" == "true" ]]; then
-            grafana_cmds+=("nuclei -u ${url%/} -tags grafana")
-        fi
+        grafana_cmds+=("nuclei -u ${url%/} -tags grafana")
         append_next_finding "$next_file" \
             "Grafana detected" \
             "fingerprint/content output matched Grafana" \
@@ -1401,13 +1399,11 @@ generate_next_steps() {
             "curl -sk ${url%/}/wp-login.php | sed -n '1,40p'"
             "wpscan --url ${url%/} --enumerate u,p,t --plugins-detection passive -o /tmp/${HOST_SAFE}_wpscan_baseline.txt"
         )
-        if [[ "$LAB_TOOLS" == "true" ]]; then
-            wordpress_cmds+=(
-                "wpscan --url ${url%/} --enumerate p --plugins-detection aggressive -o /tmp/${HOST_SAFE}_wpscan_plugins.txt"
-                "wpscan --url ${url%/} --enumerate u,vp,vt,cb --plugins-detection aggressive -o /tmp/${HOST_SAFE}_wpscan_vuln.txt"
-                "wpscan --url ${url%/} --enumerate u --passwords /usr/share/wordlists/fasttrack.txt -o /tmp/${HOST_SAFE}_wpscan_users.txt"
-            )
-        fi
+        wordpress_cmds+=(
+            "wpscan --url ${url%/} --enumerate p --plugins-detection aggressive -o /tmp/${HOST_SAFE}_wpscan_plugins.txt"
+            "wpscan --url ${url%/} --enumerate u,vp,vt,cb --plugins-detection aggressive -o /tmp/${HOST_SAFE}_wpscan_vuln.txt"
+            "wpscan --url ${url%/} --enumerate u --passwords /usr/share/wordlists/fasttrack.txt -o /tmp/${HOST_SAFE}_wpscan_users.txt"
+        )
         append_next_finding "$next_file" \
             "WordPress detected" \
             "whatweb or path probes matched WordPress" \
@@ -1868,12 +1864,10 @@ generate_summary() {
             wp_host=$(get_host "$url" | tr '.:' '_')
             echo "  WordPress detected — run baseline wpscan:"
             echo "  wpscan --url ${url} --enumerate u,p,t --plugins-detection passive -o /tmp/${wp_host}_wpscan_baseline.txt"
-            if [[ "$LAB_TOOLS" == "true" ]]; then
-                echo "  # Lab/non-engagement aggressive checks:"
-                echo "  wpscan --url ${url} --enumerate p --plugins-detection aggressive -o /tmp/${wp_host}_wpscan_plugins.txt"
-                echo "  wpscan --url ${url} --enumerate u,vp,vt,cb --plugins-detection aggressive -o /tmp/${wp_host}_wpscan_vuln.txt"
-                echo "  wpscan --url ${url} --enumerate u --passwords /usr/share/wordlists/fasttrack.txt -o /tmp/${wp_host}_wpscan_users.txt"
-            fi
+            echo "  # Aggressive plugin/theme/user enumeration:"
+            echo "  wpscan --url ${url} --enumerate p --plugins-detection aggressive -o /tmp/${wp_host}_wpscan_plugins.txt"
+            echo "  wpscan --url ${url} --enumerate u,vp,vt,cb --plugins-detection aggressive -o /tmp/${wp_host}_wpscan_vuln.txt"
+            echo "  wpscan --url ${url} --enumerate u --passwords /usr/share/wordlists/fasttrack.txt -o /tmp/${wp_host}_wpscan_users.txt"
         else
             echo "  (none detected)"
         fi
@@ -2022,8 +2016,7 @@ OPTIONS:
   --threads N        ffuf thread count (default: 40)
   --rate N           ffuf max requests/sec, 0=unlimited (default: 0)
   --ffuf-ac          Enable ffuf autocalibration (-ac) after baseline review
-  --lab-tools        Include non-engagement/lab-only automated scanner suggestions
-                       such as sqlmap, nuclei, and aggressive WPScan commands
+  --lab-tools        Include SQLmap suggestions for non-engagement labs
   -h, --help         Show this help
 
 EXAMPLES:
@@ -2078,8 +2071,8 @@ NOTES:
   - Ctrl+C cleans up all background jobs
   - Requires: ffuf, curl, python3 (for JSON parsing)
   - Optional: whatweb — fingerprinting degrades gracefully if missing
-  - Default next steps avoid sqlmap/nuclei-style automation; use --lab-tools
-    when working in labs where those tools are allowed
+  - Default next steps avoid SQLmap-style automatic exploitation; use --lab-tools
+    only in non-engagement labs where SQLmap is allowed
 EOF
 }
 

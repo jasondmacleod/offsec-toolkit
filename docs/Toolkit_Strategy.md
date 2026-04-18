@@ -28,7 +28,7 @@ Unified credential log: `$TOOLKIT_ROOT/creds.txt` — populated automatically by
 ./tools_setup.sh --check    # no sudo needed, just verifies
 ```
 
-`tools_setup.sh` installs OffSec-safe recon/web enum helpers by default, including `httpx-toolkit`, `gowitness`, `eyewitness`, `sslscan`, `wafw00f`, `dnsrecon`, `snmpcheck`, `nbtscan`, `davtest`, `cadaver`, and `jq` when they are not already present on Kali. Use `--lab-tools` only for non-engagement automation (`sqlmap`, `nuclei`, `wpscan`).
+`tools_setup.sh` installs OffSec-safe recon/web enum helpers by default, including `httpx-toolkit`, `gowitness`, `eyewitness`, `sslscan`, `wafw00f`, `dnsrecon`, `snmpcheck`, `nbtscan`, `davtest`, `cadaver`, `nuclei`, `wpscan`, and `jq` when they are not already present on Kali. Use `--lab-tools` only for non-engagement SQLmap automation.
 
 Verify the evidence-gated next-step rules after script edits:
 ```bash

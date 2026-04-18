@@ -26,11 +26,11 @@ sudo mv webenum.sh /usr/local/bin/webenum
 webenum --help
 
 # Install dependencies if missing
-sudo apt install ffuf whatweb curl python3 seclists jq httpx-toolkit sslscan wafw00f davtest cadaver
+sudo apt install ffuf whatweb curl python3 seclists jq httpx-toolkit sslscan wafw00f davtest cadaver nuclei wpscan
 ```
 
 **Required:** ffuf, curl, python3
-**Recommended:** whatweb, httpx-toolkit, seclists, jq, sslscan, wafw00f, davtest, cadaver
+**Recommended:** whatweb, httpx-toolkit, seclists, jq, sslscan, wafw00f, davtest, cadaver, nuclei, wpscan
 **Graceful degradation:** Script continues if optional tools are missing. ffuf is the only hard web-enum tool requirement.
 
 ### Wordlist Check
@@ -134,7 +134,7 @@ webenum --url http://192.168.50.100 --deep --vhost target.htb
 | `--threads N` | ffuf thread count (default: 40) | `--threads 20` |
 | `--rate N` | Max requests/sec, 0=unlimited (default: 0) | `--rate 100` |
 | `--ffuf-ac` | Enable ffuf autocalibration after reviewing baseline behavior | `--ffuf-ac` |
-| `--lab-tools` | Include lab-only automation suggestions such as sqlmap, nuclei, and aggressive WPScan | `--lab-tools` |
+| `--lab-tools` | Include SQLmap suggestions for non-engagement labs | `--lab-tools` |
 | `-h, --help` | Show help | |
 
 When launched through `sudo`, the default `$TOOLKIT_ROOT` resolves to the invoking
@@ -373,7 +373,8 @@ http://10.10.10.5/admin               |    200 |     1234 |     56 |    12
 ```bash
 # loot/next_steps.txt contains this command when WordPress is actually detected
 wpscan --url http://TARGET --enumerate u,p,t --plugins-detection passive
-# Add --lab-tools when you want aggressive WPScan commands in non-engagement labs.
+wpscan --url http://TARGET --enumerate p --plugins-detection aggressive
+wpscan --url http://TARGET --enumerate u,vp,vt,cb --plugins-detection aggressive
 ```
 
 ### Login Page Found
@@ -419,7 +420,7 @@ curl -sk -o /dev/null -w '%{http_code} http://TARGET/admin-panel\n' 'http://TARG
 | Jenkins | Login/script console checks and targeted fuzzing |
 | phpMyAdmin | Login URL and hydra template |
 | Adminer | `adminer/` and `adminer.php` checks plus hydra template |
-| Grafana | Login/health checks; nuclei templates only with `--lab-tools` |
+| Grafana | Login/health checks and nuclei Grafana templates |
 | Webmin | Header/version checks, `searchsploit`, login hydra template |
 | JBoss/WildFly | `jmx-console`/`web-console` checks and management-path fuzzing |
 | Spring actuator | `/actuator`, `/actuator/env`, Spring Boot wordlist fuzzing |

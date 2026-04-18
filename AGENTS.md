@@ -20,9 +20,10 @@ copy-paste after human review.
   where scripts already use them.
 - Do not add exploit automation that runs automatically. Suggestions are fine;
   execution should remain user-controlled.
-- Keep sqlmap, nuclei, aggressive WPScan, and similar heavy lab automation
-  behind explicit lab/non-engagement switches. Default OffSec output should prefer
-  manual, evidence-backed probes.
+- Keep SQLmap and similar automatic exploitation behind explicit lab/non-engagement
+  switches. `nuclei` and `wpscan` may appear in default OffSec follow-up output
+  when they are tied to concrete findings, such as Grafana or WordPress
+  evidence.
 - Do not rewrite scripts from scratch. Preserve useful techniques and build on
   existing phases, output paths, and helper functions.
 - Keep coverage OffSec-practical. Add small missing checks when they unlock real
@@ -91,9 +92,9 @@ copy-paste after human review.
   default. Include tools that Kali images often lack when they directly support
   recon evidence, such as `httpx-toolkit`, `gowitness`, `eyewitness`,
   `sslscan`, `wafw00f`, `dnsrecon`, `snmpcheck`, `nbtscan`, `davtest`,
-  `cadaver`, and `jq`.
-- Lab-only automation belongs behind `--lab-tools` in setup and in scripts that
-  generate next-step commands.
+  `cadaver`, `nuclei`, `wpscan`, and `jq`.
+- SQLmap-style automatic exploitation belongs behind `--lab-tools` in setup and
+  in scripts that generate next-step commands.
 - Check-mode package validation should map package names to real binaries when
   they differ, for example `httpx-toolkit` to `httpx` and `samba-common-bin` to
   `nmblookup`.

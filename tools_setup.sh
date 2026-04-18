@@ -24,7 +24,7 @@ for arg in "$@"; do
         -h|--help)
             echo "Usage: sudo $0 [--check] [--lab-tools] [--no-color]"
             echo "  --check      Verify installed tools without downloading"
-            echo "  --lab-tools  Also install/check non-engagement lab automation (sqlmap, nuclei, wpscan)"
+            echo "  --lab-tools  Also install/check SQLmap for non-engagement labs"
             echo "  --no-color   Disable colored output"
             exit 0
             ;;
@@ -354,7 +354,7 @@ check_file() {
 APT_PACKAGES=(
     rustscan nmap gobuster feroxbuster ffuf nikto whatweb
     httpx-toolkit gowitness eyewitness sslscan wafw00f dnsrecon jq
-    davtest cadaver
+    davtest cadaver nuclei wpscan
     smbclient smbmap samba-common-bin nbtscan onesixtyone snmp snmpcheck enum4linux
     ldap-utils dnsutils rpcbind nfs-common
     netexec responder impacket-scripts bloodhound
@@ -365,7 +365,7 @@ APT_PACKAGES=(
 )
 
 LAB_APT_PACKAGES=(
-    sqlmap nuclei wpscan
+    sqlmap
 )
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -387,7 +387,7 @@ if [[ "$CHECK_ONLY" == true ]]; then
             check_apt "$pkg"
         done
     else
-        log_warn "Lab-only tools not checked by default (use --lab-tools): ${LAB_APT_PACKAGES[*]}"
+        log_warn "SQLmap not checked by default (use --lab-tools for non-engagement labs)"
     fi
 
     log_header "pip Packages"
@@ -450,9 +450,9 @@ echo -e "${NC}"
 
 log_info "Real user: ${REAL_USER}  |  Home: ${REAL_HOME}"
 if [[ "$LAB_TOOLS" == true ]]; then
-    log_warn "Lab-only automation enabled: ${LAB_APT_PACKAGES[*]}"
+    log_warn "Non-engagement SQLmap automation enabled: ${LAB_APT_PACKAGES[*]}"
 else
-    log_info "Lab-only automation disabled by default (use --lab-tools for sqlmap/nuclei/wpscan)"
+    log_info "SQLmap automation disabled by default (use --lab-tools for non-engagement labs)"
 fi
 
 # ── Directories ───────────────────────────────────────────────────────────────
