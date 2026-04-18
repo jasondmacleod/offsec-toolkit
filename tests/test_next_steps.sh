@@ -162,7 +162,7 @@ test_webenum_rules() (
 
     local wd="$TEST_TMP/web"
     local url="http://10.10.10.5"
-    mkdir -p "$wd/fingerprint" "$wd/content" "$wd/content/recursive" "$wd/vhosts" "$wd/params" "$wd/loot"
+    mkdir -p "$wd/fingerprint/js" "$wd/content" "$wd/content/recursive" "$wd/vhosts" "$wd/params" "$wd/loot"
     echo "Allow: GET, POST, OPTIONS, PUT, PROPFIND" > "$wd/fingerprint/http_methods.txt"
     cat > "$wd/fingerprint/sensitive_paths.txt" <<'EOF'
 http://10.10.10.5/.env | 200 |
@@ -177,6 +177,9 @@ Werkzeug debugger
 EOF
     echo "Apache" > "$wd/fingerprint/whatweb.txt"
     : > "$wd/fingerprint/headers.txt"
+    echo "http://10.10.10.5/static/app.js" > "$wd/fingerprint/js_urls.txt"
+    echo "/api/users" > "$wd/fingerprint/js_endpoints.txt"
+    echo "app.js:1: api_key='abc123'" > "$wd/fingerprint/js_secret_hints.txt"
     echo "http://10.10.10.5/login | 200 |" > "$wd/content/dirs_medium.txt"
     cat > "$wd/content/files_medium.txt" <<'EOF'
 http://10.10.10.5/config.bak | 200 |
@@ -198,9 +201,16 @@ EOF
     assert_contains "$ns" "HTTP POST login form evidence found" "webenum detects POST login form evidence"
     assert_contains "$ns" "Sensitive file discovered" "webenum detects sensitive file"
     assert_contains "$ns" "API endpoint discovered" "webenum detects API endpoint evidence"
+    assert_contains "$ns" "JavaScript endpoints found" "webenum detects JS endpoint evidence"
+    assert_contains "$ns" "JavaScript secret-looking strings found" "webenum detects JS secret hints"
     assert_contains "$ns" "Traversal/LFI-style parameter found" "webenum detects LFI-style parameter"
     assert_contains "$ns" "Command-injection-style parameter found" "webenum detects command injection-style parameter"
     assert_contains "$ns" "SQLi-style parameter found" "webenum detects SQLi-style parameter"
+    assert_not_contains "$ns" "sqlmap" "webenum default next steps avoid sqlmap"
+
+    LAB_TOOLS=true
+    generate_next_steps "$url" "$wd"
+    assert_contains "$ns" "sqlmap" "webenum lab mode emits sqlmap for parameter evidence"
 )
 
 test_pivotr_rules() (

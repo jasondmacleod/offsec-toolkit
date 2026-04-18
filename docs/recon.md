@@ -11,7 +11,7 @@ tags:
 # recon.sh
 
 ## What It Is
-Automated enumeration orchestrator for OffSec. Runs rustscan → nmap TCP → nmap UDP → targeted service enumeration in parallel. Generates `summary.txt`, a high-confidence `loot/quick_wins.txt`, and a finding-driven `loot/next_steps.txt` per target.
+Automated enumeration orchestrator for OffSec. Runs rustscan with nmap full-TCP fallback → nmap TCP service detection → targeted quick UDP plus top-port UDP → targeted service enumeration in parallel. Generates `summary.txt`, a high-confidence `loot/quick_wins.txt`, and a finding-driven `loot/next_steps.txt` per target.
 
 `next_steps.txt` is intentionally evidence-gated: commands are emitted only when the script has concrete support from nmap results or non-empty output files. It does not print anonymous SMB commands unless anonymous/readable shares were actually found, and it does not treat WinRM/HTTPAPI ports as real web app targets.
 
@@ -81,7 +81,7 @@ sudo ./recon.sh --auto --outdir ~/engagement/recon 10.10.10.1
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--auto` | off | Skip confirmation prompts |
-| `--batch-size N` | 1500 | Rustscan batch size (concurrent sockets) |
+| `--batch-size N` | 1500 | Rustscan batch size; nmap full-TCP fallback is used if rustscan is missing, fails, or finds no ports |
 | `--udp-ports N` | 200 | Top N UDP ports to scan |
 | `--udp-full` | off | Also scan all 65535 UDP ports |
 | `--outdir DIR` | `$TOOLKIT_ROOT/recon` | Output directory |
@@ -107,24 +107,26 @@ $TOOLKIT_ROOT/recon/
 └── <IP>/
     ├── scans/
     │   ├── rustscan_tcp.txt       # Raw rustscan output
+    │   ├── nmap_full_tcp_discovery.* # nmap fallback when rustscan is unavailable or empty
     │   ├── tcp_ports.txt          # Comma-separated open TCP ports
     │   ├── nmap_tcp.*             # nmap TCP scan (all formats)
-    │   ├── nmap_udp.*             # nmap UDP scan
+    │   ├── nmap_udp_quick.*       # High-signal UDP ports
+    │   ├── nmap_udp.*             # nmap UDP top-port scan
     │   └── udp_ports.txt          # Open UDP ports
     ├── tcp/
-    │   ├── http/port_<N>/         # Per-port: whatweb, nikto, gobuster, ffuf
-    │   ├── smb/                   # enum4linux-ng, smbmap, smbclient, nxc
+    │   ├── http/port_<N>/         # Per-port: whatweb, TLS/WAF hints, nikto, gobuster, ffuf
+    │   ├── smb/                   # enum4linux-ng, smbmap, smbclient, nxc, NetBIOS hints
     │   ├── ftp/                   # Anon login check + file mirror
     │   ├── ssh/                   # Banner, auth methods, version flags
     │   ├── mysql/                 # Empty/root no-pass check
     │   ├── postgres/              # Default creds
-    │   ├── dns/                   # Zone transfer attempt
+    │   ├── dns/                   # Zone transfer attempt, dnsrecon when a domain is known
     │   ├── smtp/                  # VRFY user enum
     │   ├── ldap/                  # Anonymous bind, directory dump
     │   ├── rpc/                   # Null sessions, NFS exports
     │   └── redis/                 # No-auth access check
     ├── udp/
-    │   └── snmp/                  # onesixtyone, snmpwalk (processes, software, ARP)
+    │   └── snmp/                  # onesixtyone, snmpwalk, snmpcheck (processes, software, ARP)
     ├── loot/
     │   ├── quick_wins.txt         # ★ High-confidence wins only, not service detections
     │   ├── next_steps.txt         # ★ Evidence-backed follow-up command library
@@ -180,14 +182,14 @@ cat $TOOLKIT_ROOT/recon/target_priority.txt
 
 | Service | Ports | Tools | Quick Win Flags |
 |---------|-------|-------|-----------------|
-| HTTP/HTTPS | 80, 443, 8080, 8443, 8000, 8888+ | whatweb, nikto, gobuster, feroxbuster, ffuf | robots.txt, vhosts |
-| SMB | 139, 445 | enum4linux-ng, smbmap, smbclient, nxc | READ/WRITE shares |
+| HTTP/HTTPS | 80, 443, 8080, 8443, 8000, 8888+ | whatweb, sslscan, wafw00f, nikto, gobuster, feroxbuster, ffuf | robots.txt, TLS names, vhosts |
+| SMB | 139, 445 | nmblookup, nbtscan, enum4linux-ng, smbmap, smbclient, nxc | READ/WRITE shares |
 | FTP | 21 | banner, anon login, wget mirror | Anonymous login |
 | SSH | 22 | banner, nmap scripts | Old/vulnerable version + `searchsploit`, `ssh-audit`, `crackr.sh --hydra` suggestion |
-| SNMP | 161/UDP | onesixtyone, snmpwalk | Community strings, processes + `grep -iE pass` on `process_args.txt` |
+| SNMP | 161/UDP | onesixtyone, snmpwalk, snmpcheck | Community strings, processes + `grep -iE pass` on `process_args.txt` |
 | MySQL | 3306 | nmap scripts, mysql client | Empty/root no-password; if fails → `crackr.sh --hydra mysql` |
 | PostgreSQL | 5432 | nmap scripts, psql | Default creds; if fails → `crackr.sh --hydra postgres` |
-| DNS | 53 | dig | Zone transfer; if successful → auto-generates `/etc/hosts` entries per hostname |
+| DNS | 53 | dig, dnsrecon | Zone transfer; if successful → auto-generates `/etc/hosts` entries per hostname |
 | SMTP | 25, 587, 465 | nmap scripts, VRFY | Valid usernames → saved to `loot/smtp_valid_users.txt` + `sprayr.sh`/`crackr.sh` commands |
 | LDAP | 389, 636, 3268 | nmap scripts, ldapsearch | Anonymous bind |
 | Redis | 6379 | nc, nmap scripts | No-auth access + full SSH-key write trick with `ssh -i` follow-on |
@@ -258,12 +260,14 @@ Current host/service rules include:
 ## Scan Phases
 
 1. **rustscan** — full 65535 TCP port sweep (fast)
-2. **nmap TCP** — `-sC -sV [-O]` on found ports only
-3. **nmap UDP** — top 200 ports (background, runs in parallel)
-4. **Service triage** — auto-launches modules based on findings (up to 5 parallel)
-5. **Post-UDP SNMP check** — re-checks for UDP 161 after UDP scan completes
-6. **Next-step library** — generates `loot/next_steps.txt` from concrete findings
-7. **Summary** — generates `summary.txt` with a short preview from `next_steps.txt`
+2. **nmap full-TCP fallback** — runs if rustscan is missing, fails, or finds no ports
+3. **nmap TCP** — `-sC -sV --version-intensity 7 --reason [-O]` on found ports only
+4. **nmap UDP quick** — high-signal UDP ports first (`53,69,111,123,137,161,500,623,1434`, etc.)
+5. **nmap UDP top ports** — top 200 ports by default (background, runs in parallel)
+6. **Service triage** — auto-launches modules based on findings (up to 5 parallel)
+7. **Post-UDP SNMP check** — re-checks for UDP 161 after UDP scan completes
+8. **Next-step library** — generates `loot/next_steps.txt` from concrete findings
+9. **Summary** — generates `summary.txt` with a short preview from `next_steps.txt`
 
 UDP scan runs in background and does **not** count against the `--max-parallel` slot limit.
 
@@ -294,11 +298,15 @@ grep 'FAIL' $TOOLKIT_ROOT/recon/10.10.10.1/progress.log
 
 ```bash
 # Critical (script exits if missing)
-sudo apt install rustscan nmap
+sudo apt install nmap
+
+# Strongly recommended TCP discovery accelerator
+sudo apt install rustscan
 
 # Recommended — install all before engagement
 sudo apt install -y gobuster nikto whatweb smbclient smbmap \
-  snmp onesixtyone feroxbuster netexec ldap-utils \
+  httpx-toolkit sslscan wafw00f dnsrecon jq davtest cadaver \
+  samba-common-bin nbtscan snmp snmpcheck onesixtyone feroxbuster netexec ldap-utils \
   postgresql-client default-mysql-client rpcbind nfs-common \
   dnsutils wget curl seclists
 

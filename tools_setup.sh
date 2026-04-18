@@ -15,15 +15,23 @@ set -uo pipefail
 
 # ── Mode flags ────────────────────────────────────────────────────────────────
 CHECK_ONLY=false
+LAB_TOOLS=false
 for arg in "$@"; do
     case "$arg" in
-        --check)    CHECK_ONLY=true ;;
-        --no-color) NO_COLOR=1 ;;
+        --check)     CHECK_ONLY=true ;;
+        --lab-tools) LAB_TOOLS=true ;;
+        --no-color)  NO_COLOR=1 ;;
         -h|--help)
-            echo "Usage: sudo $0 [--check] [--no-color]"
-            echo "  --check     Verify installed tools without downloading"
-            echo "  --no-color  Disable colored output"
+            echo "Usage: sudo $0 [--check] [--lab-tools] [--no-color]"
+            echo "  --check      Verify installed tools without downloading"
+            echo "  --lab-tools  Also install/check non-engagement lab automation (sqlmap, nuclei, wpscan)"
+            echo "  --no-color   Disable colored output"
             exit 0
+            ;;
+        *)
+            echo "Unknown option: $arg"
+            echo "Usage: sudo $0 [--check] [--lab-tools] [--no-color]"
+            exit 1
             ;;
     esac
 done
@@ -279,6 +287,9 @@ _apt_pkg_binary() {
         netexec)             echo nxc ;;
         impacket-scripts)    echo impacket-GetNPUsers ;;
         netcat-traditional)  echo nc.traditional ;;
+        httpx-toolkit)       echo httpx-toolkit ;;
+        samba-common-bin)    echo nmblookup ;;
+        snmpcheck)           echo snmp-check ;;
         python3-pip)         echo pip3 ;;
         ruby-full)           echo ruby ;;
         proxychains4)        echo proxychains4 ;;
@@ -290,6 +301,12 @@ _apt_pkg_binary() {
 check_apt() {
     local pkg="$1"
     local bin
+    if [[ "$pkg" == "httpx-toolkit" ]]; then
+        if command -v httpx-toolkit &>/dev/null || command -v httpx &>/dev/null; then
+            log_success "  ✓ apt: ${pkg}"; CHECK_PRESENT+=("apt:${pkg}")
+            return
+        fi
+    fi
     bin="$(_apt_pkg_binary "$pkg")"
     if [[ -n "$bin" ]] && command -v "$bin" &>/dev/null; then
         log_success "  ✓ apt: ${pkg}"; CHECK_PRESENT+=("apt:${pkg}")
@@ -331,6 +348,26 @@ check_file() {
     fi
 }
 
+# Core packages are intended for OffSec-safe recon, enum, credential work, and
+# evidence handling. Lab packages are useful, but default off so generated
+# scripts do not normalize engagement-prohibited automation.
+APT_PACKAGES=(
+    rustscan nmap gobuster feroxbuster ffuf nikto whatweb
+    httpx-toolkit gowitness eyewitness sslscan wafw00f dnsrecon jq
+    davtest cadaver
+    smbclient smbmap samba-common-bin nbtscan onesixtyone snmp snmpcheck enum4linux
+    ldap-utils dnsutils rpcbind nfs-common
+    netexec responder impacket-scripts bloodhound
+    john hashcat wordlists seclists cewl hydra
+    rlwrap socat netcat-traditional curl wget python3-pip ruby-full unzip
+    proxychains4 ncat chisel
+    ssh-audit kpcli ligolo-ng ligolo-ng-common-binaries
+)
+
+LAB_APT_PACKAGES=(
+    sqlmap nuclei wpscan
+)
+
 # ══════════════════════════════════════════════════════════════════════════════
 # MAIN
 # ══════════════════════════════════════════════════════════════════════════════
@@ -341,17 +378,17 @@ if [[ "$CHECK_ONLY" == true ]]; then
     echo -e "${BOLD}${CYAN}══════════════════════════════════════════${NC}\n"
 
     log_header "apt Packages"
-    for pkg in \
-        rustscan nmap gobuster feroxbuster ffuf nikto whatweb \
-        smbclient smbmap onesixtyone snmp enum4linux \
-        ldap-utils dnsutils rpcbind nfs-common \
-        netexec responder impacket-scripts bloodhound \
-        john hashcat wordlists seclists cewl hydra \
-        rlwrap socat netcat-traditional curl wget python3-pip ruby-full unzip \
-        sqlmap proxychains4 ncat chisel \
-        ssh-audit kpcli ligolo-ng ligolo-ng-common-binaries; do
+    for pkg in "${APT_PACKAGES[@]}"; do
         check_apt "$pkg"
     done
+    if [[ "$LAB_TOOLS" == true ]]; then
+        log_header "Lab-only apt Packages"
+        for pkg in "${LAB_APT_PACKAGES[@]}"; do
+            check_apt "$pkg"
+        done
+    else
+        log_warn "Lab-only tools not checked by default (use --lab-tools): ${LAB_APT_PACKAGES[*]}"
+    fi
 
     log_header "pip Packages"
     check_pip "certipy-ad"       "certipy"
@@ -412,6 +449,11 @@ BANNER
 echo -e "${NC}"
 
 log_info "Real user: ${REAL_USER}  |  Home: ${REAL_HOME}"
+if [[ "$LAB_TOOLS" == true ]]; then
+    log_warn "Lab-only automation enabled: ${LAB_APT_PACKAGES[*]}"
+else
+    log_info "Lab-only automation disabled by default (use --lab-tools for sqlmap/nuclei/wpscan)"
+fi
 
 # ── Directories ───────────────────────────────────────────────────────────────
 log_info "Creating directory structure..."
@@ -422,20 +464,14 @@ log_success "Directories ready under: ${TOOLS_DIR}/"
 log_header "1 · apt Packages"
 apt-get update -qq &>/dev/null
 
-APT_PACKAGES=(
-    rustscan nmap gobuster feroxbuster ffuf nikto whatweb
-    smbclient smbmap onesixtyone snmp enum4linux
-    ldap-utils dnsutils rpcbind nfs-common
-    netexec responder impacket-scripts bloodhound
-    john hashcat wordlists seclists cewl hydra
-    rlwrap socat netcat-traditional curl wget python3-pip ruby-full unzip
-    sqlmap proxychains4 ncat chisel
-    ssh-audit kpcli ligolo-ng ligolo-ng-common-binaries
-)
-
 for pkg in "${APT_PACKAGES[@]}"; do
     apt_install "$pkg"
 done
+if [[ "$LAB_TOOLS" == true ]]; then
+    for pkg in "${LAB_APT_PACKAGES[@]}"; do
+        apt_install "$pkg"
+    done
+fi
 
 # ── 2. pip ────────────────────────────────────────────────────────────────────
 log_header "2 · pip Packages"

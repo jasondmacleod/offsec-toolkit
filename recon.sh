@@ -86,9 +86,13 @@ RUSTSCAN_BATCH_SIZE=$(( _ulimit_n / 2 ))
 (( RUSTSCAN_BATCH_SIZE > 5000 )) && RUSTSCAN_BATCH_SIZE=5000
 unset _ulimit_n
 RUSTSCAN_TIMEOUT=4000                  # Connection timeout in ms
+NMAP_DISCOVERY_TIMEOUT=1200            # Seconds for nmap full TCP fallback/discovery
+NMAP_DISCOVERY_MIN_RATE=3000           # Full TCP fallback speed; tune lower on lossy links
 NMAP_TCP_TIMEOUT=600                   # Seconds for TCP service scan
+NMAP_UDP_QUICK_TIMEOUT=180             # Seconds for high-signal UDP ports before top-port scan
 NMAP_UDP_TIMEOUT=900                   # Seconds for UDP scan (slow by nature)
 UDP_TOP_PORTS=200                      # Top N UDP ports to scan (200 balances coverage vs speed)
+UDP_QUICK_PORTS="53,67,68,69,111,123,135,137,138,161,162,500,514,520,623,1434,1900,4500"
 GOBUSTER_THREADS=20                    # Directory brute threads (lighter for first-pass OffSec recon)
 GOBUSTER_TIMEOUT=10                    # Per-request timeout seconds (--timeout flag)
 GOBUSTER_RUNTIME=300                   # Max total runtime for the gobuster process
@@ -591,8 +595,55 @@ qw_rank_targets() {
 }
 
 #------------------------------------------------------------------------------
-# PHASE 1: RUSTSCAN — Fast TCP Port Discovery
+# PHASE 1: TCP PORT DISCOVERY — rustscan with nmap fallback
 #------------------------------------------------------------------------------
+run_nmap_tcp_discovery() {
+    local ip="$1"
+    local target_dir="$2"
+    local outbase="$target_dir/scans/nmap_full_tcp_discovery"
+    local outfile="$target_dir/scans/nmap_full_tcp_discovery_console.txt"
+
+    if is_phase_done "$target_dir" "nmap_tcp_discovery"; then
+        info "Nmap TCP discovery already completed for $ip — skipping"
+        return 0
+    fi
+
+    phase "TCP Port Discovery (nmap fallback) → $ip"
+    progress_log "$target_dir" "START" "nmap_tcp_discovery" "min_rate=$NMAP_DISCOVERY_MIN_RATE"
+    _tool_start "nmap -p-" "$ip" "${NMAP_DISCOVERY_TIMEOUT}s  min-rate: $NMAP_DISCOVERY_MIN_RATE"
+    local _nm_t0
+    _nm_t0=$(date +%s)
+
+    local scan_ok=true
+    if ! timeout "$NMAP_DISCOVERY_TIMEOUT" nmap -Pn -n --open -p- \
+        --min-rate "$NMAP_DISCOVERY_MIN_RATE" \
+        --max-retries 2 \
+        --reason \
+        -oA "$outbase" \
+        "$ip" 2>&1 | tee "$outfile"; then
+        scan_ok=false
+    fi
+    _tool_done "nmap -p-" "$_nm_t0"
+
+    local ports=""
+    ports=$(grep -P '^\d+/tcp\s+open\s' "${outbase}.nmap" 2>/dev/null | awk '{print $1}' | cut -d/ -f1 | sort -un | tr '\n' ',' | sed 's/,$//')
+    if [[ -z "$ports" ]]; then
+        warn "No open TCP ports found on $ip via nmap discovery"
+        echo "NO_OPEN_PORTS" > "$target_dir/scans/tcp_ports.txt"
+        if [[ "$scan_ok" == "true" ]]; then
+            progress_log "$target_dir" "DONE" "nmap_tcp_discovery" "ports=NONE"
+            return 0
+        fi
+        progress_log "$target_dir" "FAIL" "nmap_tcp_discovery" "timeout=${NMAP_DISCOVERY_TIMEOUT}s"
+        return 1
+    fi
+
+    echo "$ports" > "$target_dir/scans/tcp_ports.txt"
+    success "Nmap discovery found TCP port(s) on $ip: $ports"
+    progress_log "$target_dir" "DONE" "nmap_tcp_discovery" "ports=$ports"
+    return 0
+}
+
 run_rustscan() {
     local ip="$1"
     local target_dir="$2"
@@ -601,6 +652,12 @@ run_rustscan() {
     if is_phase_done "$target_dir" "rustscan"; then
         info "Rustscan already completed for $ip — skipping (delete progress.log to re-run)"
         return 0
+    fi
+
+    if ! check_tool rustscan; then
+        warn "rustscan missing — using nmap full TCP discovery fallback"
+        run_nmap_tcp_discovery "$ip" "$target_dir"
+        return $?
     fi
 
     phase "TCP Port Discovery (rustscan) → $ip"
@@ -625,7 +682,9 @@ run_rustscan() {
     if [[ $rustscan_exit -ne 0 ]]; then
         error "Rustscan failed or timed out for $ip"
         progress_log "$target_dir" "FAIL" "rustscan" "exit=$rustscan_exit"
-        return 1
+        warn "Falling back to nmap full TCP discovery"
+        run_nmap_tcp_discovery "$ip" "$target_dir"
+        return $?
     fi
 
     # Parse open ports from rustscan output
@@ -644,10 +703,10 @@ run_rustscan() {
     fi
 
     if [[ -z "$ports" ]]; then
-        warn "No open TCP ports found on $ip"
-        echo "NO_OPEN_PORTS" > "$target_dir/scans/tcp_ports.txt"
+        warn "Rustscan found no TCP ports on $ip — validating with nmap full TCP discovery"
         progress_log "$target_dir" "DONE" "rustscan" "ports=NONE"
-        return 0
+        run_nmap_tcp_discovery "$ip" "$target_dir"
+        return $?
     fi
 
     echo "$ports" > "$target_dir/scans/tcp_ports.txt"
@@ -684,7 +743,8 @@ run_nmap_tcp() {
 
     # -sC: default scripts, -sV: version detection, -O: OS detection (requires root)
     # -oA: output in all formats (grep, xml, nmap) — nmap XML is useful for parsing
-    local nmap_flags=(-sC -sV -p "$ports" --open -oA "$outbase")
+    local nmap_flags=(-sC -sV --version-intensity 7 --script-timeout 45s \
+        -p "$ports" --open --reason -oA "$outbase")
 
     if [[ $EUID -eq 0 ]]; then
         # Running as root — include OS detection
@@ -739,7 +799,25 @@ run_nmap_udp() {
         return 0
     fi
 
-    # --- Pass 1: Top ports (fast, gets you going) ---
+    # --- Pass 1: High-signal UDP ports (quick, OffSec-practical) ---
+    _tool_start "nmap -sU quick" "$ip" "${NMAP_UDP_QUICK_TIMEOUT}s  ports: $UDP_QUICK_PORTS"
+    local _udp_q_t0
+    _udp_q_t0=$(date +%s)
+    local udp_quick_ok=true
+    timeout "$NMAP_UDP_QUICK_TIMEOUT" nmap -sU -sV \
+        -p "$UDP_QUICK_PORTS" \
+        --open \
+        --reason \
+        --max-retries 2 \
+        --version-intensity 0 \
+        -oA "${outbase}_quick" \
+        "$ip" 2>&1 | tee "$target_dir/scans/nmap_udp_quick_console.txt" || udp_quick_ok=false
+    _tool_done "nmap -sU quick" "$_udp_q_t0"
+    if [[ "$udp_quick_ok" == "false" ]]; then
+        warn "Quick UDP scan failed or timed out for $ip"
+    fi
+
+    # --- Pass 2: Top ports (broader sweep) ---
     _tool_start "nmap -sU" "$ip" "${NMAP_UDP_TIMEOUT}s  top: $UDP_TOP_PORTS ports"
     local _udp_t0
     _udp_t0=$(date +%s)
@@ -749,6 +827,8 @@ run_nmap_udp() {
     timeout "$NMAP_UDP_TIMEOUT" nmap -sU -sV \
         --top-ports "$UDP_TOP_PORTS" \
         --open \
+        --reason \
+        --max-retries 2 \
         --version-intensity 0 \
         -oA "$outbase" \
         "$ip" 2>&1 | tee "$target_dir/scans/nmap_udp_console.txt" || udp_scan_ok=false
@@ -795,7 +875,12 @@ run_nmap_udp() {
 
     # Parse UDP findings
     local udp_ports=""
-    udp_ports=$(grep -P '^\d+/udp\s+open\s' "${outbase}.nmap" 2>/dev/null | awk '{print $1}' | cut -d/ -f1 | tr '\n' ',' | sed 's/,$//')
+    udp_ports=$(
+        {
+            grep -P '^\d+/udp\s+open\s' "${outbase}_quick.nmap" 2>/dev/null || true
+            grep -P '^\d+/udp\s+open\s' "${outbase}.nmap" 2>/dev/null || true
+        } | awk '{print $1}' | cut -d/ -f1 | sort -un | tr '\n' ',' | sed 's/,$//'
+    )
     if [[ -n "$udp_ports" ]]; then
         echo "$udp_ports" > "$target_dir/scans/udp_ports.txt"
         success "Found open UDP port(s): $udp_ports"
@@ -854,6 +939,31 @@ enum_http() {
     # --- Curl headers (always useful, fast) ---
     info "  → curl headers $url"
     timeout 15 curl -skIL "$url" > "$outdir/curl_headers.txt" 2>&1 || true
+
+    # --- TLS and WAF hints (only when tools are present) ---
+    if [[ "$proto" == "https" ]]; then
+        if check_tool sslscan; then
+            info "  → sslscan $ip:$port"
+            timeout "$GENERIC_TIMEOUT" sslscan "$ip:$port" > "$outdir/sslscan.txt" 2>&1 || true
+        fi
+        if check_tool openssl; then
+            info "  → TLS certificate names"
+            # shellcheck disable=SC2016
+            timeout 20 bash -c '
+                echo | openssl s_client -connect "$1:$2" -servername "$1" 2>/dev/null |
+                    openssl x509 -noout -subject -issuer -dates -ext subjectAltName 2>/dev/null
+            ' -- "$ip" "$port" > "$outdir/tls_certificate.txt" 2>&1 || true
+            grep -oP 'DNS:\K[^,\s]+' "$outdir/tls_certificate.txt" 2>/dev/null | sort -u > "$outdir/tls_names.txt" || true
+            if is_nonempty_file "$outdir/tls_names.txt"; then
+                echo "TLS names on $ip:$port — see $outdir/tls_names.txt" >> "$target_dir/loot/quick_wins.txt"
+            fi
+        fi
+    fi
+
+    if check_tool wafw00f; then
+        info "  → wafw00f $url"
+        timeout "$GENERIC_TIMEOUT" wafw00f "$url" > "$outdir/wafw00f.txt" 2>&1 || true
+    fi
 
     # --- HTTP methods (only recorded; next-step logic decides if risky) ---
     info "  → HTTP OPTIONS methods $url"
@@ -977,6 +1087,15 @@ enum_smb() {
     progress_log "$target_dir" "START" "smb" "port=$port"
 
     info "SMB enumeration starting: $ip"
+
+    if check_tool nmblookup; then
+        info "  → nmblookup NetBIOS names"
+        timeout 30 nmblookup -A "$ip" > "$outdir/nmblookup.txt" 2>&1 || true
+    fi
+    if check_tool nbtscan; then
+        info "  → nbtscan NetBIOS summary"
+        timeout 30 nbtscan "$ip" > "$outdir/nbtscan.txt" 2>&1 || true
+    fi
 
     # --- enum4linux-ng (comprehensive SMB enumeration) ---
     if check_tool enum4linux-ng; then
@@ -1202,6 +1321,16 @@ enum_snmp() {
             echo "$found_strings" > "$outdir/valid_community_strings.txt"
             echo "SNMP community strings found on $ip: $found_strings" \
                 >> "$target_dir/loot/quick_wins.txt"
+
+            if check_tool snmp-check; then
+                local found_community
+                while IFS= read -r found_community; do
+                    [[ -z "$found_community" ]] && continue
+                    info "  → snmp-check $ip (community: $found_community)"
+                    timeout "$SNMPWALK_TIMEOUT" snmp-check "$ip" -c "$found_community" \
+                        > "$outdir/snmpcheck_${found_community}.txt" 2>&1 || true
+                done <<< "$found_strings"
+            fi
         fi
     fi
 
@@ -1408,6 +1537,11 @@ enum_dns() {
             info "  → attempting zone transfer for $domain"
             timeout 30 dig @"$ip" -p "$port" "$domain" axfr \
                 > "$outdir/zone_transfer_${domain}.txt" 2>&1 || true
+            if check_tool dnsrecon; then
+                info "  → dnsrecon for $domain via $ip"
+                timeout "$GENERIC_TIMEOUT" dnsrecon -d "$domain" -n "$ip" \
+                    > "$outdir/dnsrecon_${domain}.txt" 2>&1 || true
+            fi
             if grep -q 'XFR size' "$outdir/zone_transfer_${domain}.txt" 2>/dev/null; then
                 success "  ★ DNS ZONE TRANSFER SUCCESSFUL for $domain ★"
                 echo "DNS ZONE TRANSFER SUCCESSFUL: $domain via $ip" \
@@ -1942,6 +2076,11 @@ generate_quick_wins() {
            grep -qiE 'Allow:.*(TRACE|PUT|DELETE|CONNECT|PROPFIND)|Public:.*(TRACE|PUT|DELETE|CONNECT|PROPFIND)' "$httpdir/http_methods.txt" 2>/dev/null; then
             echo "Risky HTTP method on $ip:$p — see $httpdir/http_methods.txt" >> "$tmp_file"
         fi
+        if is_nonempty_file "$httpdir/tls_names.txt"; then
+            local tls_first
+            tls_first=$(head -1 "$httpdir/tls_names.txt" 2>/dev/null)
+            echo "TLS certificate names found on $ip:$p (first: ${tls_first}) — see $httpdir/tls_names.txt" >> "$tmp_file"
+        fi
         if is_nonempty_file "$httpdir/ffuf_vhosts.json"; then
             local vhost_count
             if command -v jq &>/dev/null; then
@@ -2076,6 +2215,20 @@ generate_next_steps() {
                 "curl -skIX OPTIONS $url/" \
                 "nmap --script http-methods -p $p $ip" \
                 "curl -skI -X TRACE $url/ 2>/dev/null | sed -n '1,20p'"
+        fi
+
+        if is_nonempty_file "$httpdir/tls_names.txt"; then
+            local tls_name
+            tls_name=$(head -1 "$httpdir/tls_names.txt" 2>/dev/null)
+            if [[ -n "$tls_name" ]]; then
+                append_next_finding "$next_file" \
+                    "TLS certificate hostname found" \
+                    "$httpdir/tls_names.txt contains ${tls_name}" \
+                    "cat $httpdir/tls_names.txt" \
+                    "echo '$ip $tls_name' | sudo tee -a /etc/hosts" \
+                    "./webenum.sh --url ${proto}://${tls_name}:${p}" \
+                    "ffuf -w /usr/share/seclists/Discovery/DNS/subdomains-top1million-5000.txt -u $url -H 'Host: FUZZ.${tls_name#*.}' -mc 200,301,302,401,403"
+            fi
         fi
 
         local vhost_json="$httpdir/ffuf_vhosts.json"
@@ -2952,11 +3105,14 @@ unset _invoking_user _effective_user
 echo ""
 # ─────────────────────────────────────────────────────────────────────────────
 
-# Check critical tools
-CRITICAL_TOOLS=(rustscan nmap)
+# Check critical tools. rustscan is optional because nmap full-TCP fallback now
+# preserves coverage when rustscan is not installed or fails.
+CRITICAL_TOOLS=(nmap)
 OPTIONAL_TOOLS=(gobuster nikto whatweb enum4linux-ng smbmap smbclient snmpwalk \
                 onesixtyone curl wget feroxbuster netexec nc \
-                rpcclient showmount dig ldapsearch psql mysql)
+                rpcclient showmount dig ldapsearch psql mysql rustscan \
+                sslscan openssl wafw00f dnsrecon nmblookup nbtscan snmp-check \
+                jq httpx-toolkit gowitness eyewitness davtest cadaver)
 
 echo ""
 info "Checking critical tools..."

@@ -61,6 +61,7 @@ OUTPUT_ROOT="${TOOLKIT_ROOT}/web"
 THREADS=40
 FFUF_TIMEOUT=30                      # per-request timeout (seconds)
 FFUF_RATE=0                          # 0 = no rate limit; set to e.g. 100 to throttle
+FFUF_AUTOCALIBRATE=false             # Opt-in with --ffuf-ac; can over-filter odd apps
 WHATWEB_TIMEOUT=60
 CURL_TIMEOUT=15
 PHASE_FINGERPRINT_TIMEOUT=120
@@ -70,7 +71,9 @@ PHASE_VHOST_TIMEOUT=600
 PHASE_PARAM_TIMEOUT=300
 
 DEEP_MODE=false
+LAB_TOOLS=false                      # Opt-in: emit sqlmap/nuclei/wpscan aggressive lab commands
 VHOST_DOMAIN=""                      # e.g. "target.htb" — enables vhost fuzzing
+JS_FETCH_LIMIT=30                    # Keep JavaScript review useful without turning into crawling
 
 # Wordlists — ordered fast→slow within each phase
 WL_DIR_FAST="/usr/share/wordlists/dirb/common.txt"
@@ -193,6 +196,16 @@ check_tool() {
     command -v "$1" &>/dev/null
 }
 
+httpx_tool() {
+    if command -v httpx-toolkit &>/dev/null; then
+        echo "httpx-toolkit"
+    elif command -v httpx &>/dev/null; then
+        echo "httpx"
+    else
+        return 1
+    fi
+}
+
 require_tool() {
     if ! check_tool "$1"; then
         error "Required tool missing: $1"
@@ -274,6 +287,20 @@ get_base_url() {
     echo "$url" | grep -oP '^https?://[^/]+'
 }
 
+normalize_url_ref() {
+    local base="$1"
+    local ref="$2"
+    local origin=""
+    origin=$(get_base_url "$base")
+
+    case "$ref" in
+        http://*|https://*) echo "$ref" ;;
+        //*) echo "$(get_proto "$base"):${ref}" ;;
+        /*) echo "${origin}${ref}" ;;
+        *) echo "${base%/}/${ref}" ;;
+    esac
+}
+
 detect_tech() {
     # Returns rough tech stack hint from whatweb output for extension selection
     local whatweb_file="$1"
@@ -341,6 +368,38 @@ phase_fingerprint() {
         -A "Mozilla/5.0 (X11; Linux x86_64)" \
         "$url" > "$outdir/http_methods.txt" 2>&1 || true
 
+    # --- TLS/WAF context ---
+    if [[ "$(get_proto "$url")" == "https" ]]; then
+        if check_tool sslscan; then
+            info "  → sslscan"
+            timeout "$PHASE_FINGERPRINT_TIMEOUT" sslscan "$(get_host "$url"):$(get_port "$url")" \
+                > "$outdir/sslscan.txt" 2>&1 || true
+        fi
+        if check_tool openssl; then
+            info "  → TLS certificate names"
+            # shellcheck disable=SC2016
+            timeout 20 bash -c '
+                echo | openssl s_client -connect "$1:$2" -servername "$1" 2>/dev/null |
+                    openssl x509 -noout -subject -issuer -dates -ext subjectAltName 2>/dev/null
+            ' -- "$(get_host "$url")" "$(get_port "$url")" > "$outdir/tls_certificate.txt" 2>&1 || true
+            grep -oP 'DNS:\K[^,\s]+' "$outdir/tls_certificate.txt" 2>/dev/null | sort -u > "$outdir/tls_names.txt" || true
+        fi
+    fi
+    if check_tool wafw00f; then
+        info "  → wafw00f"
+        timeout "$PHASE_FINGERPRINT_TIMEOUT" wafw00f "$url" > "$outdir/wafw00f.txt" 2>&1 || true
+    fi
+    local httpx_cmd=""
+    httpx_cmd=$(httpx_tool 2>/dev/null || true)
+    if [[ -n "$httpx_cmd" ]]; then
+        info "  → httpx technology probe"
+        # shellcheck disable=SC2016
+        timeout "$PHASE_FINGERPRINT_TIMEOUT" bash -c '
+            printf "%s\n" "$1" | "$3" -silent -status-code -title -tech-detect \
+                -web-server -content-length -location -json -o "$2"
+        ' -- "$url" "$outdir/httpx.json" "$httpx_cmd" > "$outdir/httpx_console.txt" 2>&1 || true
+    fi
+
     # --- Homepage source (first 500 lines) ---
     info "  → fetching homepage source"
     timeout "$CURL_TIMEOUT" curl -sk \
@@ -369,6 +428,63 @@ phase_fingerprint() {
         grep -oiP 'version["\s:=]+[\d.]+' "$outdir/homepage_source.html" 2>/dev/null | \
             sort -u | head -20
     } > "$outdir/source_hints.txt" 2>/dev/null
+
+    # --- JavaScript asset review: endpoints, source maps, and secret-looking hints ---
+    info "  → extracting JavaScript asset hints"
+    mkdir -p "$outdir/js"
+    python3 - "$url" "$outdir/homepage_source.html" "$outdir/js_urls.txt" <<'PYEOF' 2>/dev/null || true
+import sys
+from html.parser import HTMLParser
+from urllib.parse import urljoin
+
+base, html_path, out_path = sys.argv[1:4]
+
+class JSParser(HTMLParser):
+    def __init__(self):
+        super().__init__()
+        self.urls = []
+    def handle_starttag(self, tag, attrs):
+        attrs = dict(attrs)
+        for key in ("src", "href"):
+            value = attrs.get(key)
+            if value and ".js" in value.lower():
+                self.urls.append(urljoin(base.rstrip("/") + "/", value))
+
+parser = JSParser()
+try:
+    with open(html_path, "r", encoding="utf-8", errors="ignore") as handle:
+        parser.feed(handle.read())
+except OSError:
+    pass
+seen = []
+for item in parser.urls:
+    clean = item.split("#", 1)[0]
+    if clean not in seen:
+        seen.append(clean)
+with open(out_path, "w", encoding="utf-8") as handle:
+    for item in seen[:50]:
+        handle.write(item + "\n")
+PYEOF
+    local js_count=0
+    local js_url=""
+    while IFS= read -r js_url; do
+        [[ -z "$js_url" ]] && continue
+        (( js_count++ )) || true
+        (( js_count > JS_FETCH_LIMIT )) && break
+        local js_safe
+        js_safe=$(echo "$js_url" | sed 's|https\?://||;s|[^A-Za-z0-9._-]|_|g' | cut -c1-120)
+        [[ -z "$js_safe" ]] && js_safe="asset_${js_count}"
+        timeout "$CURL_TIMEOUT" curl -sk "$js_url" -o "$outdir/js/${js_safe}.js" 2>/dev/null || true
+    done < "$outdir/js_urls.txt"
+    find "$outdir/js" -type f -name '*.js' -print 2>/dev/null | while IFS= read -r js_file; do
+        grep -hEo '(/[A-Za-z0-9._~:/?#\[\]@!$&'\''()*+,;=%-]{3,})' "$js_file" 2>/dev/null || true
+    done | sort -u > "$outdir/js_endpoints.txt"
+    find "$outdir/js" -type f -name '*.js' -print 2>/dev/null | while IFS= read -r js_file; do
+        grep -hinE 'api[_-]?key|token|secret|password|passwd|authorization|bearer|client[_-]?secret|aws_|s3_|jdbc:|mongodb' "$js_file" 2>/dev/null || true
+    done | head -100 > "$outdir/js_secret_hints.txt"
+    find "$outdir/js" -type f -name '*.js' -print 2>/dev/null | while IFS= read -r js_file; do
+        grep -hEo 'sourceMappingURL=[^[:space:]]+' "$js_file" 2>/dev/null | sed 's/^sourceMappingURL=//' || true
+    done | sort -u > "$outdir/js_source_maps.txt"
 
     # --- robots.txt ---
     info "  → robots.txt"
@@ -412,6 +528,16 @@ phase_fingerprint() {
         done
     ' -- "$url" > "$outdir/sensitive_paths.txt" 2>&1 || warn "Sensitive path probing timed out"
 
+    # --- Operator workflow notes grounded in this target URL ---
+    {
+        echo "# Burp workflow for $url"
+        echo "1. Proxy browser traffic through Burp and click all discovered app features."
+        echo "2. Review Proxy HTTP history for non-static endpoints, redirects, cookies, and hidden parameters."
+        echo "3. Send interesting requests to Repeater; test auth bypass, IDOR, upload handling, and command/file parameters manually."
+        echo "4. Compare anonymous vs authenticated responses if credentials are found."
+        echo "5. Save exploitable request/response pairs beside these artifacts as evidence."
+    } > "$outdir/burp_workflow.txt"
+
     progress_log "$2" "DONE" "$phase_name" ""
     success "Fingerprinting complete"
 }
@@ -450,15 +576,26 @@ phase_content() {
     local -a ssl_flag=()
     [[ "$proto" == "https" ]] && ssl_flag=(-k)
 
-    # Build base ffuf flags
-    # NOTE: -ac (autocalibration) intentionally omitted — it silently drops valid
-    # results on some targets by over-filtering. Use explicit -mc instead.
+    # Build base ffuf flags. -ac is opt-in because it can over-filter odd apps,
+    # but it is useful on wildcard-heavy hosts after reviewing baselines.
     # NOTE: -v (verbose) intentionally omitted — floods output and breaks grep pipe.
     # shellcheck disable=SC2054  # commas in -mc value are ffuf syntax, not array separators
     local base_flags=(-t "$THREADS" -timeout "$FFUF_TIMEOUT" \
         -mc 200,201,204,301,302,307,401,403,405 \
         -c -noninteractive "${ssl_flag[@]}")
     [[ "$FFUF_RATE" -gt 0 ]] && base_flags+=(-rate "$FFUF_RATE")
+    [[ "$FFUF_AUTOCALIBRATE" == "true" ]] && base_flags+=(-ac)
+
+    local baseline_path=""
+    baseline_path="/$(tr -dc '[:lower:]' </dev/urandom | head -c12)"
+    {
+        echo "# ffuf baseline probe"
+        echo "url=${url%/}${baseline_path}"
+        timeout "$CURL_TIMEOUT" curl -sk -o /dev/null \
+            -w "status=%{http_code} size=%{size_download} words=%{num_headers} time=%{time_total}\n" \
+            "${url%/}${baseline_path}" 2>/dev/null || true
+        echo "autocalibrate=${FFUF_AUTOCALIBRATE}"
+    } > "$outdir/ffuf_baseline.txt"
 
     local phase_ok=true
 
@@ -978,6 +1115,37 @@ generate_next_steps() {
             "${robot_cmds[@]}"
     fi
 
+    if is_nonempty_file "$work_dir/fingerprint/tls_names.txt"; then
+        local tls_name
+        tls_name=$(head -1 "$work_dir/fingerprint/tls_names.txt" 2>/dev/null)
+        if [[ -n "$tls_name" ]]; then
+            append_next_finding "$next_file" \
+                "TLS certificate hostname found" \
+                "$work_dir/fingerprint/tls_names.txt contains ${tls_name}" \
+                "cat $work_dir/fingerprint/tls_names.txt" \
+                "echo '$(get_host "$url") $tls_name' | sudo tee -a /etc/hosts" \
+                "./webenum.sh --url $(get_proto "$url")://${tls_name}:$(get_port "$url")" \
+                "ffuf -w /usr/share/seclists/Discovery/DNS/subdomains-top1million-5000.txt -u ${url%/}/ -H 'Host: FUZZ.${tls_name#*.}' -mc 200,301,302,401,403"
+        fi
+    fi
+
+    if is_nonempty_file "$work_dir/fingerprint/js_endpoints.txt"; then
+        append_next_finding "$next_file" \
+            "JavaScript endpoints found" \
+            "$work_dir/fingerprint/js_endpoints.txt is non-empty" \
+            "cat $work_dir/fingerprint/js_urls.txt" \
+            "cat $work_dir/fingerprint/js_endpoints.txt" \
+            "grep -E '/api|/admin|/login|/upload|token|debug' $work_dir/fingerprint/js_endpoints.txt"
+    fi
+
+    if is_nonempty_file "$work_dir/fingerprint/js_secret_hints.txt"; then
+        append_next_finding "$next_file" \
+            "JavaScript secret-looking strings found" \
+            "$work_dir/fingerprint/js_secret_hints.txt contains credential keywords" \
+            "cat $work_dir/fingerprint/js_secret_hints.txt" \
+            "grep -RniE 'api[_-]?key|token|secret|password|authorization|bearer' $work_dir/fingerprint/js/"
+    fi
+
     local auth_hits
     auth_hits=$(grep -h '| 401 |' "$work_dir/content/"*.txt "$work_dir/content/recursive/"*.txt 2>/dev/null | head -3)
     if [[ -n "$auth_hits" ]]; then
@@ -1172,12 +1340,17 @@ generate_next_steps() {
     fi
 
     if grep -qiE 'Grafana|grafana' "$cms_whatweb" "$cms_paths" "$work_dir/content/"*.txt "$work_dir/fingerprint/homepage_source.html" 2>/dev/null; then
+        local grafana_cmds=(
+            "curl -sk ${url%/}/login | sed -n '1,80p'"
+            "curl -sk ${url%/}/api/health"
+        )
+        if [[ "$LAB_TOOLS" == "true" ]]; then
+            grafana_cmds+=("nuclei -u ${url%/} -tags grafana")
+        fi
         append_next_finding "$next_file" \
             "Grafana detected" \
             "fingerprint/content output matched Grafana" \
-            "curl -sk ${url%/}/login | sed -n '1,80p'" \
-            "curl -sk ${url%/}/api/health" \
-            "nuclei -u ${url%/} -tags grafana"
+            "${grafana_cmds[@]}"
     fi
 
     if grep -qiE 'Webmin|webmin' "$cms_whatweb" "$cms_paths" "$work_dir/content/"*.txt "$work_dir/fingerprint/homepage_source.html" 2>/dev/null; then
@@ -1224,13 +1397,21 @@ generate_next_steps() {
     fi
 
     if grep -qi 'WordPress\|wp-login\|wp-content' "$cms_whatweb" "$cms_paths" 2>/dev/null; then
+        local wordpress_cmds=(
+            "curl -sk ${url%/}/wp-login.php | sed -n '1,40p'"
+            "wpscan --url ${url%/} --enumerate u,p,t --plugins-detection passive -o /tmp/${HOST_SAFE}_wpscan_baseline.txt"
+        )
+        if [[ "$LAB_TOOLS" == "true" ]]; then
+            wordpress_cmds+=(
+                "wpscan --url ${url%/} --enumerate p --plugins-detection aggressive -o /tmp/${HOST_SAFE}_wpscan_plugins.txt"
+                "wpscan --url ${url%/} --enumerate u,vp,vt,cb --plugins-detection aggressive -o /tmp/${HOST_SAFE}_wpscan_vuln.txt"
+                "wpscan --url ${url%/} --enumerate u --passwords /usr/share/wordlists/fasttrack.txt -o /tmp/${HOST_SAFE}_wpscan_users.txt"
+            )
+        fi
         append_next_finding "$next_file" \
             "WordPress detected" \
             "whatweb or path probes matched WordPress" \
-            "wpscan --url ${url%/} --enumerate p --plugins-detection aggressive -o /tmp/${HOST_SAFE}_wpscan_plugins.txt" \
-            "wpscan --url ${url%/} --enumerate u,vp,vt,cb --plugins-detection aggressive -o /tmp/${HOST_SAFE}_wpscan_vuln.txt" \
-            "wpscan --url ${url%/} --enumerate u --passwords /usr/share/wordlists/fasttrack.txt -o /tmp/${HOST_SAFE}_wpscan_users.txt" \
-            "curl -sk ${url%/}/wp-login.php | sed -n '1,40p'"
+            "${wordpress_cmds[@]}"
     fi
 
     if grep -qi 'Joomla\|/administrator' "$cms_whatweb" "$cms_paths" 2>/dev/null; then
@@ -1307,12 +1488,17 @@ generate_next_steps() {
             local param_url
             param_url=$(echo "$param_line" | awk '{print $1}')
             [[ "$param_url" == http* ]] || continue
-            param_cmds+=("sqlmap -u '${param_url}' --batch --level 2 --risk 2")
+            param_cmds+=("curl -sk '${param_url}' | head -40")
+            param_cmds+=("curl -sk '${param_url/testvalue/1%27}' | head -60")
+            param_cmds+=("curl -sk '${param_url/testvalue/1%20or%201=1}' | head -60")
             param_cmds+=("# LFI test:")
             param_cmds+=("curl -sk '${param_url/testvalue/..%2F..%2F..%2Fetc%2Fpasswd}'")
             param_cmds+=("ffuf -w /usr/share/seclists/Fuzzing/LFI/LFI-Jhaddix.txt -u '${param_url/testvalue/FUZZ}' -mr 'root:' -mc all")
             param_cmds+=("# XSS test:")
             param_cmds+=("curl -sk '${param_url/testvalue/%3Cscript%3Ealert(1)%3C%2Fscript%3E}'")
+            if [[ "$LAB_TOOLS" == "true" ]]; then
+                param_cmds+=("sqlmap -u '${param_url}' --batch --level 2 --risk 2")
+            fi
             if echo "$param_url" | grep -qiE '[?&](file|path|page|include|template|view|doc|download|redirect|url)='; then
                 lfi_cmds+=("curl -sk '${param_url/testvalue/..%2F..%2F..%2F..%2Fetc%2Fpasswd}'")
                 lfi_cmds+=("ffuf -w /usr/share/seclists/Fuzzing/LFI/LFI-Jhaddix.txt -u '${param_url/testvalue/FUZZ}' -mr 'root:' -mc all")
@@ -1327,8 +1513,13 @@ generate_next_steps() {
                 cmdi_cmds+=("ffuf -w /usr/share/seclists/Fuzzing/command-injection-commix.txt -u '${param_url/testvalue/FUZZ}' -mc all -fs 0")
             fi
             if echo "$param_url" | grep -qiE '[?&](id|item|product|cat|category|user|uid|pid|page_id|article)='; then
-                sqli_cmds+=("sqlmap -u '${param_url}' --batch --level 3 --risk 2 --current-user --current-db")
                 sqli_cmds+=("curl -sk '${param_url/testvalue/1%27}' | head -60")
+                sqli_cmds+=("curl -sk '${param_url/testvalue/1%20and%201=2}' | head -60")
+                sqli_cmds+=("curl -sk '${param_url/testvalue/1%20or%201=1}' | head -60")
+                sqli_cmds+=("curl -sk '${param_url/testvalue/1%22}' | head -60")
+                if [[ "$LAB_TOOLS" == "true" ]]; then
+                    sqli_cmds+=("sqlmap -u '${param_url}' --batch --level 3 --risk 2 --current-user --current-db")
+                fi
             fi
             if echo "$param_url" | grep -qiE '[?&](q|query|search|s|name|msg|message|comment|return|next|redirect|url)='; then
                 xss_cmds+=("curl -sk '${param_url/testvalue/%3Cscript%3Ealert(1)%3C%2Fscript%3E}'")
@@ -1490,6 +1681,15 @@ generate_summary() {
                 echo '```'
                 echo ""
             fi
+        fi
+
+        if is_nonempty_file "$work_dir/fingerprint/js_endpoints.txt"; then
+            echo "## JavaScript Findings"
+            echo ""
+            echo '```'
+            head -30 "$work_dir/fingerprint/js_endpoints.txt" 2>/dev/null
+            echo '```'
+            echo ""
         fi
 
         # --- Recursive Findings ---
@@ -1666,13 +1866,14 @@ generate_summary() {
            grep -qi 'wp-login\|wp-admin' "$work_dir/fingerprint/sensitive_paths.txt" 2>/dev/null; then
             local wp_host
             wp_host=$(get_host "$url" | tr '.:' '_')
-            echo "  WordPress detected — run wpscan:"
-            echo "  # 1. All plugins (find installed plugins — most important):"
-            echo "  wpscan --url ${url} --enumerate p --plugins-detection aggressive -o /tmp/${wp_host}_wpscan_plugins.txt"
-            echo "  # 2. Vulnerable plugins/themes + config backups + users:"
-            echo "  wpscan --url ${url} --enumerate u,vp,vt,cb --plugins-detection aggressive -o /tmp/${wp_host}_wpscan_vuln.txt"
-            echo "  # 3. Password spray against found users:"
-            echo "  wpscan --url ${url} --enumerate u --passwords /usr/share/wordlists/fasttrack.txt -o /tmp/${wp_host}_wpscan_users.txt"
+            echo "  WordPress detected — run baseline wpscan:"
+            echo "  wpscan --url ${url} --enumerate u,p,t --plugins-detection passive -o /tmp/${wp_host}_wpscan_baseline.txt"
+            if [[ "$LAB_TOOLS" == "true" ]]; then
+                echo "  # Lab/non-engagement aggressive checks:"
+                echo "  wpscan --url ${url} --enumerate p --plugins-detection aggressive -o /tmp/${wp_host}_wpscan_plugins.txt"
+                echo "  wpscan --url ${url} --enumerate u,vp,vt,cb --plugins-detection aggressive -o /tmp/${wp_host}_wpscan_vuln.txt"
+                echo "  wpscan --url ${url} --enumerate u --passwords /usr/share/wordlists/fasttrack.txt -o /tmp/${wp_host}_wpscan_users.txt"
+            fi
         else
             echo "  (none detected)"
         fi
@@ -1777,8 +1978,12 @@ generate_summary() {
                     param_url=$(echo "${param_line}" | awk '{print $1}')
                     [[ -z "${param_url}" || "${param_url}" != http* ]] && continue
                     xss_url="${param_url/testvalue/%3Cscript%3Ealert(1)%3C%2Fscript%3E}"
-                    echo "  sqlmap -u '${param_url}' --batch --level 2"
+                    echo "  curl -sk '${param_url/testvalue/1%27}' | head -60"
+                    echo "  curl -sk '${param_url/testvalue/1%20or%201=1}' | head -60"
                     echo "  curl -sk '${xss_url}'"
+                    if [[ "$LAB_TOOLS" == "true" ]]; then
+                        echo "  sqlmap -u '${param_url}' --batch --level 2"
+                    fi
                 done <<< "${param_lines}"
             else
                 echo "  (none found)"
@@ -1816,6 +2021,9 @@ OPTIONS:
   --root DIR         Output root directory (default: $TOOLKIT_ROOT/web)
   --threads N        ffuf thread count (default: 40)
   --rate N           ffuf max requests/sec, 0=unlimited (default: 0)
+  --ffuf-ac          Enable ffuf autocalibration (-ac) after baseline review
+  --lab-tools        Include non-engagement/lab-only automated scanner suggestions
+                       such as sqlmap, nuclei, and aggressive WPScan commands
   -h, --help         Show this help
 
 EXAMPLES:
@@ -1870,6 +2078,8 @@ NOTES:
   - Ctrl+C cleans up all background jobs
   - Requires: ffuf, curl, python3 (for JSON parsing)
   - Optional: whatweb — fingerprinting degrades gracefully if missing
+  - Default next steps avoid sqlmap/nuclei-style automation; use --lab-tools
+    when working in labs where those tools are allowed
 EOF
 }
 
@@ -1927,6 +2137,14 @@ while [[ $# -gt 0 ]]; do
             [[ $# -lt 2 ]] && { error "Option $1 requires an argument"; exit 1; }
             FFUF_RATE="$2"
             shift 2
+            ;;
+        --ffuf-ac)
+            FFUF_AUTOCALIBRATE=true
+            shift
+            ;;
+        --lab-tools)
+            LAB_TOOLS=true
+            shift
             ;;
         -*)
             error "Unknown option: $1"
@@ -2043,6 +2261,8 @@ info "Port:     $PORT"
 info "Output:   $OUTPUT_DIR"
 info "Mode:     $(if [[ "$DEEP_MODE" == "true" ]]; then echo 'DEEP (recursive + params)'; else echo 'STANDARD'; fi)"
 info "Threads:  $THREADS"
+info "ffuf -ac: $(if [[ "$FFUF_AUTOCALIBRATE" == "true" ]]; then echo 'enabled'; else echo 'disabled'; fi)"
+info "Lab tools: $(if [[ "$LAB_TOOLS" == "true" ]]; then echo 'enabled'; else echo 'disabled'; fi)"
 [[ -n "$VHOST_DOMAIN" ]] && info "VHosts:   *.${VHOST_DOMAIN}"
 echo ""
 
@@ -2050,27 +2270,43 @@ echo ""
 info "Checking tools..."
 TOOLS_PRESENT=()
 TOOLS_MISSING=()
-for t in ffuf whatweb curl python3; do
+REQUIRED_TOOLS=(ffuf curl python3)
+OPTIONAL_TOOLS=(whatweb jq sslscan openssl wafw00f gowitness eyewitness httpx-toolkit davtest cadaver)
+for t in "${REQUIRED_TOOLS[@]}"; do
     if check_tool "$t"; then
         TOOLS_PRESENT+=("$t")
         echo -e "  ${GREEN}✓${NC} $t"
     else
         TOOLS_MISSING+=("$t")
-        echo -e "  ${YELLOW}✗${NC} $t (missing)"
+        echo -e "  ${RED}✗${NC} $t (required missing)"
     fi
 done
-
 if (( ${#TOOLS_MISSING[@]} > 0 )); then
-    warn "Missing tools: ${TOOLS_MISSING[*]}"
-    warn "Install: sudo apt install ${TOOLS_MISSING[*]}"
+    error "Missing required tools: ${TOOLS_MISSING[*]}"
+    error "Install: sudo apt install ${TOOLS_MISSING[*]}"
+    exit 1
 fi
 
-for required_tool in ffuf curl python3; do
-    if ! check_tool "$required_tool"; then
-        error "Required tool missing: $required_tool"
-        exit 1
+OPTIONAL_MISSING=()
+for t in "${OPTIONAL_TOOLS[@]}"; do
+    if [[ "$t" == "httpx-toolkit" ]]; then
+        if httpx_tool >/dev/null 2>&1; then
+            echo -e "  ${GREEN}✓${NC} httpx-toolkit/httpx"
+        else
+            OPTIONAL_MISSING+=("$t")
+            echo -e "  ${YELLOW}✗${NC} $t (optional; related evidence skipped)"
+        fi
+    elif check_tool "$t"; then
+        echo -e "  ${GREEN}✓${NC} $t"
+    else
+        OPTIONAL_MISSING+=("$t")
+        echo -e "  ${YELLOW}✗${NC} $t (optional; related evidence skipped)"
     fi
 done
+if (( ${#OPTIONAL_MISSING[@]} > 0 )); then
+    warn "Optional tools missing: ${OPTIONAL_MISSING[*]}"
+    warn "Install baseline extras with: sudo ./tools_setup.sh"
+fi
 
 echo ""
 info "Wordlist status:"
