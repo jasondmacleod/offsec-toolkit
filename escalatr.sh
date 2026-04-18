@@ -1955,4 +1955,8 @@ main() {
     fi
 }
 
+if [[ "${OffSec_LIB_ONLY:-false}" == "true" ]]; then
+    return 0 2>/dev/null || exit 0
+fi
+
 main "$@"
