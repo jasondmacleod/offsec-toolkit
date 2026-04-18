@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# shellcheck disable=SC2016,SC2028,SC2030,SC2031,SC2034
 set -uo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -61,6 +62,7 @@ assert_not_contains() {
 
 test_recon_rules() (
     export OffSec_LIB_ONLY=true
+    export KALI_IP=10.10.14.2
     source_script "$ROOT_DIR/recon.sh"
 
     local ip="10.10.10.5"
@@ -171,11 +173,20 @@ Index of /
 APP_KEY=base64:abc
 DB_PASSWORD=secret
 Werkzeug debugger
+<form method="post"><input type="password" name="password"></form>
 EOF
     echo "Apache" > "$wd/fingerprint/whatweb.txt"
     : > "$wd/fingerprint/headers.txt"
     echo "http://10.10.10.5/login | 200 |" > "$wd/content/dirs_medium.txt"
-    echo "http://10.10.10.5/config.bak | 200 |" > "$wd/content/files_medium.txt"
+    cat > "$wd/content/files_medium.txt" <<'EOF'
+http://10.10.10.5/config.bak | 200 |
+http://10.10.10.5/api/users | 200 |
+EOF
+    cat > "$wd/params/params.txt" <<'EOF'
+http://10.10.10.5/view?file=testvalue
+http://10.10.10.5/ping?host=testvalue
+http://10.10.10.5/item?id=testvalue
+EOF
 
     generate_next_steps "$url" "$wd"
     local ns="$wd/loot/next_steps.txt"
@@ -184,7 +195,68 @@ EOF
     assert_contains "$ns" "Debug framework indicators found" "webenum detects debug framework indicators"
     assert_contains "$ns" "Directory listing found" "webenum detects directory listing"
     assert_contains "$ns" "Login page discovered" "webenum detects login page"
+    assert_contains "$ns" "HTTP POST login form evidence found" "webenum detects POST login form evidence"
     assert_contains "$ns" "Sensitive file discovered" "webenum detects sensitive file"
+    assert_contains "$ns" "API endpoint discovered" "webenum detects API endpoint evidence"
+    assert_contains "$ns" "Traversal/LFI-style parameter found" "webenum detects LFI-style parameter"
+    assert_contains "$ns" "Command-injection-style parameter found" "webenum detects command injection-style parameter"
+    assert_contains "$ns" "SQLi-style parameter found" "webenum detects SQLi-style parameter"
+)
+
+test_pivotr_rules() (
+    export OffSec_LIB_ONLY=true
+    export TOOLKIT_ROOT="$TEST_TMP/pivot_offsec"
+    source_script "$ROOT_DIR/pivotr.sh"
+
+    mode_ssh --type dynamic --pivot-ip 10.10.10.5 --pivot-user alice --pivot-port 22 --kali-ip 10.10.14.2 --socks-port 9999 --subnet 172.16.1.0/24 >/dev/null
+    local ns="$TOOLKIT_ROOT/pivots/next_steps.txt"
+    assert_contains "$ns" "SSH dynamic SOCKS requested" "pivotr emits SSH dynamic next steps"
+    assert_contains "$ns" "sshuttle -r alice@10.10.10.5:22 172.16.1.0/24" "pivotr emits sshuttle follow-up when subnet exists"
+
+    mode_chisel --type forward --kali-ip 10.10.14.2 --port 8080 --target-ip 172.16.1.10 --target-port 445 --local-port 1445 >/dev/null
+    assert_contains "$ns" "Chisel reverse port forward requested" "pivotr emits chisel forward next steps"
+    assert_contains "$ns" "chisel client 10.10.14.2:8080 R:1445:172.16.1.10:445" "pivotr emits chisel client command"
+)
+
+test_adr_rules() (
+    export OffSec_LIB_ONLY=true
+    source_script "$ROOT_DIR/adr.sh"
+
+    OUTDIR="$TEST_TMP/adr"
+    DOMAIN="corp.local"
+    AD_USER="alice"
+    PASS="Password1"
+    AUTH_TYPE="password"
+    DC_IP="10.10.10.10"
+    LM_NT_HASH="aad3b435b51404eeaad3b435b51404ee:0123456789abcdef0123456789abcdef"
+    NXC_AUTH=(-u "$AD_USER" -p "$PASS" -d "$DOMAIN")
+    mkdir -p "$OUTDIR/users" "$OUTDIR/hashes" "$OUTDIR/computers" "$OUTDIR/sessions" "$OUTDIR/bloodhound" "$OUTDIR/shares"
+    {
+        echo "# AD Attack Commands — ${DOMAIN}"
+        echo ""
+    } > "$OUTDIR/attack_commands.txt"
+    echo "[+] corp.local\\alice:Password1" > "$OUTDIR/domain_context.txt"
+    echo "ADMIN_ON_DC=YES" > "$OUTDIR/summary_notes.txt"
+    echo "SMB_SIGNING_DISABLED=YES" >> "$OUTDIR/summary_notes.txt"
+    echo "PRIV_SESSIONS=YES" >> "$OUTDIR/summary_notes.txt"
+    echo "alice" > "$OUTDIR/users/all_users.txt"
+    echo '$krb5asrep$23$alice@CORP.LOCAL:test' > "$OUTDIR/hashes/asreproast.txt"
+    echo '$krb5tgs$23$*svc$CORP.LOCAL$corp.local/svc*:test' > "$OUTDIR/hashes/kerberoast.txt"
+    echo "DC01 corp.local Windows Server" > "$OUTDIR/computers/nxc_computers.txt"
+    echo "signing:False" > "$OUTDIR/smb_no_signing.txt"
+    echo "Administrator" > "$OUTDIR/sessions/smb_sessions.txt"
+    echo "Groups.xml" > "$OUTDIR/shares/sysvol_interesting.txt"
+    printf 'zip' > "$OUTDIR/bloodhound/bh.zip"
+
+    generate_ad_2025_next_steps
+    local ns="$OUTDIR/next_steps.txt"
+    assert_contains "$ns" "ON-HOST AD ENUMERATION" "adr emits PowerView/SharpHound next steps"
+    assert_contains "$ns" "AS-REP ROAST FOLLOW-UP" "adr emits AS-REP follow-up"
+    assert_contains "$ns" "KERBEROAST FOLLOW-UP" "adr emits Kerberoast follow-up"
+    assert_contains "$ns" "LATERAL MOVEMENT AUTH CHECKS" "adr emits lateral movement auth checks"
+    assert_contains "$ns" "NTLM RELAY FOLLOW-UP" "adr emits NTLM relay follow-up"
+    assert_contains "$ns" "DOMAIN ADMIN PATH" "adr emits DA path next steps"
+    assert_contains "$ns" "BLOODHOUND 2025-2026 REVIEW QUEUE" "adr emits BloodHound review queue"
 )
 
 test_crackr_rules() (
@@ -240,6 +312,8 @@ EOF
 echo "Running next-step regression tests..."
 test_recon_rules
 test_webenum_rules
+test_pivotr_rules
+test_adr_rules
 test_crackr_rules
 test_sprayr_rules
 

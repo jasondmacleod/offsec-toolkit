@@ -1156,6 +1156,8 @@ The table below maps each gap to its phase and the manual technique to fill it.
 | Sensitive files | Empty gobuster result | `.env`, `wp-config.php`, `web.config`, `.htpasswd` direct-curl |
 | HTTP verb tampering | Non-standard server | `-X TRACE`, `-X PUT`, `-X DELETE` with curl |
 
+`webenum.sh` now emits these from `loot/next_steps.txt` when the scan has concrete evidence: POST login forms, API endpoints, LFI/RFI-style parameters, command-injection-style parameters, SQLi-style parameters, and XSS-reflection-style parameters.
+
 ---
 
 ### Linux Privesc Gaps (`escalatr.sh` + linpeas)
@@ -1203,6 +1205,8 @@ The table below maps each gap to its phase and the manual technique to fill it.
 | RC4 downgrade | AES Kerberoast hash won't crack | Request ticket with `-etype 23` → RC4 is faster to crack |
 
 ---
+
+`adr.sh` now adds a 2025-2026 aligned `next_steps.txt` matrix from real artifacts: valid domain context, user lists, AS-REP/Kerberoast files, computer lists, SMB relay candidates, admin-on-DC markers, privileged sessions, BloodHound zips, and SYSVOL loot. `pivotr.sh` writes `$TOOLKIT_ROOT/pivots/next_steps.txt` for the pivot mode actually used, including Ligolo, SSH local/dynamic/remote, sshuttle when a subnet is provided, Plink/netsh equivalents, and Chisel reverse SOCKS/forwarding.
 
 ### Credential / Password Gaps (`crackr.sh`, `sprayr.sh`)
 

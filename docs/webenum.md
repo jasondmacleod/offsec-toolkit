@@ -131,6 +131,9 @@ webenum --url http://192.168.50.100 --deep --vhost target.htb
 | `--deep` | Enable recursive fuzzing + parameter discovery | `--deep` |
 | `--vhost DOMAIN` | Enable vhost fuzzing | `--vhost target.htb` |
 | `--root DIR` | Custom output root (default: `$TOOLKIT_ROOT/web`) | `--root ~/pg` |
+
+When launched through `sudo`, the default `$TOOLKIT_ROOT` resolves to the invoking
+user's home directory instead of `/root/offsec`.
 | `--threads N` | ffuf thread count (default: 40) | `--threads 20` |
 | `--rate N` | Max requests/sec, 0=unlimited (default: 0) | `--rate 100` |
 | `-h, --help` | Show help | |
@@ -218,7 +221,10 @@ Aggregates everything into `summary/summary.md` (structured report), `summary/su
 - **specific tech matches** — WordPress, Joomla, Drupal, Tomcat, Jenkins, phpMyAdmin, Adminer, Grafana, Webmin, JBoss/WildFly, Spring actuator, Elasticsearch
 - **exposed `.git`** — `git-dumper` and secret grep
 - **Swagger/OpenAPI** — `curl`/`jq` inspection and API object fuzzing
+- **API endpoints** — `curl`/`jq` inspection for discovered `/api` paths plus API object fuzzing
+- **POST login form evidence** — form extraction plus `hydra http-post-form` template when source indicates a real login form
 - **parameters** — `sqlmap` and quick XSS probe examples
+- **parameter-name attack hints** — LFI/traversal, RFI, command injection, SQLi, and XSS probes only when discovered parameter names support those paths
 
 ---
 

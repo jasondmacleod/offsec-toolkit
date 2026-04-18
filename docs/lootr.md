@@ -243,8 +243,9 @@ Get-Content "$ROOT\network\hosts.txt"
 | Kerberos tickets | Import and test with `impacket` tools now |
 | SeImpersonatePrivilege | `next_steps.txt` has Potato command for detected OS version |
 | SeBackupPrivilege / SeDebugPrivilege | `next_steps.txt` has `reg save` / `procdump` command |
-| AlwaysInstallElevated | `next_steps.txt` has `msfvenom` MSI + `msiexec` command |
+| AlwaysInstallElevated | `next_steps.txt` has `msfvenom` MSI + `msiexec` only when both HKLM and HKCU are enabled |
 | Unquoted service paths / writable service binaries | `next_steps.txt` has payload placement + restart command |
+| Writable scheduled task binaries | `next_steps.txt` has payload placement only when a high-privilege task binary is writable |
 | SUID / capabilities hits | `next_steps.txt` has GTFOBins one-liner per binary |
 | Writable cron jobs | `next_steps.txt` has injection template |
 | sudo rights | `next_steps.txt` has GTFOBins command per allowed binary |

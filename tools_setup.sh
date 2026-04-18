@@ -36,9 +36,7 @@ CYAN='\033[0;36m'
 BOLD='\033[1m'
 NC='\033[0m'
 
-USE_COLOR=true
 if [[ -n "${NO_COLOR:-}" ]] || [[ ! -t 1 ]]; then
-    USE_COLOR=false
     RED='' GREEN='' YELLOW='' CYAN='' BOLD='' NC=''
 fi
 

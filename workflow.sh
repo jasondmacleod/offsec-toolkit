@@ -14,12 +14,10 @@ YELLOW='\033[1;33m'
 MAGENTA='\033[0;35m'
 NC='\033[0m'
 
-USE_COLOR=true
 if [[ -n "${NO_COLOR:-}" ]] || [[ ! -t 1 ]]; then
-    USE_COLOR=false
     BOLD='' CYAN='' GREEN='' YELLOW='' MAGENTA='' NC=''
 fi
-for arg in "$@"; do [[ "$arg" == "--no-color" ]] && { USE_COLOR=false; BOLD='' CYAN='' GREEN='' YELLOW='' MAGENTA='' NC=''; }; done
+for arg in "$@"; do [[ "$arg" == "--no-color" ]] && { BOLD='' CYAN='' GREEN='' YELLOW='' MAGENTA='' NC=''; }; done
 
 header() { echo -e "\n${BOLD}${MAGENTA}═══ $1 ═══${NC}"; }
 cmd()    { echo -e "  ${GREEN}\$${NC} $1"; }

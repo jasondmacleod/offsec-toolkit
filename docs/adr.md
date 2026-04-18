@@ -61,6 +61,9 @@ Active Directory enumeration and attack-prep script. OffSec-focused, Kali-side o
 | `-H, --hash HASH` | — | NTLM hash: `:NTLM`, `LM:NTLM`, or plain 32-char NTLM |
 | `--dc-host HOSTNAME` | — | DC hostname for Kerberos (e.g. `DC01.corp.local`) |
 | `--outdir DIR` | `$TOOLKIT_ROOT/ad/<DOMAIN>/` | Output directory |
+
+When launched through `sudo`, the default `$TOOLKIT_ROOT` resolves to the invoking
+user's home directory instead of `/root/offsec`.
 | `--threads N` | 10 | nxc thread count |
 | `--quick` | off | Phases 1–3 only |
 | `--skip-bloodhound` | off | Skip BloodHound collection |
@@ -194,6 +197,14 @@ The script writes fully resolved commands as each phase finds something. Always 
 | BloodHound zip collected | `bloodhound-cli upload` command + 4 key post-import queries in `next_steps.txt` |
 | Active privileged sessions (`PRIV_SESSIONS=YES`) | Token impersonation (Meterpreter `incognito`, `Invoke-TokenManipulation`) + targeted Kerberoast against those users |
 | Legacy OS detected (`OLD_OS=YES`) | Per-OS CVE exploit commands: Win7/2008/XP → MS17-010 (`impacket-eternalblue`), 2019/Win10 → PrintNightmare (`rpcdump` check), unknown → `searchsploit` |
+| Valid domain context | PowerView and SharpHound on-host enumeration commands |
+| User list collected | Lockout-aware spray workflow and WinRM auth checks |
+| AD computers collected | WinRM, WMI, PsExec, DCOM validation commands |
+| SMB signing disabled or relay list exists | Responder + `ntlmrelayx -tf smb_no_signing.txt` commands |
+| Admin on DC | DCSync, pass-the-hash, and pass-the-ticket follow-up commands |
+| SYSVOL interesting files | Share loot grep and script/config review commands |
+
+The 2025-2026 aligned matrix is still evidence-gated. `adr.sh` does not print lateral movement, relay, BloodHound, or DCSync follow-ups unless the matching phase produced a concrete artifact such as a validated context, non-empty hash file, computer list, relay list, BloodHound zip, privileged-session marker, or admin-on-DC marker.
 
 ---
 

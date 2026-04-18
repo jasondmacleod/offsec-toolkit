@@ -1589,12 +1589,11 @@ enum_ldap() {
             entry_count=$(grep -c '^dn:' "$outdir/ldap_full_dump.txt" 2>/dev/null); entry_count=${entry_count:-0}
             if (( entry_count > 0 )); then
                 success "  ★ LDAP anonymous bind: $entry_count entries found"
-                echo "LDAP anonymous bind on $ip: $entry_count entries" \
-                    >> "$target_dir/loot/quick_wins.txt"
-                echo "NEXT: ldapsearch -x -H ldap://${ip}:${port} -b '${base_dn}' '(objectClass=*)' | grep -iE 'sAMAccountName|mail|description|memberOf'" \
-                    >> "$target_dir/loot/quick_wins.txt"
-                echo "NEXT (if domain-joined): ./adr.sh -d <DOMAIN> -u '' -p '' -dc ${ip}" \
-                    >> "$target_dir/loot/quick_wins.txt"
+                {
+                    echo "LDAP anonymous bind on $ip: $entry_count entries"
+                    echo "NEXT: ldapsearch -x -H ldap://${ip}:${port} -b '${base_dn}' '(objectClass=*)' | grep -iE 'sAMAccountName|mail|description|memberOf'"
+                    echo "NEXT (if domain-joined): ./adr.sh -d <DOMAIN> -u '' -p '' -dc ${ip}"
+                } >> "$target_dir/loot/quick_wins.txt"
             fi
         fi
     fi
@@ -2750,7 +2749,7 @@ OPTIONS:
   --udp-full            Also scan ALL 65535 UDP ports (slow — use when stuck)
   --batch-size N        Rustscan batch size (default: 1500)
   --rate N              Deprecated alias for --batch-size
-  --outdir DIR          Output directory (default: ./recon)
+  --outdir DIR          Output directory (default: $TOOLKIT_ROOT/recon)
   --max-parallel N      Max parallel service enumerations per target (default: 5)
   --max-parallel-targets N  Max simultaneous target scans (default: 3)
   --sequential          Process targets one at a time (default: parallel)
@@ -2783,6 +2782,7 @@ EOF
 # ARGUMENT PARSING
 #------------------------------------------------------------------------------
 if [[ "${OffSec_LIB_ONLY:-false}" == "true" ]]; then
+    # shellcheck disable=SC2317
     return 0 2>/dev/null || exit 0
 fi
 
@@ -3064,7 +3064,10 @@ fi
 #------------------------------------------------------------------------------
 # MAIN EXECUTION
 #------------------------------------------------------------------------------
-mkdir -p "$RECON_DIR"
+if ! mkdir -p "$RECON_DIR"; then
+    error "Failed to create output directory: ${RECON_DIR}"
+    exit 1
+fi
 
 START_TIME=$(date +%s)
 

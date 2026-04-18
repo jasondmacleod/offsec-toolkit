@@ -37,7 +37,15 @@ disable_colors() { RED='' GREEN='' YELLOW='' CYAN='' BOLD='' NC=''; }
 [[ "${NO_COLOR:-0}" == "1" ]] || [[ ! -t 1 ]] && disable_colors
 
 # ── Defaults ────────────────────────────────────────────────────────────────
-TOOLKIT_ROOT="${TOOLKIT_ROOT:-${HOME}/offsec}"
+if [[ -z "${TOOLKIT_ROOT:-}" ]]; then
+    if [[ -n "${SUDO_USER:-}" ]]; then
+        _inv_home=$(getent passwd "$SUDO_USER" 2>/dev/null | cut -d: -f6)
+        TOOLKIT_ROOT="${_inv_home:-$HOME}/offsec"
+        unset _inv_home
+    else
+        TOOLKIT_ROOT="${HOME}/offsec"
+    fi
+fi
 WORDLIST="/usr/share/wordlists/rockyou.txt"
 RULE=""
 TOOL="auto"
@@ -1650,6 +1658,7 @@ crack() {
 # ── Argument Parsing ────────────────────────────────────────────────────
 # ═══════════════════════════════════════════════════════════════════════════
 if [[ "${OffSec_LIB_ONLY:-false}" == "true" ]]; then
+    # shellcheck disable=SC2317
     return 0 2>/dev/null || exit 0
 fi
 

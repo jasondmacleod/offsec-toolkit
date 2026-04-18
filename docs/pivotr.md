@@ -318,8 +318,29 @@ ssh -N -R 9999 kali@KALI_IP
 | `--kali-ip` | auto-detected | Kali IP (for remote tunnels) |
 | `--kali-user` | kali | SSH username on Kali |
 | `--socks-port` | 9999 | SOCKS proxy port (dynamic modes) |
+| `--subnet` | — | Optional CIDR used to emit a grounded `sshuttle` follow-up for dynamic SSH pivots |
 
 > [!warning] proxychains nmap must use `-sT -Pn` — SYN scans and ICMP do not traverse SOCKS.
+
+### Pivot `next_steps.txt`
+
+Each pivot mode now writes the current mode's grounded follow-up commands to:
+
+```bash
+cat $TOOLKIT_ROOT/pivots/next_steps.txt
+```
+
+The file is intentionally small and reflects the mode/options you used:
+
+| Trigger | Commands emitted |
+|---------|------------------|
+| `ligolo` mode with a subnet | agent transfer, agent connect-back, `session`, `tunnel_start`, internal `nmap`, `recon.sh`, `adr.sh`, `nxc --gen-relay-list` |
+| `ssh --type local` | `ssh -L`, verification commands, Plink equivalent, Windows `netsh interface portproxy` equivalent |
+| `ssh --type dynamic` | `ssh -D`, proxychains line, `nmap -sT -Pn`, `recon.sh` through proxychains, and `sshuttle` when `--subnet` is provided |
+| `ssh --type remote` | Kali `sshd` check, `ssh -R`, verification commands, GatewayPorts check |
+| `ssh --type remote-dynamic` | reverse SOCKS, proxychains line, internal recon through proxychains |
+| `chisel --type socks` | reverse SOCKS server/client pair, proxychains line, internal recon commands |
+| `chisel --type forward` | reverse port-forward pair and local verification commands |
 
 ---
 

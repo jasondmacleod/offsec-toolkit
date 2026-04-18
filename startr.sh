@@ -26,7 +26,15 @@ set -u
 #------------------------------------------------------------------------------
 # CONFIGURATION
 #------------------------------------------------------------------------------
-TOOLKIT_ROOT="${TOOLKIT_ROOT:-${HOME}/offsec}"
+if [[ -z "${TOOLKIT_ROOT:-}" ]]; then
+    if [[ -n "${SUDO_USER:-}" ]]; then
+        _inv_home=$(getent passwd "$SUDO_USER" 2>/dev/null | cut -d: -f6)
+        TOOLKIT_ROOT="${_inv_home:-$HOME}/offsec"
+        unset _inv_home
+    else
+        TOOLKIT_ROOT="${HOME}/offsec"
+    fi
+fi
 EXAM_DATE="$(date +%F)"
 EXAM_DIR="${TOOLKIT_ROOT}/exam_${EXAM_DATE}"
 SESSION_NAME="engagement"
@@ -363,7 +371,7 @@ build_tmux() {
     P1="$(( pbi + 1 ))"
 
     setup_target_window() {
-        local win="$1" dir="$2" label="$3" ip_info="$4"
+        local win="$1" dir="$2" label="$3"
         tx tmux send-keys -t "${SESSION_NAME}:${win}.${P0}" "$src_cmd" C-m
         tx tmux send-keys -t "${SESSION_NAME}:${win}.${P0}" "cd ${dir}" C-m
         tx tmux send-keys -t "${SESSION_NAME}:${win}.${P0}" "clear && echo -e '${BOLD}${CYAN}${label}${NC}'" C-m

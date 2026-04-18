@@ -19,7 +19,15 @@ phase()   { if [[ "$USE_COLOR" == true ]]; then echo -e "\n\e[35m[$(ts)] [EVIDEN
 disable_colors() { USE_COLOR=false; }
 [[ "${NO_COLOR:-0}" == "1" ]] || [[ ! -t 1 ]] && disable_colors
 
-TOOLKIT_ROOT="${TOOLKIT_ROOT:-${HOME}/offsec}"
+if [[ -z "${TOOLKIT_ROOT:-}" ]]; then
+    if [[ -n "${SUDO_USER:-}" ]]; then
+        _inv_home=$(getent passwd "$SUDO_USER" 2>/dev/null | cut -d: -f6)
+        TOOLKIT_ROOT="${_inv_home:-$HOME}/offsec"
+        unset _inv_home
+    else
+        TOOLKIT_ROOT="${HOME}/offsec"
+    fi
+fi
 OUTDIR="${TOOLKIT_ROOT}/evidence"
 TARGET_IP=""
 HOSTNAME_INPUT=""

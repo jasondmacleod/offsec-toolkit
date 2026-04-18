@@ -88,6 +88,9 @@ Multi-protocol credential spray wrapper. Given a cracked or obtained credential,
 | `--threads N` | 20 | nxc thread count |
 | `--timeout N` | 30 | Per-protocol timeout in seconds |
 | `--outdir DIR` | `$TOOLKIT_ROOT/spray/<timestamp>/` | Output directory |
+
+When launched through `sudo`, the default `$TOOLKIT_ROOT` resolves to the invoking
+user's home directory instead of `/root/offsec`.
 | `--from-creds` | off | Spray all creds from `$TOOLKIT_ROOT/creds.txt` against all recon targets |
 
 ---

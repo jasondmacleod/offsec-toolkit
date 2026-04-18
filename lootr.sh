@@ -114,7 +114,9 @@ usage() {
     echo "  ├── files/        SUID, writable, cron, capabilities"
     echo "  ├── proof/        local.txt and proof.txt"
     echo "  ├── progress.log  Phase completion tracking"
-    echo "  └── summary.txt   High-value findings at a glance"
+    echo "  ├── summary.txt   High-value findings at a glance"
+    echo "  ├── next_steps.txt Evidence-backed next actions"
+    echo "  └── attack_commands.txt Legacy alias of next_steps.txt"
 }
 
 #==============================================================================
@@ -148,6 +150,14 @@ while [[ $# -gt 0 ]]; do
             exit 1 ;;
     esac
 done
+
+case "${SINGLE_PHASE}" in
+    ""|proof|system|creds|network|files|procs) ;;
+    *)
+        error "Unknown phase: ${SINGLE_PHASE}"
+        error "Valid phases: proof system creds network files procs"
+        exit 1 ;;
+esac
 
 # Detect Kali IP from the SSH session (SSH_CLIENT is set by sshd automatically).
 # Falls back to the explicit --kali-ip arg if provided, or a placeholder.
@@ -1237,7 +1247,9 @@ generate_summary() {
             local nopasswd_found
             nopasswd_found=$(grep -i "NOPASSWD" "${OUTDIR}/system/sudo_rights.txt" 2>/dev/null)
             if [[ -n "${nopasswd_found}" ]]; then
-                echo "${nopasswd_found}" | sed 's/^/  /'
+                while IFS= read -r nopasswd_line; do
+                    printf '  %s\n' "$nopasswd_line"
+                done <<< "${nopasswd_found}"
                 echo "  NEXT → exploit commands: see next_steps.txt [ SUDO NOPASSWD ]"
             else
                 echo "  No NOPASSWD entries"
@@ -1265,7 +1277,9 @@ generate_summary() {
             local suid_interesting
             suid_interesting=$(grep -vE "${common_suid}" "${OUTDIR}/files/suid_binaries.txt" 2>/dev/null)
             if [[ -n "${suid_interesting}" ]]; then
-                echo "${suid_interesting}" | sed 's/^/  /'
+                while IFS= read -r suid_line; do
+                    printf '  %s\n' "$suid_line"
+                done <<< "${suid_interesting}"
                 echo "  NEXT → GTFObins hints: see next_steps.txt [ SUID BINARIES ]"
             else
                 echo "  Only common/expected SUID binaries found"
@@ -1345,10 +1359,6 @@ if [[ -n "${SINGLE_PHASE}" ]]; then
         network) phase_network ;;
         files)   phase_files ;;
         procs)   phase_procs ;;
-        *)
-            error "Unknown phase: ${SINGLE_PHASE}"
-            error "Valid phases: proof system creds network files procs"
-            exit 1 ;;
     esac
 else
     phase_proof
@@ -1368,3 +1378,4 @@ generate_summary
 echo ""
 success "Loot collection complete. Output: ${OUTDIR}/"
 success "Quick review: cat ${OUTDIR}/summary.txt"
+success "Next steps:  cat ${OUTDIR}/next_steps.txt"

