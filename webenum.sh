@@ -297,13 +297,13 @@ get_extensions() {
 phase_fingerprint() {
     local url="$1"
     local outdir="$2/fingerprint"
-    mkdir -p "$outdir"
 
     local phase_name="fingerprint"
     if is_phase_done "$2" "$phase_name"; then
         info "Fingerprinting already done — skipping"
         return 0
     fi
+    mkdir -p "$outdir"
     progress_log "$2" "START" "$phase_name" "url=$url"
     phase "Phase 1 — Fingerprinting: $url"
 
@@ -414,21 +414,20 @@ phase_fingerprint() {
 phase_content() {
     local url="$1"
     local outdir="$2/content"
-    mkdir -p "$outdir"
 
     local phase_name="content"
     if is_phase_done "$2" "$phase_name"; then
         info "Content fuzzing already done — skipping"
         return 0
     fi
-    progress_log "$2" "START" "$phase_name" "url=$url"
-    phase "Phase 2 — Directory & File Fuzzing: $url"
-
     if ! check_tool ffuf; then
         warn "ffuf not found — skipping content fuzzing (install: sudo apt install ffuf)"
         progress_log "$2" "FAIL" "$phase_name" "ffuf not found"
         return 1
     fi
+    mkdir -p "$outdir"
+    progress_log "$2" "START" "$phase_name" "url=$url"
+    phase "Phase 2 — Directory & File Fuzzing: $url"
 
     # Detect tech stack for extension selection
     local tech=""
@@ -520,7 +519,6 @@ phase_content() {
 phase_recursive() {
     local url="$1"
     local outdir="$2/content/recursive"
-    mkdir -p "$outdir"
 
     if [[ "$DEEP_MODE" != "true" ]]; then
         info "Skipping recursive fuzzing (use --deep to enable)"
@@ -532,6 +530,7 @@ phase_recursive() {
         info "Recursive fuzzing already done — skipping"
         return 0
     fi
+    mkdir -p "$outdir"
     progress_log "$2" "START" "$phase_name" "url=$url"
     phase "Phase 3 — Recursive Fuzzing (deep mode): $url"
 
@@ -631,7 +630,6 @@ PYEOF
 phase_vhosts() {
     local url="$1"
     local outdir="$2/vhosts"
-    mkdir -p "$outdir"
 
     if [[ -z "$VHOST_DOMAIN" ]]; then
         info "Skipping vhost fuzzing (use --vhost <domain> to enable)"
@@ -643,6 +641,7 @@ phase_vhosts() {
         info "Vhost fuzzing already done — skipping"
         return 0
     fi
+    mkdir -p "$outdir"
     progress_log "$2" "START" "$phase_name" "domain=$VHOST_DOMAIN"
     phase "Phase 4 — VHost Fuzzing: *.${VHOST_DOMAIN}"
 
@@ -727,7 +726,6 @@ phase_vhosts() {
 phase_params() {
     local url="$1"
     local outdir="$2/params"
-    mkdir -p "$outdir"
 
     if [[ "$DEEP_MODE" != "true" ]]; then
         info "Skipping parameter discovery (use --deep to enable)"
@@ -739,6 +737,7 @@ phase_params() {
         info "Parameter discovery already done — skipping"
         return 0
     fi
+    mkdir -p "$outdir"
     progress_log "$2" "START" "$phase_name" "url=$url"
     phase "Phase 5 — Parameter Discovery (deep mode)"
 
