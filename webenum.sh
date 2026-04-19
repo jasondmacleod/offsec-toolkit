@@ -191,20 +191,34 @@ wait_all() {
     CHILD_PIDS=()
 }
 
+CLEANUP_RUNNING=0
+
 cleanup() {
-    echo ""
-    warn "Caught interrupt — cleaning up..."
-    for pid in "${CHILD_PIDS[@]}"; do
-        kill -TERM "$pid" 2>/dev/null
-    done
-    sleep 1
-    for pid in "${CHILD_PIDS[@]}"; do
-        kill -9 "$pid" 2>/dev/null
-    done
-    warn "Cleanup complete. Partial results saved in ${OUTPUT_DIR}/"
-    exit 130
+    local exit_code="${1:-0}"
+    (( CLEANUP_RUNNING )) && return
+    CLEANUP_RUNNING=1
+    trap - EXIT INT TERM
+
+    if (( ${#CHILD_PIDS[@]} > 0 )); then
+        local pid
+        for pid in "${CHILD_PIDS[@]}"; do
+            kill -TERM "$pid" 2>/dev/null || true
+        done
+        sleep 1
+        for pid in "${CHILD_PIDS[@]}"; do
+            kill -9 "$pid" 2>/dev/null || true
+        done
+    fi
+
+    if (( exit_code == 130 )); then
+        echo ""
+        warn "Interrupted — partial results saved in ${OUTPUT_DIR:-[not initialized]}/"
+    fi
+    exit "$exit_code"
 }
-trap cleanup INT TERM
+
+trap 'cleanup 0'   EXIT
+trap 'cleanup 130' INT TERM
 
 #==============================================================================
 # TOOL CHECK

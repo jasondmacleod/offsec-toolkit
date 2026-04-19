@@ -268,27 +268,36 @@ wait_all_enum() {
 #------------------------------------------------------------------------------
 # CLEANUP TRAP — kill all children on exit/interrupt
 #------------------------------------------------------------------------------
+CLEANUP_RUNNING=0
+
 cleanup() {
-    echo ""
-    warn "Caught interrupt — cleaning up background jobs..."
+    local exit_code="${1:-0}"
+    (( CLEANUP_RUNNING )) && return
+    CLEANUP_RUNNING=1
+    trap - EXIT INT TERM
+
     local pid=""
     for pid in ${CHILD_PIDS[@]+"${CHILD_PIDS[@]}"} ${CLEANUP_ONLY_PIDS[@]+"${CLEANUP_ONLY_PIDS[@]}"}; do
         if kill -0 "$pid" 2>/dev/null; then
-            kill -TERM "$pid" 2>/dev/null
+            kill -TERM "$pid" 2>/dev/null || true
         fi
     done
-    # Give them a moment, then force-kill
     sleep 1
     for pid in ${CHILD_PIDS[@]+"${CHILD_PIDS[@]}"} ${CLEANUP_ONLY_PIDS[@]+"${CLEANUP_ONLY_PIDS[@]}"}; do
         if kill -0 "$pid" 2>/dev/null; then
-            kill -9 "$pid" 2>/dev/null
+            kill -9 "$pid" 2>/dev/null || true
         fi
     done
-    warn "Cleanup complete. Partial results are in ${RECON_DIR}/"
-    exit 130
+
+    if (( exit_code == 130 )); then
+        echo ""
+        warn "Interrupted — partial results are in ${RECON_DIR:-[not initialized]}/"
+    fi
+    exit "$exit_code"
 }
 
-trap cleanup INT TERM
+trap 'cleanup 0'   EXIT
+trap 'cleanup 130' INT TERM
 
 #------------------------------------------------------------------------------
 # INPUT VALIDATION

@@ -49,13 +49,23 @@ FTP_PASS="kali"
 #------------------------------------------------------------------------------
 # CLEANUP
 #------------------------------------------------------------------------------
+CLEANUP_RUNNING=0
+
 cleanup() {
-    echo ""
-    warn "Server stopped."
-    exit 130
+    local exit_code="${1:-0}"
+    (( CLEANUP_RUNNING )) && return
+    CLEANUP_RUNNING=1
+    trap - EXIT INT TERM
+
+    if (( exit_code == 130 )); then
+        echo ""
+        warn "Server stopped."
+    fi
+    exit "$exit_code"
 }
 
-trap cleanup INT TERM
+trap 'cleanup 0'   EXIT
+trap 'cleanup 130' INT TERM
 
 #------------------------------------------------------------------------------
 # HELPERS

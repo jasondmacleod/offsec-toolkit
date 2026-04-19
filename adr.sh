@@ -96,22 +96,34 @@ declare -a CHILD_PIDS=()
 
 register_pid() { CHILD_PIDS+=("$1"); }
 
+CLEANUP_RUNNING=0
+
 cleanup() {
-    echo ""
-    warn "Interrupted — cleaning up background processes..."
-    local pid
-    for pid in "${CHILD_PIDS[@]}"; do
-        kill -TERM "$pid" 2>/dev/null || true
-    done
-    sleep 1
-    for pid in "${CHILD_PIDS[@]}"; do
-        kill -9 "$pid" 2>/dev/null || true
-    done
-    warn "Partial results saved to ${OUTDIR}/"
-    exit 130
+    local exit_code="${1:-0}"
+    (( CLEANUP_RUNNING )) && return
+    CLEANUP_RUNNING=1
+    trap - EXIT INT TERM
+
+    if (( ${#CHILD_PIDS[@]} > 0 )); then
+        local pid
+        for pid in "${CHILD_PIDS[@]}"; do
+            kill -TERM "$pid" 2>/dev/null || true
+        done
+        sleep 1
+        for pid in "${CHILD_PIDS[@]}"; do
+            kill -9 "$pid" 2>/dev/null || true
+        done
+    fi
+
+    if (( exit_code == 130 )); then
+        echo ""
+        warn "Interrupted — partial results saved to ${OUTDIR:-[not initialized]}/"
+    fi
+    exit "$exit_code"
 }
 
-trap cleanup INT TERM
+trap 'cleanup 0'   EXIT
+trap 'cleanup 130' INT TERM
 
 #------------------------------------------------------------------------------
 # GLOBAL STATE — set by argument parsing + normalize_hash

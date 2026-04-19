@@ -134,26 +134,37 @@ declare -a CHILD_PIDS=()
 #------------------------------------------------------------------------------
 # CLEANUP TRAP
 #------------------------------------------------------------------------------
+CLEANUP_RUNNING=0
+
 cleanup() {
-    echo ""
-    warn "Interrupted — killing background spray jobs..."
-    local pid
-    for pid in "${CHILD_PIDS[@]}"; do
-        kill -TERM "$pid" 2>/dev/null || true
-    done
-    sleep 1
-    for pid in "${CHILD_PIDS[@]}"; do
-        kill -9 "$pid" 2>/dev/null || true
-    done
-    [[ -n "$RESOLVED_TARGETS_FILE" ]] && rm -f "$RESOLVED_TARGETS_FILE" 2>/dev/null || true
-    if [[ -n "$OUTDIR" ]]; then
-        warn "Partial results saved to ${OUTDIR}/"
-        generate_summary
+    local exit_code="${1:-0}"
+    (( CLEANUP_RUNNING )) && return
+    CLEANUP_RUNNING=1
+    trap - EXIT INT TERM
+
+    if (( ${#CHILD_PIDS[@]} > 0 )); then
+        local pid
+        for pid in "${CHILD_PIDS[@]}"; do
+            kill -TERM "$pid" 2>/dev/null || true
+        done
+        sleep 1
+        for pid in "${CHILD_PIDS[@]}"; do
+            kill -9 "$pid" 2>/dev/null || true
+        done
     fi
-    exit 130
+
+    [[ -n "${RESOLVED_TARGETS_FILE:-}" ]] && rm -f "$RESOLVED_TARGETS_FILE" 2>/dev/null || true
+
+    if (( exit_code == 130 )); then
+        echo ""
+        warn "Interrupted — partial results saved to ${OUTDIR:-[not initialized]}/"
+        [[ -n "${OUTDIR:-}" ]] && generate_summary 2>/dev/null || true
+    fi
+    exit "$exit_code"
 }
 
-trap cleanup INT TERM
+trap 'cleanup 0'   EXIT
+trap 'cleanup 130' INT TERM
 
 #------------------------------------------------------------------------------
 # VALIDATION & NORMALIZATION
@@ -1290,7 +1301,7 @@ main() {
 
     #--- Resolve targets into temp file ----------------------------------------
     RESOLVED_TARGETS_FILE=$(mktemp /tmp/sprayr_targets.XXXXXX)
-    trap 'rm -f "$RESOLVED_TARGETS_FILE"' EXIT
+    # Note: RESOLVED_TARGETS_FILE is cleaned up by the main cleanup() trap.
 
     IS_RANGE_TARGET=false
 

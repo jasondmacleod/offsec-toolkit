@@ -74,13 +74,24 @@ FLAG_COPY_NOTE="[not provided]"
 
 write_progress() { echo "$(date '+%Y-%m-%d %H:%M:%S') | $1 | $2 | $3" >> "$PROGRESS_LOG"; }
 
+CLEANUP_RUNNING=0
+
 cleanup() {
-    echo ""
-    [[ -n "$PROGRESS_LOG" ]] && write_progress "INTERRUPTED" "run" "Interrupted by operator"
-    warn "Interrupted. Progress saved to ${PROGRESS_LOG:-[not initialized]}"
-    exit 130
+    local exit_code="${1:-0}"
+    (( CLEANUP_RUNNING )) && return
+    CLEANUP_RUNNING=1
+    trap - EXIT INT TERM
+
+    if (( exit_code == 130 )); then
+        echo ""
+        [[ -n "$PROGRESS_LOG" ]] && write_progress "INTERRUPTED" "run" "Interrupted by operator"
+        warn "Interrupted. Progress saved to ${PROGRESS_LOG:-[not initialized]}"
+    fi
+    exit "$exit_code"
 }
-trap cleanup INT TERM
+
+trap 'cleanup 0'   EXIT
+trap 'cleanup 130' INT TERM
 
 usage() {
     cat <<EOF

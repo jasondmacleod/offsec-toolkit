@@ -617,6 +617,40 @@ is_valid_hydra_target() {
     [[ "$target" != */* ]] || return 1
 }
 
+#------------------------------------------------------------------------------
+# CLEANUP TRAP — propagate interrupts to child tools (hashcat/john/hydra) and
+# ensure a final log line lands even on abnormal exit.
+#------------------------------------------------------------------------------
+declare -a CHILD_PIDS=()
+CLEANUP_RUNNING=0
+
+cleanup() {
+    local exit_code="${1:-0}"
+    (( CLEANUP_RUNNING )) && return
+    CLEANUP_RUNNING=1
+    trap - EXIT INT TERM
+
+    if (( ${#CHILD_PIDS[@]} > 0 )); then
+        local pid
+        for pid in "${CHILD_PIDS[@]}"; do
+            kill -TERM "$pid" 2>/dev/null || true
+        done
+        sleep 1
+        for pid in "${CHILD_PIDS[@]}"; do
+            kill -9 "$pid" 2>/dev/null || true
+        done
+    fi
+
+    if (( exit_code == 130 )); then
+        echo ""
+        log_warn "Interrupted — partial results (if any) saved in ${OUTPUT_DIR:-[not initialized]}/"
+    fi
+    exit "$exit_code"
+}
+
+trap 'cleanup 0'   EXIT
+trap 'cleanup 130' INT TERM
+
 # ── List resources ──────────────────────────────────────────────────────────
 list_resources() {
     echo -e "\n${BOLD}Available Wordlists:${NC}"
