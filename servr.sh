@@ -23,7 +23,7 @@ BOLD='\033[1m'
 NC='\033[0m'
 
 disable_colors() { RED='' GREEN='' YELLOW='' BLUE='' CYAN='' MAGENTA='' BOLD='' NC=''; }
-[[ "${NO_COLOR:-0}" == "1" ]] || [[ ! -t 1 ]] && disable_colors
+{ [[ "${NO_COLOR:-0}" == "1" ]] || [[ ! -t 1 ]]; } && disable_colors
 
 ts() { date '+%H:%M:%S'; }
 info()    { echo -e "${BLUE}[$(ts)] [*]${NC} $*"; }
@@ -66,19 +66,20 @@ show_help() {
 servr.sh — Multi-mode file server launcher for OffSec use
 
 USAGE:
-  ./servr.sh http                        # HTTP on port 80, serve current dir
+  ./servr.sh http                        # HTTP on port 80 (needs sudo), serve current dir
   ./servr.sh http --port 8080            # HTTP on custom port
   ./servr.sh http --dir ~/tools          # HTTP serving specific directory
-  ./servr.sh http --port 443             # HTTP on 443
+  ./servr.sh http --port 443             # HTTP on 443 (needs sudo)
 
-  ./servr.sh smb                         # SMB share, serve current dir
+  ./servr.sh smb                         # SMB share on port 445 (needs sudo), serve current dir
   ./servr.sh smb --dir ~/tools           # SMB serving specific directory
   ./servr.sh smb --share tools           # Custom share name (default: share)
   ./servr.sh smb --user kali --pass kali # Authenticated SMB
   ./servr.sh smb --anon                  # Anonymous SMB
+  ./servr.sh smb --port 4445             # Non-privileged port (no sudo)
 
-  ./servr.sh ftp                         # FTP on port 21, serve current dir
-  ./servr.sh ftp --port 2121             # FTP on custom port
+  ./servr.sh ftp                         # FTP on port 21 (needs sudo), serve current dir
+  ./servr.sh ftp --port 2121             # FTP on custom port (no sudo)
   ./servr.sh ftp --dir ~/tools           # FTP serving specific directory
 
   ./servr.sh --help                      # Usage
@@ -87,6 +88,7 @@ GLOBAL OPTIONS:
   --port PORT      Port to listen on
   --dir PATH       Directory to serve (default: current working directory)
   --ip IP          Override Kali IP for printed commands
+  --no-color       Disable ANSI color output (also: export NO_COLOR=1)
 
 SMB-SPECIFIC OPTIONS:
   --share NAME     SMB share name (default: share)
@@ -98,6 +100,11 @@ EXAMPLES:
   ./servr.sh http --dir ~/tools --port 8080
   ./servr.sh smb --dir ~/tools --share tools --user kali --pass kali
   ./servr.sh ftp --dir ~/tools --port 2121
+
+NOTES:
+  - Default ports 80/445/21 require sudo (privileged ports <1024)
+  - Non-privileged alternatives: http 8080, smb 4445, ftp 2121
+  - Colors: pass --no-color or export NO_COLOR=1 to disable ANSI output
 
 EOF
 }
@@ -471,10 +478,15 @@ esac
 is_valid_port "$LISTEN_PORT" || { error "Invalid port: ${LISTEN_PORT}"; exit 1; }
 
 if (( LISTEN_PORT < 1024 )) && (( EUID != 0 )); then
+    local_suggestion=8080
+    case "$MODE" in
+        smb) local_suggestion=4445 ;;
+        ftp) local_suggestion=2121 ;;
+    esac
     error "Port ${LISTEN_PORT} requires root privileges."
     error "Options:"
     error "  sudo ./servr.sh ${MODE} --port ${LISTEN_PORT} ..."
-    error "  ./servr.sh ${MODE} --port 8080 ...   (non-privileged port)"
+    error "  ./servr.sh ${MODE} --port ${local_suggestion} ...   (non-privileged port)"
     exit 1
 fi
 
