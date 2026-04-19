@@ -19,10 +19,10 @@ for arg in "$@"; do
     case "$arg" in
         --check)    CHECK_ONLY=true ;;
         --no-color) NO_COLOR=1 ;;
-        -h|--help)
+        -h|--help|help)
             echo "Usage: sudo $0 [--check] [--no-color]"
             echo "  --check     Verify installed tools without downloading"
-            echo "  --no-color  Disable colored output"
+            echo "  --no-color  Disable colored output (also: export NO_COLOR=1)"
             exit 0
             ;;
         *)
@@ -41,9 +41,8 @@ CYAN='\033[0;36m'
 BOLD='\033[1m'
 NC='\033[0m'
 
-if [[ -n "${NO_COLOR:-}" ]] || [[ ! -t 1 ]]; then
-    RED='' GREEN='' YELLOW='' CYAN='' BOLD='' NC=''
-fi
+disable_colors() { RED='' GREEN='' YELLOW='' CYAN='' BOLD='' NC=''; }
+{ [[ -n "${NO_COLOR:-}" ]] || [[ ! -t 1 ]]; } && disable_colors
 
 log_info()    { echo -e "${CYAN}[*]${NC} $1"; }
 log_success() { echo -e "${GREEN}[+]${NC} $1"; }
@@ -69,6 +68,12 @@ else
     REAL_HOME=$(getent passwd "$REAL_USER" | cut -d: -f6)
 fi
 
+if [[ -z "$REAL_HOME" || ! -d "$REAL_HOME" ]]; then
+    log_error "Could not resolve home directory for user '${REAL_USER}'"
+    log_error "Pass the correct user in SUDO_USER, or run directly as that user"
+    exit 1
+fi
+
 TOOLS_DIR="${REAL_HOME}/tools"
 WIN_DIR="${TOOLS_DIR}/windows"
 LIN_DIR="${TOOLS_DIR}/linux"
@@ -88,7 +93,7 @@ gh_latest_url() {
     local repo="$1" pattern="$2"
     local result="" attempts=0
     while [[ -z "$result" && $attempts -lt 3 ]]; do
-        result=$({ curl -fsSL "https://api.github.com/repos/${repo}/releases/latest" 2>/dev/null \
+        result=$({ curl -fsSL --retry 3 --retry-delay 2 "https://api.github.com/repos/${repo}/releases/latest" 2>/dev/null \
             | grep -oP '"browser_download_url":\s*"\K[^"]+' \
             | grep -P "${pattern}" \
             | head -1; } || true)
@@ -98,8 +103,8 @@ gh_latest_url() {
     echo "$result"
 }
 
-# Cleanup temp files on interrupt
-trap 'rm -f /tmp/offsec_*.tar.gz /tmp/offsec_*.zip /tmp/offsec_*.gz 2>/dev/null; rm -rf /tmp/tmp.* 2>/dev/null' EXIT INT TERM
+# Cleanup temp files on interrupt — only our own files/dirs (prefixed offsec_)
+trap 'rm -rf /tmp/offsec_*.tar.gz /tmp/offsec_*.zip /tmp/offsec_*.gz /tmp/offsec_* 2>/dev/null' EXIT INT TERM
 
 # Simple direct download — skip if dest already exists
 download() {
@@ -141,7 +146,7 @@ dl_targz() {
     log_info "  Downloading: ${label}"
     local tmp tmpdir
     tmp=$(mktemp /tmp/offsec_XXXXXX.tar.gz)
-    tmpdir=$(mktemp -d)
+    tmpdir=$(mktemp -d /tmp/offsec_XXXXXX)
     if curl -fsSL --retry 3 --retry-delay 2 -o "$tmp" "$url" 2>/dev/null; then
         tar -xzf "$tmp" -C "$tmpdir" 2>/dev/null || true
         local extracted
@@ -174,7 +179,7 @@ dl_zip() {
     log_info "  Downloading: ${label}"
     local tmp tmpdir
     tmp=$(mktemp /tmp/offsec_XXXXXX.zip)
-    tmpdir=$(mktemp -d)
+    tmpdir=$(mktemp -d /tmp/offsec_XXXXXX)
     if curl -fsSL --retry 3 --retry-delay 2 -o "$tmp" "$url" 2>/dev/null; then
         unzip -q "$tmp" -d "$tmpdir" 2>/dev/null || true
         local extracted
@@ -442,7 +447,10 @@ log_success "Directories ready under: ${TOOLS_DIR}/"
 
 # ── 1. apt ────────────────────────────────────────────────────────────────────
 log_header "1 · apt Packages"
-apt-get update -qq &>/dev/null
+if ! apt-get update -qq &>/dev/null; then
+    log_warn "apt-get update failed — installs may use stale indexes or fail"
+    log_warn "Check: sudo apt-get update  (run manually to see the error)"
+fi
 
 for pkg in "${APT_PACKAGES[@]}"; do
     apt_install "$pkg"
@@ -514,7 +522,7 @@ download "${GHOSTPACK}/Certify.exe" "${WIN_DIR}/Certify.exe" "Certify.exe (AD CS
 
 # SharpHound — ships as zip (no standalone .exe asset); extract exe from inside
 # Non-debug zip excludes "%2Bdebug" in name; use grep -v debug to filter
-SH_ZIP_URL=$({ curl -fsSL "https://api.github.com/repos/BloodHoundAD/SharpHound/releases/latest" 2>/dev/null \
+SH_ZIP_URL=$({ curl -fsSL --retry 3 --retry-delay 2 "https://api.github.com/repos/BloodHoundAD/SharpHound/releases/latest" 2>/dev/null \
     | grep -oP '"browser_download_url":\s*"\K[^"]+' \
     | grep -i "SharpHound" | grep "\.zip" | grep -v "debug" \
     | head -1; } || true)
@@ -531,7 +539,7 @@ if [[ -f "${WIN_DIR}/mimikatz.exe" ]]; then
 elif [[ -n "$MK_ZIP_URL" ]]; then
     log_info "  Downloading: mimikatz (zip)"
     tmp_zip=$(mktemp /tmp/offsec_mk_XXXXXX.zip)
-    tmp_dir=$(mktemp -d)
+    tmp_dir=$(mktemp -d /tmp/offsec_mk_XXXXXX)
     if curl -fsSL --retry 3 -o "$tmp_zip" "$MK_ZIP_URL" 2>/dev/null; then
         unzip -q "$tmp_zip" -d "$tmp_dir" 2>/dev/null || true
         mk_bin=$(find "$tmp_dir" -name "mimikatz.exe" -path "*/x64/*" | head -1)
