@@ -66,6 +66,32 @@ Verify the evidence-gated next-step rules after script edits:
 
 ---
 
+## OffSec+ engagement Facts (effective Nov 1, 2024)
+
+Ground truth for the engagement this toolkit targets. All decisions in this document are built on these numbers.
+
+| Fact | Value |
+|------|-------|
+| engagement duration | 23h 45m (proctored) |
+| Report deadline | 24h after engagement ends |
+| Total points | 100 |
+| Pass threshold | 70 |
+| Standalones | 3 machines × 20 pts (10 low-priv + 10 root/admin) = 60 |
+| AD set | 3 hosts (2 clients + 1 DC), **10 + 10 + 20 = 40**, partial points allowed |
+| AD starting state | **Assumed compromise** — OffSec provides a standard domain user/password |
+| Bonus points | **Removed** (no coursework/lab bonus anymore) |
+| Buffer Overflow | **Removed** from course + engagement body of knowledge |
+| Metasploit / Meterpreter | Allowed on **exactly one** target; no pivoting via MSF |
+| Banned tools | Nessus, OpenVAS, Nexpose, Armitage, AutoSploit, Cobalt Strike, AI chatbots (ChatGPT, KAI, etc.) |
+| Allowed tools (highlights) | nmap, burp, gobuster/ffuf, netcat, python, bash, wireshark, tcpdump, crackmapexec/nxc, impacket, bloodhound, certipy-ad, responder |
+| Proof files | `local.txt` (low-priv) + `proof.txt` (root/admin) — screenshot + submit via control panel |
+
+**Course content NOT on the engagement** (present in PEN-200 but won't appear on engagement day): AWS cloud attacks (Ch 25-26), phishing (Ch 11), client-side attacks like Office macros (Ch 12). Skip these during engagement prep final push; they're career-useful but won't score points.
+
+> [!important] **If any doc in this repo conflicts with the table above, the table wins.** The table is derived from OffSec's current OffSec+ engagement Guide, engagement FAQ, and the PEN-200 2025 course manual.
+
+---
+
 ## engagement Day Master Sequence
 
 ### T-0 (setup, before IPs arrive): pre-stage a targets file
@@ -921,10 +947,10 @@ Don't manually re-do the setup. `reconnect` handles it.
 
 # Domain Controller
 ./evidencr.sh -t 10.10.10.10 -n DC01 --os Windows --flags proof \
-  --proof-flag "def456..." --points 25 --category AD-DC
+  --proof-flag "def456..." --points 20 --category AD-DC
 ```
 
-> [!important] evidencr `--points` only accepts `10`, `20`, or `25`. Anything else is rejected by validation.
+> [!important] evidencr `--points` only accepts `10` or `20`. OffSec+ AD scoring: client=10, DC=20. Standalones=20. Anything else is rejected by validation.
 
 **If you used Metasploit/Meterpreter on this box:**
 
