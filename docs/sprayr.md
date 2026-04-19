@@ -85,8 +85,8 @@ Multi-protocol credential spray wrapper. Given a cracked or obtained credential,
 | `--proto LIST` | all | Comma-separated: `smb,winrm,ssh,rdp,ldap,mssql,ftp` |
 | `--quick` | off | SMB only — fastest credential check |
 | `--safe` | off | Sequential (not parallel) + 2s jitter between attempts |
-| `--threads N` | 20 | nxc thread count |
-| `--timeout N` | 30 | Per-protocol timeout in seconds |
+| `--threads N` | 20 (1-200) | nxc thread count |
+| `--timeout N` | 30 (1-3600) | Per-protocol timeout in seconds |
 | `--outdir DIR` | `$TOOLKIT_ROOT/spray/<timestamp>/` | Output directory |
 
 When launched through `sudo`, the default `$TOOLKIT_ROOT` resolves to the invoking

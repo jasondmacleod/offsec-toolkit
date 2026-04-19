@@ -230,7 +230,7 @@ crackr --hydra ssh --target 10.10.10.5 --port 2222 -u admin -w rockyou
 | `--port <N>` | Override default port |
 | `--http-path <path>` | Path for http-get (default: `/`) |
 | `--http-form <spec>` | Form spec: `"/path:params:F=fail_string"` |
-| `--hydra-threads <N>` | Threads (default: 16) |
+| `--hydra-threads <N>` | Threads (default: 16, range 1-64) |
 | `--no-stop` | Don't stop after first valid cred |
 
 **Hydra default ports:** ssh=22, ftp=21, rdp=3389, smb=445, mysql=3306, mssql=1433, postgres=5432, vnc=5900, http-get=80, https-get=443

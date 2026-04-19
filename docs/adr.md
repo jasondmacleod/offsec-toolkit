@@ -64,7 +64,7 @@ Active Directory enumeration and attack-prep script. OffSec-focused, Kali-side o
 
 When launched through `sudo`, the default `$TOOLKIT_ROOT` resolves to the invoking
 user's home directory instead of `/root/offsec`.
-| `--threads N` | 10 | nxc thread count |
+| `--threads N` | 10 (1-200) | nxc thread count |
 | `--quick` | off | Phases 1–3 only |
 | `--skip-bloodhound` | off | Skip BloodHound collection |
 | `--skip-shares` | off | Skip share enumeration |

@@ -131,7 +131,7 @@ webenum --url http://192.168.50.100 --deep --vhost target.htb
 | `--deep` | Enable recursive fuzzing + parameter discovery | `--deep` |
 | `--vhost DOMAIN` | Enable vhost fuzzing | `--vhost target.htb` |
 | `--root DIR` | Custom output root (default: `$TOOLKIT_ROOT/web`) | `--root ~/pg` |
-| `--threads N` | ffuf thread count (default: 40) | `--threads 20` |
+| `--threads N` | ffuf thread count (default: 40, range 1-500) | `--threads 20` |
 | `--rate N` | Max requests/sec, 0=unlimited (default: 0) | `--rate 100` |
 | `--ffuf-ac` | Enable ffuf autocalibration after reviewing baseline behavior | `--ffuf-ac` |
 | `-h, --help` | Show help | |

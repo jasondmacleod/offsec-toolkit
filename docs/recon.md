@@ -81,7 +81,7 @@ sudo ./recon.sh --auto --outdir ~/engagement/recon 10.10.10.1
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--auto` | off | Skip confirmation prompts |
-| `--batch-size N` | 1500 | Rustscan batch size; nmap full-TCP fallback is used if rustscan is missing, fails, or finds no ports |
+| `--batch-size N` | 1500 (1-65535) | Rustscan batch size; nmap full-TCP fallback is used if rustscan is missing, fails, or finds no ports |
 | `--udp-ports N` | 200 | Top N UDP ports to scan |
 | `--udp-full` | off | Also scan all 65535 UDP ports |
 | `--outdir DIR` | `$TOOLKIT_ROOT/recon` | Output directory |
@@ -90,7 +90,7 @@ When launched through `sudo`, the default `$TOOLKIT_ROOT` resolves to the invoki
 user's home directory instead of `/root/offsec`.
 | `--quick-wins` | off | Run 5-min triage per target before deep recon |
 | `--quick-wins-only` | off | Triage only — rank targets, skip deep scan |
-| `--max-parallel N` | 5 | Max concurrent service enumerations per target |
+| `--max-parallel N` | 5 (1-32) | Max concurrent service enumerations per target |
 | `-f FILE` | — | Read targets from file |
 | `--rate N` | 1500 | Deprecated alias for `--batch-size` |
 
