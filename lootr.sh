@@ -68,10 +68,6 @@ progress_log() {
     echo "$(date '+%Y-%m-%d %H:%M:%S') | $2 | $3 | $4" >> "$logfile"
 }
 
-is_phase_done() {
-    grep -qF "| DONE | $2 |" "$1/progress.log" 2>/dev/null
-}
-
 proof_dest_for() {
     local proof_dir="$1"
     local source_path="$2"
