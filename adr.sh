@@ -41,7 +41,7 @@ BOLD='\033[1m'
 NC='\033[0m'
 
 disable_colors() { RED='' GREEN='' YELLOW='' BLUE='' CYAN='' MAGENTA='' BOLD='' NC=''; }
-[[ "${NO_COLOR:-0}" == "1" ]] || [[ ! -t 1 ]] && disable_colors
+{ [[ -n "${NO_COLOR:-}" ]] || [[ ! -t 1 ]]; } && disable_colors
 
 if [[ -z "${TOOLKIT_ROOT:-}" ]]; then
     if [[ -n "${SUDO_USER:-}" ]]; then
@@ -2110,7 +2110,7 @@ main() {
                 [[ -z "$AUTH_TYPE" ]] && AUTH_TYPE="kerberos"
                 shift ;;
             --no-color)        disable_colors; shift ;;
-            -h|--help)         show_help; exit 0 ;;
+            -h|--help|help)    show_help; exit 0 ;;
             *)
                 error "Unknown option: $1"
                 show_help

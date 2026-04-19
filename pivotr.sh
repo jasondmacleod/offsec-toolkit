@@ -38,7 +38,7 @@ BOLD='\033[1m'
 NC='\033[0m'
 
 disable_colors() { RED='' GREEN='' YELLOW='' BLUE='' CYAN='' MAGENTA='' BOLD='' NC=''; }
-{ [[ "${NO_COLOR:-0}" == "1" ]] || [[ ! -t 1 ]]; } && disable_colors
+{ [[ -n "${NO_COLOR:-}" ]] || [[ ! -t 1 ]]; } && disable_colors
 
 if [[ -z "${TOOLKIT_ROOT:-}" ]]; then
     if [[ -n "${SUDO_USER:-}" ]]; then

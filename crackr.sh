@@ -25,6 +25,11 @@ set -o pipefail
 # NOT set -e: one tool failure must not abort the whole run
 # NOT set -u: optional variables must be safe to reference unset
 
+# Absolute dir of this script — used to emit PWD-independent commands that
+# reference sibling toolkit scripts (sprayr.sh, pivotr.sh, etc.).
+# shellcheck disable=SC2034  # reserved for sibling-command emission
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
 # ── Colors ──────────────────────────────────────────────────────────────────
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -34,7 +39,7 @@ BOLD='\033[1m'
 NC='\033[0m'
 
 disable_colors() { RED='' GREEN='' YELLOW='' CYAN='' BOLD='' NC=''; }
-[[ "${NO_COLOR:-0}" == "1" ]] || [[ ! -t 1 ]] && disable_colors
+{ [[ -n "${NO_COLOR:-}" ]] || [[ ! -t 1 ]]; } && disable_colors
 
 # ── Defaults ────────────────────────────────────────────────────────────────
 if [[ -z "${TOOLKIT_ROOT:-}" ]]; then
@@ -1955,7 +1960,7 @@ while [[ $# -gt 0 ]]; do
             list_resources; exit 0 ;;
         --no-color)
             disable_colors; shift ;;
-        -h|--help)
+        -h|--help|help)
             usage; exit 0 ;;
         *)
             log_error "Unknown option: $1"

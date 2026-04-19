@@ -48,6 +48,11 @@ set -o pipefail
 #==============================================================================
 # CONFIGURATION
 #==============================================================================
+# Absolute dir of this script — used to emit PWD-independent commands that
+# reference sibling toolkit scripts (sprayr.sh, crackr.sh, etc.).
+# shellcheck disable=SC2034  # reserved for sibling-command emission
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
 if [[ -z "${TOOLKIT_ROOT:-}" ]]; then
     if [[ -n "${SUDO_USER:-}" ]]; then
         _inv_home=$(getent passwd "$SUDO_USER" 2>/dev/null | cut -d: -f6)
@@ -103,7 +108,20 @@ BOLD='\033[1m'
 NC='\033[0m'
 
 disable_colors() { RED='' GREEN='' YELLOW='' BLUE='' CYAN='' MAGENTA='' BOLD='' NC=''; }
-[[ "${NO_COLOR:-0}" == "1" ]] || [[ ! -t 1 ]] && disable_colors
+{ [[ -n "${NO_COLOR:-}" ]] || [[ ! -t 1 ]]; } && disable_colors
+
+# Validate an IPv4 address (4 dotted octets, each 0-255).
+is_valid_ip() {
+    local ip="$1"
+    [[ "$ip" =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}$ ]] || return 1
+    local octet
+    local IFS='.'
+    local -a octets
+    read -ra octets <<< "$ip"
+    for octet in "${octets[@]}"; do
+        (( 10#$octet <= 255 )) || return 1
+    done
+}
 
 # Auto-detect Kali IP for reverse shell commands printed during enumeration
 KALI_IP=$(ip -4 addr show tun0 2>/dev/null | grep -oP '(?<=inet\s)\d+(\.\d+){3}' | head -1)
@@ -2156,7 +2174,7 @@ FROM_RECON_IP=""
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        -h|--help)
+        -h|--help|help)
             usage
             exit 0
             ;;
@@ -2167,6 +2185,7 @@ while [[ $# -gt 0 ]]; do
             ;;
         --from-recon)
             [[ $# -lt 2 ]] && { error "Option $1 requires an argument"; exit 1; }
+            is_valid_ip "$2" || { error "Invalid IP for --from-recon: $2"; exit 1; }
             FROM_RECON_IP="$2"
             shift 2
             ;;

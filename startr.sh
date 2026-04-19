@@ -58,7 +58,7 @@ BOLD='\033[1m'
 NC='\033[0m'
 
 disable_colors() { RED='' GREEN='' YELLOW='' BLUE='' CYAN='' MAGENTA='' BOLD='' NC=''; }
-{ [[ "${NO_COLOR:-0}" == "1" ]] || [[ ! -t 1 ]]; } && disable_colors
+{ [[ -n "${NO_COLOR:-}" ]] || [[ ! -t 1 ]]; } && disable_colors
 
 ts() { date '+%H:%M:%S'; }
 
@@ -131,7 +131,7 @@ parse_args() {
             --recon)    AUTO_RECON=true; shift ;;
             --attach)   ATTACH_ONLY=true; shift ;;
             --no-color) disable_colors; shift ;;
-            -h|--help)  usage ;;
+            -h|--help|help)  usage ;;
             *)          error "Unknown flag: $1"; usage 1 ;;
         esac
     done
@@ -277,17 +277,20 @@ create_workspace() {
         success "Workspace created: $EXAM_DIR"
     fi
 
-    # Initialize creds.txt
+    # Initialize creds.txt — format matches sibling writers (adr/sprayr/crackr)
+    # so downstream greps/parsers see a single schema across the engagement.
     if [[ ! -f "${EXAM_DIR}/creds.txt" ]]; then
         cat > "${EXAM_DIR}/creds.txt" <<'CREDS'
 #==============================================================================
 # CREDENTIALS LOG — OffSec engagement
 #==============================================================================
-# Format: TARGET | SERVICE | USERNAME | PASSWORD | HASH | NOTES
+# Format: TIMESTAMP | PROTO | HOST | USER | CRED | NOTE
 #-----------------------------------------------------------------------------|
 CREDS
-        # Pre-populate assumed-breach creds
-        echo "AD     | assumed  | ${ADUSER} | ${ADPASS} | - | provided by engagement" >> "${EXAM_DIR}/creds.txt"
+        # Pre-populate assumed-breach creds in the writer-compatible format.
+        printf '%s | %-8s | %-15s | %-20s | %s | %s\n' \
+            "$(date '+%Y-%m-%d %H:%M:%S')" "assumed" "${DC:--}" "${ADUSER}" "${ADPASS}" "provided by engagement" \
+            >> "${EXAM_DIR}/creds.txt"
         success "Initialized creds.txt with assumed-breach creds"
     fi
 

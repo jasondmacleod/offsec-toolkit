@@ -18,6 +18,11 @@ set -o pipefail
 # NOT set -e: one protocol failure must not abort others
 # NOT set -u: optional variables must be safe to reference unset
 
+# Absolute dir of this script — used to emit PWD-independent commands that
+# reference sibling toolkit scripts (crackr.sh, pivotr.sh, etc.).
+# shellcheck disable=SC2034  # reserved for sibling-command emission
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
 #------------------------------------------------------------------------------
 # COLORS & LOGGING (matches toolkit exactly)
 #------------------------------------------------------------------------------
@@ -43,7 +48,7 @@ cmd_log() {
 hit_admin() { echo -e "${GREEN}${BOLD}[$(ts)] [+] ★ ADMIN HIT:${NC}${GREEN}${BOLD} $*${NC}"; }
 
 disable_colors() { RED='' GREEN='' YELLOW='' BLUE='' CYAN='' MAGENTA='' BOLD='' NC=''; }
-[[ "${NO_COLOR:-0}" == "1" ]] || [[ ! -t 1 ]] && disable_colors
+{ [[ -n "${NO_COLOR:-}" ]] || [[ ! -t 1 ]]; } && disable_colors
 
 if [[ -z "${TOOLKIT_ROOT:-}" ]]; then
     if [[ -n "${SUDO_USER:-}" ]]; then
@@ -1214,7 +1219,7 @@ main() {
                 FROM_CREDS_MODE=true; shift ;;
             --no-color)
                 disable_colors; shift ;;
-            -h|--help)
+            -h|--help|help)
                 show_help; exit 0 ;;
             *)
                 error "Unknown option: $1"

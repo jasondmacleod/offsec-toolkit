@@ -8,6 +8,11 @@
 
 set -o pipefail
 
+# Absolute dir of this script — used to emit PWD-independent commands that
+# reference sibling toolkit scripts in any generated notes.
+# shellcheck disable=SC2034  # reserved for sibling-command emission
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
 USE_COLOR=true
 ts()      { date '+%H:%M:%S'; }
 info()    { echo "[$(ts)] [*] $*"; }
@@ -17,7 +22,7 @@ error()   { if [[ "$USE_COLOR" == true ]]; then echo -e "\e[31m[$(ts)] [-] $*\e[
 phase()   { if [[ "$USE_COLOR" == true ]]; then echo -e "\n\e[35m[$(ts)] [EVIDENCE] $*\e[0m\n"; else echo -e "\n[$(ts)] [EVIDENCE] $*\n"; fi; }
 
 disable_colors() { USE_COLOR=false; }
-[[ "${NO_COLOR:-0}" == "1" ]] || [[ ! -t 1 ]] && disable_colors
+{ [[ -n "${NO_COLOR:-}" ]] || [[ ! -t 1 ]]; } && disable_colors
 
 if [[ -z "${TOOLKIT_ROOT:-}" ]]; then
     if [[ -n "${SUDO_USER:-}" ]]; then
@@ -110,7 +115,7 @@ Rollup mode:
 EOF
 }
 
-is_valid_ipv4() {
+is_valid_ip() {
     local ip="$1"
     local octet=""
     [[ "$ip" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]] || return 1
@@ -573,7 +578,7 @@ parse_args() {
                 MSF_USED=true; shift ;;
             --rollup)
                 ROLLUP_MODE=true; shift ;;
-            -h|--help)
+            -h|--help|help)
                 usage; exit 0 ;;
             *)
                 error "Unknown option: $1"
@@ -587,7 +592,7 @@ preflight() {
     phase "0 - PREFLIGHT"
 
     [[ -n "$TARGET_IP" ]] || { error "Target IP is required"; usage; exit 1; }
-    is_valid_ipv4 "$TARGET_IP" || { error "Invalid IPv4 address: $TARGET_IP"; exit 1; }
+    is_valid_ip "$TARGET_IP" || { error "Invalid IPv4 address: $TARGET_IP"; exit 1; }
 
     VPN_IFACE="tun0"
     VPN_IP="$(ip -4 addr show tun0 2>/dev/null | grep -oP '(?<=inet\s)\d+(\.\d+){3}' | head -1)"

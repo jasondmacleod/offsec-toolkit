@@ -97,7 +97,7 @@ BOLD='\033[1m'
 NC='\033[0m'
 
 disable_colors() { RED='' GREEN='' YELLOW='' BLUE='' CYAN='' MAGENTA='' BOLD='' NC=''; }
-[[ "${NO_COLOR:-0}" == "1" ]] || [[ ! -t 1 ]] && disable_colors
+{ [[ -n "${NO_COLOR:-}" ]] || [[ ! -t 1 ]]; } && disable_colors
 
 ts() { date '+%H:%M:%S'; }
 
@@ -110,6 +110,19 @@ header()  { echo -e "\n${BOLD}${CYAN}══════════════�
             echo -e "${BOLD}${CYAN}═══════════════════════════════════════════════════${NC}"; }
 phase()   { echo -e "\n${MAGENTA}[$(ts)] [PHASE]${NC} ${BOLD}$*${NC}"; }
 quickwin(){ echo -e "${RED}[$(ts)] [!!!]${NC} ${BOLD}$*${NC}"; }
+
+# Validate an IPv4 address (4 dotted octets, each 0-255).
+is_valid_ip() {
+    local ip="$1"
+    [[ "$ip" =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}$ ]] || return 1
+    local octet
+    local IFS='.'
+    local -a octets
+    read -ra octets <<< "$ip"
+    for octet in "${octets[@]}"; do
+        (( 10#$octet <= 255 )) || return 1
+    done
+}
 
 #------------------------------------------------------------------------------
 # PROGRESS TRACKING
@@ -1987,7 +2000,7 @@ main() {
                 disable_colors
                 shift
                 ;;
-            -h|--help)
+            -h|--help|help)
                 usage
                 exit 0
                 ;;
@@ -1998,6 +2011,10 @@ main() {
                 ;;
             *)
                 if [[ -z "$target_ip" ]]; then
+                    if ! is_valid_ip "$1"; then
+                        error "Invalid target IP: $1 (expected IPv4 address)"
+                        exit 1
+                    fi
                     target_ip="$1"
                 fi
                 shift

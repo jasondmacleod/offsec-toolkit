@@ -55,6 +55,11 @@ set -u
 #------------------------------------------------------------------------------
 # CONFIGURATION — Tune these for your environment / engagement needs
 #------------------------------------------------------------------------------
+# Absolute dir of this script — used to emit PWD-independent commands that
+# reference sibling toolkit scripts (webenum.sh, adr.sh, sprayr.sh, etc.).
+# shellcheck disable=SC2034  # reserved for sibling-command emission
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
 # Resolve workspace root — three-level priority:
 #   1. Explicit TOOLKIT_ROOT already set in environment (user override)
 #   2. Invoking user's home when running under sudo (prevents /root/offsec after re-exec)
@@ -127,7 +132,7 @@ BOLD='\033[1m'
 NC='\033[0m' # No Color
 
 disable_colors() { RED='' GREEN='' YELLOW='' BLUE='' CYAN='' MAGENTA='' BOLD='' NC=''; }
-[[ "${NO_COLOR:-0}" == "1" ]] || [[ ! -t 1 ]] && disable_colors
+{ [[ -n "${NO_COLOR:-}" ]] || [[ ! -t 1 ]]; } && disable_colors
 
 # Timestamp for log entries
 ts() { date '+%H:%M:%S'; }
@@ -3142,7 +3147,7 @@ ORIGINAL_ARGS=("$@")
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        -h|--help)
+        -h|--help|help)
             usage
             exit 0
             ;;

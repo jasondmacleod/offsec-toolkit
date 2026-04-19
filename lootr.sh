@@ -51,7 +51,7 @@ BOLD='\033[1m'
 NC='\033[0m'
 
 disable_colors() { RED='' GREEN='' YELLOW='' BLUE='' CYAN='' MAGENTA='' BOLD='' NC=''; }
-[[ "${NO_COLOR:-0}" == "1" ]] || [[ ! -t 1 ]] && disable_colors
+{ [[ -n "${NO_COLOR:-}" ]] || [[ ! -t 1 ]]; } && disable_colors
 
 ts()      { date '+%H:%M:%S'; }
 info()    { echo -e "${BLUE}[$(ts)] [*]${NC} $*"; }
@@ -149,7 +149,7 @@ while [[ $# -gt 0 ]]; do
             KALI_IP="$2"; shift 2 ;;
         --no-color)
             disable_colors; shift ;;
-        --help|-h)
+        --help|-h|help)
             usage; exit 0 ;;
         *)
             error "Unknown option: $1"
