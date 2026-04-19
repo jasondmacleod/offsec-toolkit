@@ -1394,7 +1394,8 @@ parse_windows_output() {
         echo "#   - MSI: WixSharp, or hand-roll WiX XML + candle.exe/light.exe"
         echo "#   - DLL revshell: x86_64-w64-mingw32-gcc -shared revshell.c -o r.dll"
         echo "# Reserve your MSF shot for the one target that absolutely needs"
-        echo "# it (typically the buffer-overflow / legacy MS17-010 machine)."
+        echo "# it (typically a legacy MS17-010/CVE-era box with no stable manual PoC)."
+        echo "# Note: OffSec+ removed buffer overflow from the engagement body of knowledge."
         echo "# ───────────────────────────────────────────────────────────"
         echo ""
 
