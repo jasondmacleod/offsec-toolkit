@@ -3,9 +3,13 @@
 # workflow.sh — OffSec engagement Workflow Quick Reference
 # Prints the recommended attack flow with exact commands using the toolkit.
 #
-# Usage: ./workflow.sh [phase]
-#   phase: recon, web, ad, spray, crack, privesc, pivot, loot, evidence, all
+# Usage: ./workflow.sh [phase] [--no-color]
+#   phase: recon, web, ad, spray, crack, privesc, pivot, loot, evidence, env, all
 #==============================================================================
+
+set -o pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 BOLD='\033[1m'
 CYAN='\033[0;36m'
@@ -14,10 +18,8 @@ YELLOW='\033[1;33m'
 MAGENTA='\033[0;35m'
 NC='\033[0m'
 
-if [[ -n "${NO_COLOR:-}" ]] || [[ ! -t 1 ]]; then
-    BOLD='' CYAN='' GREEN='' YELLOW='' MAGENTA='' NC=''
-fi
-for arg in "$@"; do [[ "$arg" == "--no-color" ]] && { BOLD='' CYAN='' GREEN='' YELLOW='' MAGENTA='' NC=''; }; done
+disable_colors() { BOLD='' CYAN='' GREEN='' YELLOW='' MAGENTA='' NC=''; }
+{ [[ -n "${NO_COLOR:-}" ]] || [[ ! -t 1 ]]; } && disable_colors
 
 header() { echo -e "\n${BOLD}${MAGENTA}═══ $1 ═══${NC}"; }
 cmd()    { echo -e "  ${GREEN}\$${NC} $1"; }
@@ -25,7 +27,7 @@ note()   { echo -e "  ${YELLOW}→${NC} $1"; }
 
 show_recon() {
     header "1. RECON — First 10 minutes per target"
-    cmd "./recon.sh --auto 10.10.10.1 10.10.10.2 10.10.10.3"
+    cmd "${SCRIPT_DIR}/recon.sh --auto 10.10.10.1 10.10.10.2 10.10.10.3"
     note "Runs rustscan → nmap TCP/UDP → service enum in parallel"
     note "Output: \$TOOLKIT_ROOT/recon/<ip>/"
     echo ""
@@ -43,17 +45,17 @@ show_recon() {
 
 show_web() {
     header "2. WEB ENUM — When HTTP/HTTPS found"
-    cmd "./webenum.sh --from-recon 10.10.10.1"
+    cmd "${SCRIPT_DIR}/webenum.sh --from-recon 10.10.10.1"
     note "Auto-detects URLs from recon nmap output"
     note "Or specify directly:"
-    cmd "./webenum.sh --url http://10.10.10.1:8080"
+    cmd "${SCRIPT_DIR}/webenum.sh --url http://10.10.10.1:8080"
     note "Runs: gobuster, feroxbuster, nikto, whatweb, tech fingerprint"
     note "Output: \$TOOLKIT_ROOT/web/<host>/"
 }
 
 show_ad() {
     header "3. AD ENUM — When domain controller found"
-    cmd "./adr.sh -d corp.local -u user -p 'Pass123' -dc 10.10.10.1"
+    cmd "${SCRIPT_DIR}/adr.sh -d corp.local -u user -p 'Pass123' -dc 10.10.10.1"
     note "Runs: enum4linux-ng, RPC, LDAP, SMB, BloodHound, AS-REP, Kerberoast"
     note "Creds logged to \$TOOLKIT_ROOT/creds.txt automatically"
     note "Output: \$TOOLKIT_ROOT/ad/corp.local/"
@@ -61,7 +63,7 @@ show_ad() {
 
 show_spray() {
     header "4. CREDENTIAL SPRAY — Test found creds across protocols"
-    cmd "./sprayr.sh -U users.txt -p 'Summer2024!' -T targets.txt --proto smb,winrm,rdp,ssh"
+    cmd "${SCRIPT_DIR}/sprayr.sh -U users.txt -p 'Summer2024!' -T targets.txt --proto smb,winrm,rdp,ssh"
     note "Use --safe for lockout-conscious sequential spraying with jitter"
     note "Hits logged to \$TOOLKIT_ROOT/creds.txt"
     note "Output: \$TOOLKIT_ROOT/spray/<timestamp>/"
@@ -69,9 +71,9 @@ show_spray() {
 
 show_crack() {
     header "5. CRACK — Offline hash cracking"
-    cmd "./crackr.sh -f ntlm_hashes.txt"
-    cmd "./crackr.sh -f shadow.txt                        # auto-detect"
-    cmd "./crackr.sh --hydra ssh --target 10.10.10.1 -u admin"
+    cmd "${SCRIPT_DIR}/crackr.sh -f ntlm_hashes.txt"
+    cmd "${SCRIPT_DIR}/crackr.sh -f shadow.txt                        # auto-detect"
+    cmd "${SCRIPT_DIR}/crackr.sh --hydra ssh --target 10.10.10.1 -u admin"
     note "Cracked creds logged to \$TOOLKIT_ROOT/creds.txt"
     note "Output: \$TOOLKIT_ROOT/crackr/"
 }
@@ -79,7 +81,7 @@ show_crack() {
 show_privesc() {
     header "6. PRIVESC ENUM — On target or remote"
     note "Linux target:"
-    cmd "./escalatr.sh 10.10.10.1 --os linux"
+    cmd "${SCRIPT_DIR}/escalatr.sh 10.10.10.1 --os linux"
     note "Windows target (run on target):"
     cmd "powershell -ep bypass .\\lootr.ps1"
     note "Output: \$TOOLKIT_ROOT/privesc/ (Linux) | .\\loot\\ (Windows)"
@@ -91,7 +93,7 @@ show_privesc() {
 
 show_pivot() {
     header "7. PIVOT — Reach internal networks"
-    cmd "./pivotr.sh ligolo --pivot-ip 10.10.10.5 --subnet 172.16.1.0/24"
+    cmd "${SCRIPT_DIR}/pivotr.sh ligolo --pivot-ip 10.10.10.5 --subnet 172.16.1.0/24"
     note "Alternatives: ssh, chisel, listener modes"
     note "State tracked in \$TOOLKIT_ROOT/pivots/"
     echo ""
@@ -115,7 +117,7 @@ show_loot() {
 
 show_evidence() {
     header "9. EVIDENCE — Screenshot + flag capture"
-    cmd "./evidencr.sh -t 10.10.10.1 --local-flag <flag> --proof-flag <flag>"
+    cmd "${SCRIPT_DIR}/evidencr.sh -t 10.10.10.1 --local-flag <flag> --proof-flag <flag>"
     note "Records: IP, hostname, flags, whoami, ifconfig, screenshots"
     note "Output: \$TOOLKIT_ROOT/evidence/"
     echo ""
@@ -131,16 +133,21 @@ show_env() {
     note "Unified creds log: \$TOOLKIT_ROOT/creds.txt"
     echo ""
     note "Preflight tool check (no sudo needed):"
-    cmd "./tools_setup.sh --check"
+    cmd "${SCRIPT_DIR}/tools_setup.sh --check"
     note "Serve tools to targets:"
     cmd "cd ~/tools/windows && python3 -m http.server 80"
-    cmd "./servr.sh http --dir ~/tools/windows --port 80"
+    cmd "${SCRIPT_DIR}/servr.sh http --dir ~/tools/windows --port 80"
 }
 
 # ── Dispatch ──────────────────────────────────────────────────────────────────
-phase="${1:-all}"
-# Strip --no-color from phase if it was first arg
-[[ "$phase" == "--no-color" ]] && phase="all"
+phase=""
+for arg in "$@"; do
+    case "$arg" in
+        --no-color) disable_colors ;;
+        *) [[ -z "$phase" ]] && phase="$arg" ;;
+    esac
+done
+phase="${phase:-all}"
 
 case "$phase" in
     recon)    show_recon ;;
@@ -164,7 +171,7 @@ case "$phase" in
         show_pivot
         show_loot
         show_evidence
-        echo -e "\n${BOLD}${CYAN}Tip:${NC} ./workflow.sh <phase> for just one section"
+        echo -e "\n${BOLD}${CYAN}Tip:${NC} ${SCRIPT_DIR}/workflow.sh <phase> for just one section"
         echo ""
         ;;
     -h|--help|help)
