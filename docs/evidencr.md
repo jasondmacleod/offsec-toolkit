@@ -130,7 +130,7 @@ Use `--category AD-client` or `--category AD-DC` to tag machines correctly. The 
 
 # DC — reference how you got here from the client
 ./evidencr.sh -t 10.10.10.10 -n DC01 --os Windows --flags proof \
-  --points 25 --category AD-DC
+  --points 20 --category AD-DC
 ```
 
 > [!important] **Before running evidencr on an AD-DC — confirm these are done:**
@@ -208,7 +208,7 @@ Options:
   --proof-flag VALUE   Pre-fill proof.txt flag value (skips silent prompt)
   -p <path>            Local path to flag file — copies it into evidence dir
   --os <os>            Target OS: Linux | Windows
-  --points <value>     Points value: 10 | 20 | 25
+  --points <value>     Points value: 10 | 20   (OffSec+: AD client=10, standalone/AD-DC=20)
   --category <type>    standalone | AD-client | AD-DC
   --foothold-user U    Initial low-priv user used for foothold (prompted if omitted)
   --elevated-user U    Elevated user (root/SYSTEM/Administrator) (prompted if omitted)

@@ -109,7 +109,7 @@ Options:
   -p <flag_path>       Full path to flag file on Kali for local copy
   --no-color           Disable colored output
   --os <os>            Target OS: Linux|Windows
-  --points <value>     Points value: 10|20|25
+  --points <value>     Points value: 10|20  (OffSec+ AD client=10, standalone/AD-DC=20)
   --category <type>    Machine category: standalone|AD-client|AD-DC
   --foothold-user U    Initial low-priv user used for foothold
   --elevated-user U    Elevated user account (root/SYSTEM/Administrator)
@@ -706,7 +706,7 @@ collect_machine_context() {
     esac
 
     case "$POINTS_VALUE" in
-        10|20|25|'[not provided]') ;;
+        10|20|'[not provided]') ;;
         *)
             warn "Invalid points value '${POINTS_VALUE}' provided; defaulting to [not provided]"
             POINTS_VALUE="[not provided]"
