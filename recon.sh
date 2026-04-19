@@ -3227,13 +3227,13 @@ if ! is_positive_integer "$UDP_TOP_PORTS" || (( UDP_TOP_PORTS > 65535 )); then
     exit 1
 fi
 
-if ! is_positive_integer "$RUSTSCAN_BATCH_SIZE"; then
-    error "--batch-size/--rate must be a positive integer"
+if ! is_positive_integer "$RUSTSCAN_BATCH_SIZE" || (( RUSTSCAN_BATCH_SIZE > 65535 )); then
+    error "--batch-size/--rate must be an integer between 1 and 65535"
     exit 1
 fi
 
-if ! is_positive_integer "$MAX_PARALLEL_SERVICES"; then
-    error "--max-parallel must be a positive integer"
+if ! is_positive_integer "$MAX_PARALLEL_SERVICES" || (( MAX_PARALLEL_SERVICES > 32 )); then
+    error "--max-parallel must be an integer between 1 and 32"
     exit 1
 fi
 

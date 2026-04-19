@@ -2290,8 +2290,8 @@ if ! echo "$TARGET_URL" | grep -qP '^https?://'; then
     warn "No scheme detected — assuming http: ${TARGET_URL}"
 fi
 
-if ! is_positive_integer "$THREADS"; then
-    error "--threads must be a positive integer"
+if ! is_positive_integer "$THREADS" || (( THREADS > 500 )); then
+    error "--threads must be an integer between 1 and 500"
     exit 1
 fi
 

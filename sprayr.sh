@@ -1275,9 +1275,15 @@ main() {
         exit 1
     fi
 
-    # Numeric validation
-    is_positive_integer "$THREADS" || { error "Invalid thread count: ${THREADS}"; exit 1; }
-    is_positive_integer "$PROTO_TIMEOUT" || { error "Invalid timeout: ${PROTO_TIMEOUT}"; exit 1; }
+    # Numeric validation (cap threads to avoid lockout risk + resource exhaustion)
+    if ! is_positive_integer "$THREADS" || (( THREADS > 200 )); then
+        error "Invalid thread count: ${THREADS} (must be 1-200)"
+        exit 1
+    fi
+    if ! is_positive_integer "$PROTO_TIMEOUT" || (( PROTO_TIMEOUT > 3600 )); then
+        error "Invalid timeout: ${PROTO_TIMEOUT} (must be 1-3600 seconds)"
+        exit 1
+    fi
 
     #--- Tool check ------------------------------------------------------------
     check_tools

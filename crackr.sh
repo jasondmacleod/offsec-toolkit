@@ -1994,8 +1994,8 @@ if [[ -n "${HYDRA_PORT:-}" ]] && ! is_port_number "$HYDRA_PORT"; then
     exit 1
 fi
 
-if ! is_positive_integer "$HYDRA_THREADS"; then
-    log_error "Invalid hydra thread count: $HYDRA_THREADS"
+if ! is_positive_integer "$HYDRA_THREADS" || (( HYDRA_THREADS > 64 )); then
+    log_error "Invalid hydra thread count: $HYDRA_THREADS (must be 1-64; hydra upstream recommends <=64)"
     exit 1
 fi
 

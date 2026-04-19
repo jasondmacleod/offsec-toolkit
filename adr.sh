@@ -2128,7 +2128,10 @@ main() {
         warn "  export KRB5CCNAME=/path/to/ticket.ccache"
     fi
     is_valid_ip "$DC_IP"  || { error "Invalid DC IP: ${DC_IP}"; exit 1; }
-    is_positive_integer "$THREADS" || { error "Invalid thread count: ${THREADS}"; exit 1; }
+    if ! is_positive_integer "$THREADS" || (( THREADS > 200 )); then
+        error "Invalid thread count: ${THREADS} (must be 1-200)"
+        exit 1
+    fi
 
     # Normalize hash
     if [[ "$AUTH_TYPE" == "hash" ]]; then
