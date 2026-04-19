@@ -23,6 +23,8 @@
 
 set -o pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
 #------------------------------------------------------------------------------
 # COLORS & OUTPUT HELPERS  (matches toolkit exactly)
 #------------------------------------------------------------------------------
@@ -454,8 +456,7 @@ mode_ligolo() {
 
     # 5. Setup certs directory (needed in both modes)
     phase "Starting Ligolo Proxy"
-    local ligolo_dir
-    ligolo_dir="$(dirname "$(realpath "$0")")/ligolo"
+    local ligolo_dir="${SCRIPT_DIR}/ligolo"
     mkdir -p -- "${ligolo_dir}/certs" "$STATE_DIR"
 
     # 6. Optional file server (start before proxy so it's ready and box prints cleanly)
@@ -536,8 +537,8 @@ mode_ligolo() {
             "   nmap -sT -Pn -p 22,80,445 <INTERNAL_IP>" \
             "" \
             "5. Enumerate internal network (once tunnel is up):" \
-            "   ./recon.sh --auto <INTERNAL_HOST_IP>   # full recon on target" \
-            "   ./adr.sh -dc <DC_IP> -u <USER> -p '<PASS>'  # if domain joined" \
+            "   ${SCRIPT_DIR}/recon.sh --auto <INTERNAL_HOST_IP>   # full recon on target" \
+            "   ${SCRIPT_DIR}/adr.sh -dc <DC_IP> -u <USER> -p '<PASS>'  # if domain joined" \
             "   nxc smb ${subnet} --gen-relay-list /tmp/smb_hosts.txt  # find SMB hosts" \
             "" \
             "TIP: Access pivot localhost via 240.0.0.1 (Ligolo magic IP)" \
@@ -567,8 +568,8 @@ mode_ligolo() {
             "   nmap -sT -Pn -p 22,80,445 <INTERNAL_IP>" \
             "" \
             "5. Enumerate internal network (once tunnel is up):" \
-            "   ./recon.sh --auto <INTERNAL_HOST_IP>   # full recon on target" \
-            "   ./adr.sh -dc <DC_IP> -u <USER> -p '<PASS>'  # if domain joined" \
+            "   ${SCRIPT_DIR}/recon.sh --auto <INTERNAL_HOST_IP>   # full recon on target" \
+            "   ${SCRIPT_DIR}/adr.sh -dc <DC_IP> -u <USER> -p '<PASS>'  # if domain joined" \
             "   nxc smb ${subnet} --gen-relay-list /tmp/smb_hosts.txt  # find SMB hosts" \
             "" \
             "TIP: Access pivot localhost via 240.0.0.1 (Ligolo magic IP)" \
@@ -587,8 +588,8 @@ mode_ligolo() {
     append_pivot_next_step "Internal enumeration after tunnel activation" \
         "ligolo route to ${subnet} was configured" \
         "nmap -sT -Pn -p 22,80,445 <INTERNAL_IP>" \
-        "./recon.sh --auto <INTERNAL_HOST_IP>" \
-        "./adr.sh -dc <DC_IP> -d <DOMAIN> -u <USER> -p '<PASS>'" \
+        "${SCRIPT_DIR}/recon.sh --auto <INTERNAL_HOST_IP>" \
+        "${SCRIPT_DIR}/adr.sh -dc <DC_IP> -d <DOMAIN> -u <USER> -p '<PASS>'" \
         "nxc smb ${subnet} --gen-relay-list /tmp/smb_hosts.txt" \
         "curl -sk http://240.0.0.1:<PIVOT_LOCAL_PORT>/"
     show_pivot_next_steps_path
@@ -746,8 +747,8 @@ mode_listener() {
     echo -e "  ${YELLOW}Ctrl+Z → stty raw -echo; fg → export TERM=xterm${NC}"
     echo ""
     echo -e "  ${CYAN}# Then enumerate the internal host:${NC}"
-    echo -e "  ${YELLOW}./recon.sh --auto <INTERNAL_HOST_IP>   # from Kali after noting the IP${NC}"
-    echo -e "  ${YELLOW}./escalatr.sh <INTERNAL_HOST_IP> --os linux  # run from Kali${NC}"
+    echo -e "  ${YELLOW}${SCRIPT_DIR}/recon.sh --auto <INTERNAL_HOST_IP>   # from Kali after noting the IP${NC}"
+    echo -e "  ${YELLOW}${SCRIPT_DIR}/escalatr.sh <INTERNAL_HOST_IP> --os linux  # run from Kali${NC}"
 }
 
 #==============================================================================
@@ -904,7 +905,7 @@ mode_ssh() {
                 "ssh -N -D 0.0.0.0:${socks_port} ${pivot_user}@${pivot_ip} -p ${pivot_port}" \
                 "printf 'socks5 127.0.0.1 ${socks_port}\\n' | sudo tee -a /etc/proxychains4.conf" \
                 "proxychains -q nmap -sT -Pn -p 22,80,445 <TARGET_IP>" \
-                "proxychains ./recon.sh --auto <INTERNAL_IP>" \
+                "proxychains ${SCRIPT_DIR}/recon.sh --auto <INTERNAL_IP>" \
                 "${sshuttle_cmd}"
             ;;
 
@@ -964,7 +965,7 @@ mode_ssh() {
                 "ssh -N -R ${socks_port} ${kali_user}@${kali_ip}" \
                 "printf 'socks5 127.0.0.1 ${socks_port}\\n' | sudo tee -a /etc/proxychains4.conf" \
                 "proxychains -q nmap -sT -Pn -p 22,80,445 <TARGET_IP>" \
-                "proxychains ./recon.sh --auto <INTERNAL_IP>"
+                "proxychains ${SCRIPT_DIR}/recon.sh --auto <INTERNAL_IP>"
             ;;
     esac
 
@@ -1065,15 +1066,15 @@ mode_chisel() {
             echo -e "  ${CYAN}proxychains -q nmap -sT -Pn -p 22,80,445 <INTERNAL_IP>${NC} # port check"
             echo ""
             echo -e "${BOLD}Then enumerate (proxychains wraps the scripts):${NC}"
-            echo -e "  ${CYAN}proxychains ./recon.sh --auto <INTERNAL_IP>${NC}       # full recon"
-            echo -e "  ${CYAN}proxychains ./adr.sh -dc <DC_IP> -u <USER> -p '<PASS>'${NC} # if AD"
+            echo -e "  ${CYAN}proxychains ${SCRIPT_DIR}/recon.sh --auto <INTERNAL_IP>${NC}       # full recon"
+            echo -e "  ${CYAN}proxychains ${SCRIPT_DIR}/adr.sh -dc <DC_IP> -u <USER> -p '<PASS>'${NC} # if AD"
             append_pivot_next_step "Chisel reverse SOCKS requested" \
                 "type=socks kali=${kali_ip}:${port} socks=${socks_port}" \
                 "chisel server -p ${port} --socks5 --reverse" \
                 "chisel client ${kali_ip}:${port} R:${socks_port}:socks" \
                 "printf 'socks5 127.0.0.1 ${socks_port}\\n' | sudo tee -a /etc/proxychains4.conf" \
                 "proxychains -q nmap -sT -Pn -p 22,80,445 <INTERNAL_IP>" \
-                "proxychains ./recon.sh --auto <INTERNAL_IP>"
+                "proxychains ${SCRIPT_DIR}/recon.sh --auto <INTERNAL_IP>"
 
             if [[ "$start_server" == true ]]; then
                 info "Starting chisel server..."
@@ -1115,7 +1116,7 @@ mode_chisel() {
                 "chisel client ${kali_ip}:${port} R:${local_port}:${target_ip}:${target_port}" \
                 "nc -zv localhost ${local_port}" \
                 "curl -s --connect-timeout 3 http://localhost:${local_port}" \
-                "proxychains ./recon.sh --auto <INTERNAL_IP>   # use SOCKS mode for broad recon"
+                "proxychains ${SCRIPT_DIR}/recon.sh --auto <INTERNAL_IP>   # use SOCKS mode for broad recon"
 
             if [[ "$start_server" == true ]]; then
                 info "Starting chisel server..."
@@ -1400,8 +1401,9 @@ USAGE:
 
 MODES:
   ligolo   --subnet CIDR [--pivot-ip IP] [--port 11601] [--tun-name ligolo]
-           [--kali-ip IP] [--serve] [--serve-port 80]
+           [--kali-ip IP] [--serve] [--serve-port 80] [--daemon]
            → Creates TUN, adds route, starts ligolo-proxy, prints next steps
+           → --daemon: run proxy in background (no interactive console)
 
   ligolo2  --subnet CIDR [--tun-name ligolo2]
            → Adds second TUN + route for double pivot; prints console cmds
@@ -1442,6 +1444,7 @@ NOTES:
   - Shell catcher: penelope -p PORT -O  (preferred over netcat)
   - proxychains nmap: always use -sT -Pn (TCP connect, no ping)
   - 240.0.0.1 = pivot's localhost in Ligolo tunnel
+  - Colors: pass --no-color or export NO_COLOR=1 to disable ANSI output
 
 EOF
 }
