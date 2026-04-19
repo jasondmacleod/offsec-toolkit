@@ -145,8 +145,53 @@ header()  { echo -e "\n${BOLD}${CYAN}══════════════�
             echo -e "${BOLD}${CYAN}  $*${NC}"; \
             echo -e "${BOLD}${CYAN}═══════════════════════════════════════════════════${NC}"; }
 phase()       { echo -e "\n${MAGENTA}[$(ts)] [PHASE]${NC} ${BOLD}$*${NC}"; }
-_tool_start() { echo -e "${CYAN}[$(ts)] [~]${NC} ${BOLD}$1${NC} → $2  ${YELLOW}(budget: $3)${NC}"; }
-_tool_done()  { local _e=$(( $(date +%s) - $2 )); echo -e "${GREEN}[$(ts)] [✓]${NC} $1 done — ${_e}s"; }
+
+# Heartbeat: emit a progress line every 30s while a long-running tool is executing,
+# so the operator can tell the difference between "still working" and "stuck".
+# Each subshell (parallel target) gets its own _HEARTBEAT_PID.
+_HEARTBEAT_PID=""
+_start_heartbeat() {
+    # $1=tool, $2=ctx, $3=budget_sec
+    local tool="$1" ctx="$2" budget="$3"
+    local start
+    start=$(date +%s)
+    (
+        while true; do
+            sleep 30
+            local now el
+            now=$(date +%s)
+            el=$(( now - start ))
+            if (( el >= budget )); then
+                echo -e "${YELLOW}[$(ts)] [~]${NC} ${tool} still running — over budget (${el}s / ${budget}s) → ${ctx}"
+            else
+                echo -e "${CYAN}[$(ts)] [~]${NC} ${tool} running (${el}s / ${budget}s) → ${ctx}"
+            fi
+        done
+    ) &
+    _HEARTBEAT_PID=$!
+    register_cleanup_pid "$_HEARTBEAT_PID"
+}
+_stop_heartbeat() {
+    if [[ -n "${_HEARTBEAT_PID:-}" ]]; then
+        kill "$_HEARTBEAT_PID" 2>/dev/null || true
+        wait "$_HEARTBEAT_PID" 2>/dev/null || true
+        unregister_cleanup_pid "$_HEARTBEAT_PID"
+        _HEARTBEAT_PID=""
+    fi
+}
+_tool_start() {
+    echo -e "${CYAN}[$(ts)] [~]${NC} ${BOLD}$1${NC} → $2  ${YELLOW}(budget: $3)${NC}"
+    local _budget_sec
+    _budget_sec=$(echo "$3" | grep -oE '^[0-9]+' | head -n1)
+    if [[ -n "$_budget_sec" ]] && (( _budget_sec >= 60 )); then
+        _start_heartbeat "$1" "$2" "$_budget_sec"
+    fi
+}
+_tool_done() {
+    _stop_heartbeat
+    local _e=$(( $(date +%s) - $2 ))
+    echo -e "${GREEN}[$(ts)] [✓]${NC} $1 done — ${_e}s"
+}
 
 #------------------------------------------------------------------------------
 # PROGRESS TRACKING
