@@ -231,6 +231,7 @@ crackr --hydra ssh --target 10.10.10.5 --port 2222 -u admin -w rockyou
 | `--http-path <path>` | Path for http-get (default: `/`) |
 | `--http-form <spec>` | Form spec: `"/path:params:F=fail_string"` |
 | `--hydra-threads <N>` | Threads (default: 16, range 1-64) |
+| `--hydra-extra <args>` | Pass extra args directly to hydra (e.g. `"-V -f"`) |
 | `--no-stop` | Don't stop after first valid cred |
 
 **Hydra default ports:** ssh=22, ftp=21, rdp=3389, smb=445, mysql=3306, mssql=1433, postgres=5432, vnc=5900, http-get=80, https-get=443
@@ -273,6 +274,9 @@ crackr --cewl http://target.htb --cewl-mutate -q -f hashes.txt
 
 # Custom spider depth + min word length
 crackr --cewl http://target.htb --cewl-depth 3 --cewl-min 6
+
+# Custom output path for the generated wordlist
+crackr --cewl http://target.htb --cewl-output /tmp/target_words.txt
 ```
 
 **Mutations applied (`--cewl-mutate`):** lowercase, uppercase, capitalized, common suffixes (`1, 12, 123, !, @`), year suffixes (current year ±5, with/without `!`), leet speak (`a→4, e→3, i→1, o→0, s→5, t→7`). Output is deduplicated.
@@ -381,6 +385,7 @@ Auto-detected from pattern matching. Handles SAM dump format (`user:rid:lm:ntlm:
 | `-o, --output <dir>` | Output directory (default: `$TOOLKIT_ROOT/crackr`) |
 | `-s, --show` | Show cracked results |
 | `-l, --list` | List available wordlists, rules, tools |
+| `--no-color` | Disable ANSI colors (also: `export NO_COLOR=1`) |
 
 ---
 

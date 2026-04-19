@@ -9,7 +9,7 @@ tags:
 # OffSec Toolkit Master Strategy Guide
 
 > [!important] This Is Your engagement Runbook
-> You have 13 scripts. This document tells you exactly when to fire each one, in what order, what to do with the output, and what to do when something comes back empty. Under engagement pressure, follow this — don't improvise the sequence.
+> You have 14 scripts. This document tells you exactly when to fire each one, in what order, what to do with the output, and what to do when something comes back empty. Under engagement pressure, follow this — don't improvise the sequence.
 
 ---
 
@@ -43,10 +43,11 @@ Verify the evidence-gated next-step rules after script edits:
 
 ---
 
-## The 13 Scripts at a Glance
+## The 14 Scripts at a Glance
 
 | Script | Role | Phase | Runs On |
 |--------|------|-------|---------|
+| `startr.sh` | engagement-day workspace + tmux + env + optional recon auto-launch | Setup (T+0) | Kali |
 | `recon.sh` | Port scan + service enum + quick-wins triage | Recon | Kali |
 | `webenum.sh` | Deep web enum | Recon | Kali |
 | `escalatr.sh` | Privesc tooling + staging | Post-exploit | Kali |
@@ -57,7 +58,7 @@ Verify the evidence-gated next-step rules after script edits:
 | `adr.sh` | AD enumeration + interactive kill chain | AD | Kali |
 | `pivotr.sh` | Pivot setup + reference + reconnect | Pivoting | Kali |
 | `servr.sh` | File server (HTTP/SMB/FTP) | File transfer | Kali |
-| `evidencr.sh` | Evidence capture | Reporting | Kali |
+| `evidencr.sh` | Evidence capture + engagement-wide rollup + MSF-limit audit | Reporting | Kali |
 | `tools_setup.sh` | Tool staging installer + preflight check | Setup | Kali |
 | `workflow.sh` | Workflow quick-reference cheatsheet | Reference | Kali |
 
@@ -67,10 +68,37 @@ Verify the evidence-gated next-step rules after script edits:
 
 ## engagement Day Master Sequence
 
-### T+0 to T+5 min: Triage ALL targets first
+### T-0 (setup, before IPs arrive): pre-stage a targets file
+
+Pre-create `~/toolkit/targets.txt` before engagement day so T+0 is one command:
+
+```
+SA1=
+SA2=
+SA3=
+AD1=
+AD2=
+DC=
+DOMAIN=
+ADUSER=
+ADPASS=
+```
+
+### T+0: Launch workspace with startr.sh
 
 ```bash
-sudo ./recon.sh --quick-wins-only --auto IP1 IP2 IP3 AD_IP1 AD_IP2 AD_IP3
+# Fill the IPs into targets.txt, then:
+./startr.sh -f ~/toolkit/targets.txt --recon
+```
+
+This creates `~/toolkit/exam_YYYY-MM-DD/`, builds the tmux session (6 named windows), exports `$KALI`/`$SA1`/`$SA2`/`$SA3`/`$AD1`/`$AD2`/`$DC`/`$DOMAIN`/`$ADUSER`/`$ADPASS` into every pane, starts the file server on port 80 from `~/tools/`, and — with `--recon` — kicks off `recon.sh --auto` on every target in parallel. Recon is already running by the time you finish reading the engagement brief.
+
+> [!tip] If VPN drops or a terminal dies: `./startr.sh --attach` re-attaches to the existing session. State survives.
+
+### T+0 to T+5 min: Triage ALL targets first (in parallel with recon)
+
+```bash
+sudo ./recon.sh --quick-wins-only --auto $SA1 $SA2 $SA3 $AD1 $AD2 $DC
 ```
 
 **Step 1 — Read the priority ranking:**
@@ -893,8 +921,19 @@ Don't manually re-do the setup. `reconnect` handles it.
 
 # Domain Controller
 ./evidencr.sh -t 10.10.10.10 -n DC01 --os Windows --flags proof \
-  --proof-flag "def456..." --points 40 --category AD-DC
+  --proof-flag "def456..." --points 25 --category AD-DC
 ```
+
+> [!important] evidencr `--points` only accepts `10`, `20`, or `25`. Anything else is rejected by validation.
+
+**If you used Metasploit/Meterpreter on this box:**
+
+```bash
+./evidencr.sh -t 10.10.10.5 --msf-used -n victim --os Linux --flags both \
+  --points 20 --category standalone
+```
+
+This drops a `msf_used.flag` marker. evidencr warns loudly if more than one target has the marker — OffSec allows MSF on exactly one target.
 
 ### Step 2 — Take the screenshots it prompts you for (do this NOW)
 
@@ -919,6 +958,22 @@ cat $TOOLKIT_ROOT/evidence/evidence_ledger.txt
 ### Step 4 — Submit flag to engagement control panel
 
 Do this right now, not later. Copy the flag value and submit it in the OffSec engagement portal.
+
+### Step 5 — engagement-wide rollup before report writing
+
+After every machine has been captured, run rollup to confirm you have enough points and no audit gaps:
+
+```bash
+./evidencr.sh --rollup
+```
+
+Output includes:
+- **Total points / 100** and pass status (≥70 = PASS, else points still needed)
+- **Per-category breakdown** (standalone / AD-client / AD-DC)
+- **Missing flags** (per-IP `local.txt` / `proof.txt` gaps)
+- **MSF target count** (loud warning if > 1 — OffSec allows MSF on exactly one target)
+
+Run this before starting the report. If it shows missing flags, you still have time to re-collect.
 
 ---
 
@@ -1083,6 +1138,7 @@ Do this right now, not later. Copy the flag value and submit it in the OffSec en
 ## Script Interaction Map
 
 ```
+startr.sh -f targets.txt --recon → workspace + tmux + env vars + file server + auto-recon
 recon.sh --quick-wins-only → rank targets → attack easiest first
 recon.sh → finds HTTP → webenum.sh --from-recon IP
              → finds SMB  → check quick_wins.txt, loot shares manually
@@ -1112,6 +1168,7 @@ Internal subnets found → pivotr.sh → tunnel up → recon.sh on internals
 Tunnel dies → pivotr.sh reconnect → back in one command
 
 FLAG CAPTURED → evidencr.sh IMMEDIATELY → screenshots NOW → submit to portal
+All flags captured → evidencr.sh --rollup → confirm 70+ pts, no gaps, MSF count ≤ 1
 
 All creds auto-logged to $TOOLKIT_ROOT/creds.txt by adr.sh, crackr.sh, sprayr.sh
 ```
@@ -1241,6 +1298,8 @@ The table below maps each gap to its phase and the manual technique to fill it.
 10. **Manually re-establishing tunnels after they die** — `pivotr.sh reconnect` does it in one command.
 11. **Not reading SNMP `running_processes.txt`** — passwords in process command-line args is free money.
 12. **Cracking hashes but not spraying the result** — a cracked password is worthless until you spray it everywhere.
+13. **Manually setting up the workspace on engagement day** — pre-stage `targets.txt`, then one `./startr.sh -f targets.txt --recon` covers workspace, tmux, env vars, file server, and recon in one shot.
+14. **Marking more than one box as `--msf-used`** — OffSec allows MSF on exactly one target. Run `evidencr.sh --rollup` before the report to audit.
 
 ---
 
@@ -1250,6 +1309,7 @@ The table below maps each gap to its phase and the manual technique to fill it.
 - [[Stuck_Decision_Tree]] — when you're genuinely stuck
 - [[Creds_Tracker]] — live credential tracking
 - [[Active_Directory]] — manual AD techniques
+- [[startr]] — startr.sh cheatsheet (engagement-day launcher)
 - [[scripts/recon]] — recon.sh cheatsheet
 - [[webenum]] — webenum.sh cheatsheet
 - [[crackr]] — crackr.sh cheatsheet

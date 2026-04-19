@@ -85,14 +85,18 @@ sudo ./recon.sh --auto --outdir ~/engagement/recon 10.10.10.1
 | `--udp-ports N` | 200 | Top N UDP ports to scan |
 | `--udp-full` | off | Also scan all 65535 UDP ports |
 | `--outdir DIR` | `$TOOLKIT_ROOT/recon` | Output directory |
-
-When launched through `sudo`, the default `$TOOLKIT_ROOT` resolves to the invoking
-user's home directory instead of `/root/offsec`.
 | `--quick-wins` | off | Run 5-min triage per target before deep recon |
 | `--quick-wins-only` | off | Triage only — rank targets, skip deep scan |
 | `--max-parallel N` | 5 (1-32) | Max concurrent service enumerations per target |
+| `--max-parallel-targets N` | 3 | Max simultaneous target scans |
+| `--sequential` | off | Process targets one at a time (default: parallel) |
 | `-f FILE` | — | Read targets from file |
 | `--rate N` | 1500 | Deprecated alias for `--batch-size` |
+| `--no-sudo` | off | Skip automatic sudo re-exec (run without root — UDP/OS detection disabled) |
+| `--no-color` | off | Disable ANSI colors (also: `export NO_COLOR=1`; auto-off when not a TTY) |
+
+When launched through `sudo`, the default `$TOOLKIT_ROOT` resolves to the invoking
+user's home directory instead of `/root/offsec`.
 
 > [!note] Always `sudo`
 > UDP scanning and OS detection (`-O`) require root. Non-root mode skips both automatically with a warning — no crash.

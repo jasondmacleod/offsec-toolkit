@@ -55,6 +55,7 @@ Modes: http | smb | ftp
 | `--port N` | 80 / 445 / 21 | Listen port (per-mode defaults) |
 | `--dir PATH` | current directory | Directory to serve |
 | `--ip IP` | auto-detect | Override Kali IP in printed commands |
+| `--no-color` | off | Disable ANSI colors (also: `export NO_COLOR=1`; auto-off when not a TTY) |
 
 **SMB only:**
 

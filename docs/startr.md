@@ -59,12 +59,12 @@ ADPASS=Password123!
 3. **Initializes tracking** — `creds.txt` (scratchpad, pre-populated with AD assumed-breach creds) and `hosts.txt` (all target IPs). Structured credential tracking stays in [[Creds_Tracker]]
 4. **Writes env.sh** — exports target IPs, AD creds, Kali IP, workspace path — sourced in every tmux pane
 5. **Builds tmux session** — 6 named windows with splits, env sourced in all panes
-6. **Starts file server** — HTTP server on port 80 from `~/toolkit/` in the staging window
+6. **Starts file server** — HTTP server on port 80 from `~/tools/` in the staging window
 7. **Launches recon** (if `--recon`) — runs `recon.sh --auto` on all targets simultaneously
 8. **Prints summary** — target map, tmux navigation, quick reference commands, engagement end time
 
 > [!warning] Toolkit Directory
-> The file server serves from `~/toolkit/`. Make sure this directory exists and is populated with your transfer tools (linpeas, winpeas, nc, chisel, etc.) **before engagement day**. If you used `tools_setup.sh` (which installs to `~/tools/`), either symlink or copy: `ln -s ~/tools ~/toolkit`
+> The file server serves from `~/tools/` — the same path `tools_setup.sh` populates. Make sure this directory exists and is populated with your transfer tools (linpeas, winpeas, nc, chisel, etc.) **before engagement day**.
 
 ---
 
@@ -154,7 +154,7 @@ startr complete → recon running on all 6 targets
 │      Go to Ctrl+b <window> for that target and start working
 │
 ├── 4. Let AD recon finish in background
-│      AD set runs in Window 3 — don't touch it yet unless creds
+│      AD set runs in Window 4 (AD) — don't touch it yet unless creds
 │      gave you an obvious win (e.g. admin on a member server)
 │
 └── 5. Start your attack on SA-1 while scans complete on SA-2/SA-3
@@ -173,8 +173,8 @@ After first foothold → [[lootr]] for collection → [[evidencr]] for evidence 
 
 - `tmux` installed
 - VPN connected (tun0 up)
-- `~/toolkit/` directory populated with transfer tools for HTTP server (see warning above)
-- `~/scripts/recon.sh` for `--recon` flag (falls back to `~/scripts/bin/recon.sh`)
+- `~/tools/` directory populated with transfer tools for HTTP server (see warning above)
+- `recon.sh` for `--recon` flag — searched script-adjacent first, then `~/scripts/recon.sh`, then `~/scripts/bin/recon.sh`
 
 ---
 
@@ -191,7 +191,7 @@ source ~/toolkit/exam_YYYY-MM-DD/env.sh
 ./startr.sh -f targets.txt
 
 # File server died — restart manually
-cd ~/toolkit && python3 -m http.server 80
+cd ~/tools && python3 -m http.server 80
 ```
 
 ---
@@ -209,6 +209,7 @@ cd ~/toolkit && python3 -m http.server 80
 | `-f`, `--file` | Load targets from KEY=VALUE file |
 | `--recon` | Auto-launch recon.sh on all targets |
 | `--attach` | Re-attach to existing engagement tmux session |
+| `--no-color` | Disable ANSI colors (also: `export NO_COLOR=1`) |
 | `-h`, `--help` | Show usage |
 
 ---

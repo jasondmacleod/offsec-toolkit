@@ -87,7 +87,10 @@ cat $TOOLKIT_ROOT/privesc/10.10.10.1/quick-wins.txt
 | `--commands linux\|windows` | — | Print inline decision-tree cheatsheet |
 | `--potato` | — | Print potato variant selection guide |
 | `--no-stage` | off | Skip tool download/staging |
+| `--offline` | off | Use cached tools only — no network fetch |
+| `--remote-tmp <path>` | `/tmp` | Writable dir on target; set this if `/tmp` is `noexec` |
 | `--port N` | 8888 | HTTP server port |
+| `--no-color` | off | Disable ANSI colors (also: `export NO_COLOR=1`; auto-off when not a TTY) |
 
 > [!note] HTTP server auto-stops after 30 minutes. Ctrl+C kills it cleanly with no zombies.
 

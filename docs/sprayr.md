@@ -70,6 +70,7 @@ Multi-protocol credential spray wrapper. Given a cracked or obtained credential,
 | `-H, --hash HASH` | NTLM hash — NT-only, `:NTHASH`, or `LMHASH:NTHASH` |
 | `-d, --domain DOMAIN` | Domain name for domain auth |
 | `--local-auth` | Local authentication (mutually exclusive with `-d`) |
+| `-k, --kerberos` | Use Kerberos ccache from `$KRB5CCNAME` (skips `-u`/`-p`/`-H` auth path) |
 
 **Targets:**
 
@@ -88,10 +89,11 @@ Multi-protocol credential spray wrapper. Given a cracked or obtained credential,
 | `--threads N` | 20 (1-200) | nxc thread count |
 | `--timeout N` | 30 (1-3600) | Per-protocol timeout in seconds |
 | `--outdir DIR` | `$TOOLKIT_ROOT/spray/<timestamp>/` | Output directory |
+| `--from-creds` | off | Spray all creds from `$TOOLKIT_ROOT/creds.txt` against all recon targets |
+| `--no-color` | off | Disable ANSI colors (also: `export NO_COLOR=1`) |
 
 When launched through `sudo`, the default `$TOOLKIT_ROOT` resolves to the invoking
 user's home directory instead of `/root/offsec`.
-| `--from-creds` | off | Spray all creds from `$TOOLKIT_ROOT/creds.txt` against all recon targets |
 
 ---
 

@@ -134,6 +134,7 @@ webenum --url http://192.168.50.100 --deep --vhost target.htb
 | `--threads N` | ffuf thread count (default: 40, range 1-500) | `--threads 20` |
 | `--rate N` | Max requests/sec, 0=unlimited (default: 0) | `--rate 100` |
 | `--ffuf-ac` | Enable ffuf autocalibration after reviewing baseline behavior | `--ffuf-ac` |
+| `--no-color` | Disable ANSI colors (also: `export NO_COLOR=1`; auto-off when not a TTY) | `--no-color` |
 | `-h, --help` | Show help | |
 
 When launched through `sudo`, the default `$TOOLKIT_ROOT` resolves to the invoking

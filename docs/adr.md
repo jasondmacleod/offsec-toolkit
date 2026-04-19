@@ -61,15 +61,16 @@ Active Directory enumeration and attack-prep script. OffSec-focused, Kali-side o
 | `-H, --hash HASH` | — | NTLM hash: `:NTLM`, `LM:NTLM`, or plain 32-char NTLM |
 | `--dc-host HOSTNAME` | — | DC hostname for Kerberos (e.g. `DC01.corp.local`) |
 | `--outdir DIR` | `$TOOLKIT_ROOT/ad/<DOMAIN>/` | Output directory |
-
-When launched through `sudo`, the default `$TOOLKIT_ROOT` resolves to the invoking
-user's home directory instead of `/root/offsec`.
 | `--threads N` | 10 (1-200) | nxc thread count |
 | `--quick` | off | Phases 1–3 only |
 | `--skip-bloodhound` | off | Skip BloodHound collection |
 | `--skip-shares` | off | Skip share enumeration |
 | `--force` | off | Re-run all phases (ignore progress.log) |
 | `--chain` | off | Interactive 7-step AD kill chain walkthrough |
+| `--no-color` | off | Disable ANSI colors (also: `export NO_COLOR=1`; auto-off when not a TTY) |
+
+When launched through `sudo`, the default `$TOOLKIT_ROOT` resolves to the invoking
+user's home directory instead of `/root/offsec`.
 
 ---
 

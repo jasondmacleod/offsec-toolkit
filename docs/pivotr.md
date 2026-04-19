@@ -51,6 +51,9 @@ sudo ip route add 240.0.0.1/32 dev ligolo
 # Status and teardown
 ./pivotr.sh status
 ./pivotr.sh teardown --all
+
+# Disable ANSI colors (global flag — goes before the mode)
+./pivotr.sh --no-color ligolo --subnet 10.10.10.0/24   # or: export NO_COLOR=1
 ```
 
 ---

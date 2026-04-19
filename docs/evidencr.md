@@ -130,7 +130,7 @@ Use `--category AD-client` or `--category AD-DC` to tag machines correctly. The 
 
 # DC — reference how you got here from the client
 ./evidencr.sh -t 10.10.10.10 -n DC01 --os Windows --flags proof \
-  --points 40 --category AD-DC
+  --points 25 --category AD-DC
 ```
 
 > [!important] **Before running evidencr on an AD-DC — confirm these are done:**
@@ -174,7 +174,9 @@ $TOOLKIT_ROOT/evidence/
     screenshots/
       checklist.txt          # What to screenshot and how
     chain/
-      attack_chain.txt       # Your entered attack chain (timestamped)
+      attack_chain.txt            # Your entered attack chain (timestamped)
+      exploits_referenced.txt     # CVE/exploit-db/URL references used on this target
+    msf_used.flag                 # Present if --msf-used was passed (for OffSec MSF limit audit)
 ```
 
 ---
@@ -208,11 +210,69 @@ Options:
   --os <os>            Target OS: Linux | Windows
   --points <value>     Points value: 10 | 20 | 25
   --category <type>    standalone | AD-client | AD-DC
+  --foothold-user U    Initial low-priv user used for foothold (prompted if omitted)
+  --elevated-user U    Elevated user (root/SYSTEM/Administrator) (prompted if omitted)
+  --msf-used           Mark this machine as MSF/Meterpreter-used (OffSec limit: 1 target)
   -o <outdir>          Output dir (default: $TOOLKIT_ROOT/evidence)
   --non-interactive    Skip all prompts; use flags only
-  --no-color           Disable colored output
+  --no-color           Disable colored output (also: `export NO_COLOR=1`)
   -h, --help           Show help
+
+Rollup mode:
+  --rollup             Parse evidence_ledger.txt and print engagement-wide summary
+                       (see Rollup Mode section below)
 ```
+
+---
+
+## Rollup Mode — engagement-Wide Summary
+
+After each machine evidence pass, run `--rollup` to see engagement-wide status. Parses `evidence_ledger.txt` and reports totals, pass/fail, and MSF-limit audit.
+
+```bash
+./evidencr.sh --rollup
+./evidencr.sh --rollup -o /custom/evidence/dir
+```
+
+Output includes:
+- **Total points** / 100 and pass status (PASS if ≥70, else points still needed)
+- **Per-category breakdown** (standalone / AD-client / AD-DC — machines + points each)
+- **Missing flags** — IPs with `local.txt` or `proof.txt` not collected
+- **MSF target count** — warns loudly if >1 (OffSec allows MSF on exactly one target)
+
+Run this before writing the report to catch gaps while you still have time to re-collect.
+
+---
+
+## MSF Tracking
+
+Pass `--msf-used` on any machine where you used Metasploit / Meterpreter / auxiliary-scanner / msfvenom-encoder-stages. The script:
+
+1. Drops a `msf_used.flag` marker file inside `$TOOLKIT_ROOT/evidence/<IP>/`
+2. At the end of each run, scans all evidence dirs and prints current MSF target count
+3. Loud warning if count exceeds 1 — **OffSec allows MSF on exactly one target**
+
+```bash
+# Tag a machine as MSF-used
+./evidencr.sh -t 10.10.10.5 --msf-used -n victim --os Linux --flags both \
+  --points 20 --category standalone
+
+# Later, audit via rollup
+./evidencr.sh --rollup    # prints "MSF targets: 1 → 10.10.10.5"
+```
+
+> [!warning] **If you see "MSF LIMIT EXCEEDED"** — you marked more than one target as MSF-used. Either rework one of them without MSF (manual exploit equivalent), or remove the `msf_used.flag` marker for the one you didn't actually use MSF on.
+
+---
+
+## AD Checklists (Printed Automatically)
+
+When you pass `--category AD-DC` or `--category AD-client`, the script prints a category-specific checklist at the end of evidence collection (in addition to the standard screenshot checklist):
+
+- **AD-DC**: DCSync / NTDS dump / krbtgt hash / domain SID / bloodhound / domain trusts
+- **AD-client**: domain-user creds / domain-membership proof / lateral-movement vector / Kerberos ccache / foothold-vs-mid-chain position / user-profile secrets
+
+Use these as a pre-flight before moving off the machine — any unchecked item = missing evidence.
 
 ---
 

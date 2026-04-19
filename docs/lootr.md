@@ -38,6 +38,9 @@ tags:
 # Kali IP for reverse shell snippets in attack_commands.txt
 # Auto-detected from $SSH_CLIENT (set by sshd) — only needed if delivered via reverse shell
 ./lootr.sh --kali-ip 10.10.14.5
+
+# Disable ANSI colors (also: export NO_COLOR=1)
+./lootr.sh --no-color
 ```
 
 ### Windows — `lootr.ps1`
@@ -62,6 +65,9 @@ tags:
 # Kali IP for LHOST in msfvenom commands in attack_commands.txt
 # Auto-detected from active RDP/WinRM/SSH session — only needed if delivered via bind shell
 .\lootr.ps1 -KaliIp 10.10.14.5
+
+# Disable ANSI colors
+.\lootr.ps1 -NoColor
 ```
 
 > [!tip] Transfer + Execution
