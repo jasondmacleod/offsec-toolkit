@@ -23,6 +23,8 @@ set -o pipefail
 set -u
 # NOT set -e: we handle errors ourselves
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
 #------------------------------------------------------------------------------
 # CONFIGURATION
 #------------------------------------------------------------------------------
@@ -39,7 +41,8 @@ EXAM_DATE="$(date +%F)"
 EXAM_DIR="${TOOLKIT_ROOT}/exam_${EXAM_DATE}"
 SESSION_NAME="engagement"
 TOOLKIT_DIR="${HOME}/tools"
-RECON_SCRIPT="${HOME}/scripts/recon.sh"
+RECON_SCRIPT="${SCRIPT_DIR}/recon.sh"
+[[ -x "$RECON_SCRIPT" ]] || RECON_SCRIPT="${HOME}/scripts/recon.sh"
 [[ -x "$RECON_SCRIPT" ]] || RECON_SCRIPT="${HOME}/scripts/bin/recon.sh"
 
 #------------------------------------------------------------------------------
@@ -55,7 +58,7 @@ BOLD='\033[1m'
 NC='\033[0m'
 
 disable_colors() { RED='' GREEN='' YELLOW='' BLUE='' CYAN='' MAGENTA='' BOLD='' NC=''; }
-[[ "${NO_COLOR:-0}" == "1" ]] || [[ ! -t 1 ]] && disable_colors
+{ [[ "${NO_COLOR:-0}" == "1" ]] || [[ ! -t 1 ]]; } && disable_colors
 
 ts() { date '+%H:%M:%S'; }
 
@@ -91,6 +94,7 @@ ${BOLD}FLAGS:${NC}
   -f, --file             Load targets from file (KEY=VALUE format)
   --recon                Auto-launch recon.sh on all targets
   --attach               Re-attach to existing engagement tmux session
+  --no-color             Disable ANSI color output (also: export NO_COLOR=1)
   -h, --help             Show this help
 EOF
     exit "${1:-0}"
@@ -126,6 +130,7 @@ parse_args() {
             -f|--file)  [[ $# -lt 2 ]] && { error "-f requires a value"; exit 1; };         TARGETS_FILE="$2"; shift 2 ;;
             --recon)    AUTO_RECON=true; shift ;;
             --attach)   ATTACH_ONLY=true; shift ;;
+            --no-color) disable_colors; shift ;;
             -h|--help)  usage ;;
             *)          error "Unknown flag: $1"; usage 1 ;;
         esac
@@ -168,6 +173,18 @@ load_targets_file() {
 #------------------------------------------------------------------------------
 # VALIDATION
 #------------------------------------------------------------------------------
+is_valid_ip() {
+    local ip="$1"
+    [[ "$ip" =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}$ ]] || return 1
+    local octet
+    local IFS='.'
+    local -a octets
+    read -ra octets <<< "$ip"
+    for octet in "${octets[@]}"; do
+        (( 10#$octet <= 255 )) || return 1
+    done
+}
+
 validate_inputs() {
     local missing=()
     [[ -z "$SA1" ]]    && missing+=("SA1")
@@ -186,12 +203,10 @@ validate_inputs() {
         usage 1
     fi
 
-    # Basic IP format check (not bulletproof, just catches obvious mistakes)
-    local ip_re='^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$'
     for var_name in SA1 SA2 SA3 AD1 AD2 DC; do
         local val="${!var_name}"
-        if [[ ! "$val" =~ $ip_re ]]; then
-            error "$var_name doesn't look like an IP: $val"
+        if ! is_valid_ip "$val"; then
+            error "$var_name is not a valid IPv4 address: $val"
             exit 1
         fi
     done
@@ -501,7 +516,7 @@ print_summary() {
     echo -e "    ${GREEN}# Credential spray (AD)${NC}"
     echo -e "    nxc smb \$DC -u \$ADUSER -p \$ADPASS --shares"
     echo -e "    nxc smb ${AD1} ${AD2} ${DC} -u \$ADUSER -p \$ADPASS"
-    echo -e "    ./adr.sh -d \$DOMAIN -u \$ADUSER -p \$ADPASS -dc \$DC"
+    echo -e "    ${SCRIPT_DIR}/adr.sh -d \$DOMAIN -u \$ADUSER -p \$ADPASS -dc \$DC"
     echo -e ""
     echo -e "    ${GREEN}# Serve files${NC}"
     echo -e "    python3 -m http.server 80    # already running in staging"
