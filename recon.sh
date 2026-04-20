@@ -2538,16 +2538,13 @@ generate_next_steps() {
         url="${proto}://${ip}:${p}"
 
         if is_web_brute_target "$p" && is_phase_done "$target_dir" "http_${p}"; then
-            evidence="HTTP enum completed for port ${p}"
-            if is_nonempty_file "$httpdir/whatweb.txt"; then
-                evidence="$evidence; whatweb result exists"
-            fi
+            evidence="HTTP enum completed for port ${p} — whatweb/headers/robots/methods already captured at ${httpdir}/"
             append_next_finding "$next_file" \
-                "Real web target identified" \
+                "Web target ready for deeper enumeration" \
                 "$evidence" \
                 "./webenum.sh --url $url" \
-                "curl -skI $url/" \
-                "whatweb -a 3 $url"
+                "feroxbuster -u $url -w /usr/share/seclists/Discovery/Web-Content/raft-large-words.txt -x php,html,txt,bak,zip,tar.gz -o $httpdir/ferox_deep.txt" \
+                "nuclei -u $url -severity critical,high,medium -o $httpdir/nuclei.txt   # optional; requires nuclei installed"
         fi
 
         if is_nonempty_file "$httpdir/http_methods.txt" && \
