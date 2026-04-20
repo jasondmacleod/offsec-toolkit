@@ -138,6 +138,38 @@ header()  { echo -e "\n${BOLD}${CYAN}══════════════�
             echo -e "${BOLD}${CYAN}═══════════════════════════════════════════════════${NC}"; }
 phase()       { echo -e "\n${MAGENTA}[$(ts)] [PHASE]${NC} ${BOLD}$*${NC}"; }
 
+# Delete output files that hold nothing useful, so the operator isn't opening
+# empty placeholders during an engagement. A file is "useless" when:
+#   (1) zero bytes, or
+#   (2) body begins with '<' (HTML error page) — but keep '<?xml' (real sitemap), or
+#   (3) every non-blank line starts with '#' (header-only text, no findings).
+# Applied to .txt/.json/.xml/.html files in the phase output dir (one level deep).
+_prune_useless_files() {
+    local dir="$1"
+    [[ -d "$dir" ]] || return 0
+    local f first16
+    while IFS= read -r -d '' f; do
+        if [[ ! -s "$f" ]]; then
+            rm -f "$f"
+            continue
+        fi
+        first16=$(head -c 64 "$f" 2>/dev/null | tr -d '[:space:]' | head -c 16)
+        case "$first16" in
+            '<?xml'*|'<?XML'*) continue ;;
+            '<'*) rm -f "$f"; continue ;;
+        esac
+        # grep -qvE returns success (0) if ANY non-blank, non-comment line exists.
+        # If no such line -> delete the file.
+        if ! grep -qvE '^\s*(#|$)' "$f" 2>/dev/null; then
+            rm -f "$f"
+        fi
+    done < <(find "$dir" -maxdepth 2 -type f \
+        \( -name '*.txt' -o -name '*.json' -o -name '*.xml' -o -name '*.html' \) \
+        -print0 2>/dev/null)
+    # Also drop empty subdirectories left behind (e.g. fingerprint/js/ when no JS).
+    find "$dir" -mindepth 1 -type d -empty -delete 2>/dev/null || true
+}
+
 # Heartbeat: emit a progress line every 30s so the operator can distinguish
 # "still working" from "stuck" during long-running ffuf/whatweb commands.
 _HEARTBEAT_PID=""
@@ -564,21 +596,12 @@ PYEOF
         grep -hEo 'sourceMappingURL=[^[:space:]]+' "$js_file" 2>/dev/null | sed 's/^sourceMappingURL=//' || true
     done | sort -u > "$outdir/js_source_maps.txt"
 
-    # --- robots.txt ---
+    # --- robots.txt / sitemap.xml / security.txt ---
+    # Empty/404 responses are pruned by _prune_useless_files at phase end.
     info "  → robots.txt"
     timeout "$CURL_TIMEOUT" curl -sk "${url%/}/robots.txt" > "$outdir/robots.txt" 2>&1 || true
-    if grep -qiE '<!DOCTYPE|<html|404|not found' "$outdir/robots.txt" 2>/dev/null; then
-        echo "# No robots.txt (received HTML/404)" > "$outdir/robots.txt"
-    fi
-
-    # --- sitemap.xml ---
     info "  → sitemap.xml"
     timeout "$CURL_TIMEOUT" curl -sk "${url%/}/sitemap.xml" > "$outdir/sitemap.xml" 2>&1 || true
-    if grep -qiE '<!DOCTYPE|<html|404|not found' "$outdir/sitemap.xml" 2>/dev/null; then
-        echo "# No sitemap.xml" > "$outdir/sitemap.xml"
-    fi
-
-    # --- security.txt ---
     info "  → security.txt"
     timeout "$CURL_TIMEOUT" curl -sk "${url%/}/.well-known/security.txt" \
         > "$outdir/security_txt.txt" 2>&1 || true
@@ -732,6 +755,7 @@ PYEOF
 BURP
     } > "$outdir/burp_workflow.txt"
 
+    _prune_useless_files "$outdir"
     progress_log "$2" "DONE" "$phase_name" ""
     success "Fingerprinting complete"
 }
@@ -844,6 +868,7 @@ phase_content() {
         ffuf_json_to_text "$outdir/dirs_large.json" > "$outdir/dirs_large.txt" 2>/dev/null || true
     fi
 
+    _prune_useless_files "$outdir"
     if [[ "$phase_ok" == "true" ]]; then
         progress_log "$2" "DONE" "$phase_name" "tech=$tech"
     else
@@ -955,6 +980,7 @@ PYEOF
         ffuf_json_to_text "$outdir/${safe_name}.json" > "$outdir/${safe_name}.txt" 2>/dev/null || true
     done
 
+    _prune_useless_files "$outdir"
     if [[ "$phase_ok" == "true" ]]; then
         progress_log "$2" "DONE" "$phase_name" "dirs=${#interesting_dirs[@]}"
     else
@@ -1051,6 +1077,7 @@ phase_vhosts() {
         done | tee "$outdir/hosts_entries.txt"
     fi
 
+    _prune_useless_files "$outdir"
     if [[ "$phase_ok" == "true" ]]; then
         progress_log "$2" "DONE" "$phase_name" "found=$found_count"
     else
@@ -1173,6 +1200,7 @@ PYEOF
             > "$outdir/params_${safe_name}.txt" 2>/dev/null || true
     done
 
+    _prune_useless_files "$outdir"
     if [[ "$phase_ok" == "true" ]]; then
         progress_log "$2" "DONE" "$phase_name" "endpoints=${#endpoints[@]}"
     else
