@@ -223,6 +223,88 @@ declare -a CLEANUP_ONLY_PIDS=()
 # Prevents double-launch when two ports map to the same once-only module (e.g. 139+445→SMB).
 declare -A QUEUED_PHASES=()
 
+#------------------------------------------------------------------------------
+# OffSec SERVICE-PORT KNOWLEDGE BASE
+# One line per interesting service. Format:
+#   [port]="name | CVE-or-hint | optional extra note"
+# The generic emitter (emit_kb_port_hints) surfaces any of these that appear
+# open on the target. To add coverage for a new service, append ONE line here —
+# do NOT write a new enum module or next_steps stanza.
+#
+# Scope rule: only add services where (a) a named CVE or unauth primitive
+# exists, or (b) the port is non-obvious (i.e. the user would not already
+# recognize it from the default service list). Everything else is noise.
+#------------------------------------------------------------------------------
+declare -A OffSec_SERVICE_HINTS=(
+  # --- Config management / orchestration ---
+  [4505]="SaltStack master (ZMTP publisher) | CVE-2020-11651 + CVE-2020-11652 unauth RCE as root | salt-api on 8000/8080 | msf: exploit/linux/misc/saltstack_salt_api_cmd_exec"
+  [4506]="SaltStack master (ZMTP request)   | CVE-2020-11651 + CVE-2020-11652 unauth RCE as root | pair with 4505"
+  [2375]="Docker API (plain)   | unauth container escape | docker -H tcp://HOST:2375 run --rm -v /:/host alpine chroot /host sh"
+  [2376]="Docker API (TLS)     | auth required, check for leaked certs"
+  [6443]="Kubernetes API       | unauth /api/v1/pods, /version"
+  [10250]="kubelet             | anon /runningpods, /exec — CVE-2018-1002105"
+  # --- Messaging / queue ---
+  [61616]="ActiveMQ OpenWire   | CVE-2023-46604 unauth RCE"
+  [5672]="AMQP / RabbitMQ      | guest:guest default, mgmt UI on 15672"
+  [15672]="RabbitMQ mgmt       | guest:guest default"
+  [9092]="Kafka                | unauth topic list"
+  [2181]="ZooKeeper            | 4lw cmds: echo mntr | nc HOST 2181 ; env, conf, stat"
+  # --- App servers / mgmt ---
+  [7001]="WebLogic             | T3/IIOP deserialization — CVE-2020-2555/14882/14750"
+  [7002]="WebLogic SSL"
+  [8009]="Tomcat AJP           | Ghostcat CVE-2020-1938 file read / RCE"
+  [8161]="ActiveMQ web console | default admin:admin"
+  [50070]="Hadoop NameNode WebUI | unauth /dfshealth, /logs"
+  [50075]="Hadoop DataNode"
+  # --- DB / KV / search ---
+  [27017]="MongoDB             | no-auth: mongo HOST:27017 --eval 'db.adminCommand(\"listDatabases\")'"
+  [5984]="CouchDB             | CVE-2017-12635/12636 admin create; _all_dbs"
+  [9200]="Elasticsearch       | CVE-2015-1427 groovy RCE (pre-1.4.3); _cat/indices"
+  [9300]="Elasticsearch cluster transport"
+  [11211]="memcached          | stats, stats items; UDP amplification"
+  [6379]="Redis              | no-auth RCE via MODULE LOAD / slaveof / authorized_keys write"
+  [1521]="Oracle TNS         | odat all, sid brute, CVE-2012-1675"
+  # --- Monitoring / mgmt UIs ---
+  [3000]="Grafana            | CVE-2021-43798 path traversal (/public/plugins/ALERTLIST/../../../../etc/passwd)"
+  [5601]="Kibana             | CVE-2018-17246 LFI; CVE-2019-7609 RCE"
+  [9000]="Portainer/SonarQube/PHP-FPM | check banner; Portainer admin reset if uninit"
+  [8834]="Nessus             | default admin only — check creds"
+  # --- Remote access / oddballs ---
+  [5985]="WinRM (HTTP)       | NTLM auth → evil-winrm"
+  [5986]="WinRM (HTTPS)"
+  [1099]="Java RMI           | CVE-2017-3241 deserialization, ysoserial"
+  [8888]="Jupyter notebook   | unauth /tree = RCE via new notebook"
+  [9090]="Prometheus/Cockpit | unauth metrics, config leak"
+  [5000]="UPnP/Flask/Docker registry (v1) | /v2/_catalog for registry"
+)
+
+# Generic KB emitter — reads OffSec_SERVICE_HINTS, emits ONE next_steps stanza per
+# open port that matches. Evidence is the port being open (from nmap_tcp.nmap).
+emit_kb_port_hints() {
+    local ip="$1"
+    local target_dir="$2"
+    local next_file="$3"
+    local p
+    for p in "${!OffSec_SERVICE_HINTS[@]}"; do
+        detected_tcp_port "$target_dir" "$p" || continue
+        local hint="${OffSec_SERVICE_HINTS[$p]}"
+        local name
+        name=$(echo "$hint" | awk -F'|' '{print $1}' | awk '{$1=$1};1')
+        local proto="http"
+        case "$p" in 443|8443|4443|9443|5986) proto="https" ;; esac
+        # Surface the KB line verbatim; give the operator generic next-moves.
+        append_next_finding "$next_file" \
+            "KB hint — :$p ($name)" \
+            "nmap_tcp.nmap shows port $p open" \
+            "# KB entry: $hint" \
+            "searchsploit $(echo "$name" | awk '{print $1, $2}' | sed 's/ *$//')" \
+            "nc -nv $ip $p </dev/null" \
+            "curl -sk ${proto}://$ip:$p/ | head -20"
+        # Also surface in quick_wins for at-a-glance triage.
+        echo "KB: :$p — $hint" >> "$target_dir/loot/quick_wins.txt"
+    done
+}
+
 register_pid() {
     CHILD_PIDS+=("$1")
 }
@@ -1362,7 +1444,7 @@ enum_ssh() {
         success "  SSH version: $ssh_version"
 
         # Flag old/vulnerable versions
-        if echo "$ssh_version" | grep -qiE 'OpenSSH_[1-6]\.|OpenSSH_7\.[0-1]|dropbear'; then
+        if echo "$ssh_version" | grep -qiE 'OpenSSH_[1-6]\.|OpenSSH_7\.[0-9]([^0-9]|$)|dropbear'; then
             warn "  ★ Potentially vulnerable SSH version: $ssh_version"
             echo "POTENTIALLY VULNERABLE SSH: $ssh_version on $ip:$port" \
                 >> "$target_dir/loot/quick_wins.txt"
@@ -2114,7 +2196,7 @@ triage_and_enumerate() {
         elif [[ "$service" =~ imap ]] || [[ "$port" == "143" || "$port" == "993" ]]; then
             launch_enum enum_pop3_imap "$ip" "$port" "$target_dir" "imap"
 
-        # Unknown/other — log it
+        # Unknown/other — log it (KB-driven hint is emitted later in generate_quick_wins)
         else
             info "  (no auto-enum module for $service on port $port — manual follow-up)"
         fi
@@ -2152,6 +2234,50 @@ generate_quick_wins() {
     local tmp_file="${qw_file}.tmp"
     mkdir -p "$target_dir/loot"
     : > "$tmp_file"
+
+    # --- Parse vulners NSE output from nmap (CVSS >= 7.0 or *EXPLOIT*) ---
+    # Emits one line per service: "VULNERS port/service → TOP: CVE-X (9.8), CVE-Y (8.1) ..."
+    # Full dump also written to loot/vulners_hits.txt for drill-down.
+    local nmap_tcp="$target_dir/scans/nmap_tcp.nmap"
+    if is_nonempty_file "$nmap_tcp"; then
+        local vulners_dump="$target_dir/loot/vulners_hits.txt"
+        awk '
+            /^[0-9]+\/tcp\s+open/ {
+                split($1, a, "/"); curport = a[1]; cursvc = $3;
+                invuln = 0; next
+            }
+            /^\|[ _]*vulners:/      { invuln = 1; next }
+            /^\|[ _]*[a-zA-Z]+:/    { invuln = 0 }
+            invuln && /CVE-|EXPLOIT|[0-9A-F]{8}-[0-9A-F]{4}/ {
+                line = $0
+                gsub(/^\|[ _]+/, "", line)
+                gsub(/\s+/, " ", line)
+                # Field layout: ID  CVSS  URL  [*EXPLOIT*]
+                n = split(line, f, " ")
+                if (n < 2) next
+                cvss = f[2] + 0
+                exploit = (line ~ /\*EXPLOIT\*/)
+                if (cvss >= 7.0 || exploit) {
+                    tag = (exploit ? "*" : "")
+                    printf "%s\t%s/%s\t%s (%.1f)%s\n", ip, curport, cursvc, f[1], cvss, tag
+                }
+            }
+        ' ip="$ip" "$nmap_tcp" | sort -u > "$vulners_dump" 2>/dev/null || true
+
+        if is_nonempty_file "$vulners_dump"; then
+            # Summarize: top-5 per service by CVSS (desc), dedupe by CVE id preferred
+            awk -F'\t' '
+                { svc[$2] = svc[$2] ? svc[$2] "," $3 : $3 }
+                END { for (s in svc) print s "\t" svc[s] }
+            ' "$vulners_dump" | while IFS=$'\t' read -r svc hits; do
+                # Prefer CVE-* entries first, cap to 5
+                local top
+                top=$(echo "$hits" | tr ',' '\n' | awk '/CVE-/ {print}' | head -5 | paste -sd', ' -)
+                [[ -z "$top" ]] && top=$(echo "$hits" | tr ',' '\n' | head -3 | paste -sd', ' -)
+                echo "VULNERS on $ip:$svc → ${top} (full list: $vulners_dump)" >> "$tmp_file"
+            done
+        fi
+    fi
 
     local vrfy_file="$target_dir/tcp/smtp/vrfy_users.txt"
     if is_nonempty_file "$vrfy_file" && grep -q '^VALID:' "$vrfy_file" 2>/dev/null; then
@@ -2261,12 +2387,29 @@ generate_quick_wins() {
                 echo "Vhosts discovered on $ip:$p (${vhost_count}) — see $httpdir/ffuf_vhosts.json" >> "$tmp_file"
             fi
         fi
+
+        # --- CMS / framework fingerprint from WhatWeb title + plugin list ---
+        if is_nonempty_file "$httpdir/whatweb.txt"; then
+            local cms_hit
+            cms_hit=$(grep -oiE 'Title\[[^]]*\]|Mezzanine|WordPress|Joomla|Drupal|Jenkins|GitLab|Grafana|phpMyAdmin|Tomcat|Nagios|Zabbix|OctoberCMS|Magento|Bolt|Ghost|Strapi|ColdFusion|osTicket|RoundCube|SquirrelMail|SolarWinds|ManageEngine|rConfig|LibreNMS|Cacti|WebMin|Webmin|pfSense|Zimbra|Kibana|Elasticsearch|SonarQube|Nexus Repository|Artifactory|Bitbucket|Gitea|Gogs|Moodle|Mantis|BugZilla|Redmine|Confluence|Jira|SharePoint|OWA|Exchange|Citrix|Pulse Secure|FortiGate' \
+                "$httpdir/whatweb.txt" 2>/dev/null | sort -u | head -5 | tr '\n' ' ')
+            if [[ -n "$cms_hit" ]]; then
+                echo "CMS/app fingerprint on $ip:$p → ${cms_hit}— see $httpdir/whatweb.txt" >> "$tmp_file"
+            fi
+        fi
+
+        # --- JSON API endpoint signal (salt-api, Django REST, Flask, etc.) ---
+        if is_nonempty_file "$httpdir/curl_headers.txt" && \
+           grep -qiE 'Content-Type:\s*application/json|x-upstream:|access-control-allow-credentials' \
+               "$httpdir/curl_headers.txt" 2>/dev/null; then
+            echo "JSON API endpoint on $ip:$p — see $httpdir/curl_headers.txt" >> "$tmp_file"
+        fi
     done
 
     if is_nonempty_file "$target_dir/tcp/ssh/version_info.txt"; then
         local ssh_version
         ssh_version=$(head -1 "$target_dir/tcp/ssh/version_info.txt" 2>/dev/null | sed 's/^SSH Version: //')
-        if echo "$ssh_version" | grep -qiE 'OpenSSH_[1-6]\.|OpenSSH_7\.[0-1]|dropbear'; then
+        if echo "$ssh_version" | grep -qiE 'OpenSSH_[1-6]\.|OpenSSH_7\.[0-9]([^0-9]|$)|dropbear'; then
             echo "POTENTIALLY VULNERABLE SSH: ${ssh_version} on $ip — see $target_dir/tcp/ssh/version_info.txt" >> "$tmp_file"
         fi
     fi
@@ -2835,6 +2978,45 @@ generate_next_steps() {
             "cat $target_dir/tcp/ssh/version_info.txt" \
             "ssh-audit $ip" \
             "searchsploit \"$(head -1 "$target_dir/tcp/ssh/version_info.txt" 2>/dev/null | sed 's/^SSH Version: //')\""
+    fi
+
+    # --- Generic CMS / named-app fingerprint (one stanza, any app) ---
+    # No per-CMS branching: we surface the name, dump evidence, and let searchsploit do the work.
+    if grep -qi '^CMS/app fingerprint' "$target_dir/loot/quick_wins.txt" 2>/dev/null; then
+        local cms_line cms_port cms_name
+        while IFS= read -r cms_line; do
+            cms_port=$(echo "$cms_line" | grep -oP ':\K[0-9]+' | head -1)
+            cms_name=$(echo "$cms_line" | grep -oP '→\s*\K[^—]+' | awk '{$1=$1};1' | head -1)
+            [[ -z "$cms_name" || -z "$cms_port" ]] && continue
+            local proto="http"
+            [[ "$cms_port" == "443" || "$cms_port" == "8443" ]] && proto="https"
+            append_next_finding "$next_file" \
+                "Named app on :${cms_port} — ${cms_name}" \
+                "WhatWeb title/plugin on $ip:$cms_port ($target_dir/tcp/http/port_${cms_port}/whatweb.txt)" \
+                "cat $target_dir/tcp/http/port_${cms_port}/whatweb.txt" \
+                "searchsploit ${cms_name%% *}" \
+                "curl -sk ${proto}://$ip:${cms_port}/ | grep -iE 'version|generator|<meta' | head -10" \
+                "for p in /admin /admin/login /login /wp-admin /administrator /user/login /manager/html /console /api /robots.txt /.git/HEAD; do printf '%s %s\\n' \"\$(curl -sk -o /dev/null -w '%{http_code}' ${proto}://$ip:${cms_port}\$p)\" \"\$p\"; done"
+        done < <(grep -i '^CMS/app fingerprint' "$target_dir/loot/quick_wins.txt" 2>/dev/null | sort -u)
+    fi
+
+    # --- OffSec service-port knowledge base → generic pointers ---
+    # One stanza per KB-matching open port. The KB lives at the top of the script
+    # (OffSec_SERVICE_HINTS). To add a new service, add ONE line to the KB — no new
+    # code here, no new enum module.
+    emit_kb_port_hints "$ip" "$target_dir" "$next_file"
+
+    # --- Vulners CVE hits → searchsploit/exploit hunt ---
+    if is_nonempty_file "$target_dir/loot/vulners_hits.txt"; then
+        append_next_finding "$next_file" \
+            "Vulners NSE produced CVE matches" \
+            "$target_dir/loot/vulners_hits.txt contains CVE entries (CVSS ≥ 7.0 or *EXPLOIT*)" \
+            "# --- Full list ---" \
+            "cat $target_dir/loot/vulners_hits.txt" \
+            "# --- Top CVEs per service (dedup, sort by CVSS) ---" \
+            "awk -F'\\t' '{print \$2, \$3}' $target_dir/loot/vulners_hits.txt | sort -u" \
+            "# --- searchsploit sweep of flagged CVEs ---" \
+            "grep -oE 'CVE-[0-9]+-[0-9]+' $target_dir/loot/vulners_hits.txt | sort -u | while read cve; do echo \"=== \$cve ===\"; searchsploit --cve \"\$cve\"; done"
     fi
 
     if ! grep -q '^## ' "$next_file" 2>/dev/null; then
