@@ -3089,6 +3089,161 @@ generate_summary() {
         fi
         echo ""
 
+        # --- Priority Attack Vectors (decision-first) ---
+        echo "═══ ★ PRIORITY ATTACK VECTORS ★ ═══════════════════════════════"
+        echo ""
+        local prio_buf=""
+        # P1: unauthenticated access / empty creds
+        if grep -qE 'mysql.*empty|empty password' "$target_dir/scans/nmap_tcp.nmap" 2>/dev/null; then
+            prio_buf+="  [P1] MySQL empty root password → mysql -h $ip -u root"$'\n'
+        fi
+        if compgen -G "$target_dir/tcp/ftp/anon_*" > /dev/null 2>&1; then
+            prio_buf+="  [P1] Anonymous FTP → ftp $ip  (upload web shell if webroot writable)"$'\n'
+        fi
+        if grep -qhE 'Anonymous login successful|null session|NT_STATUS_OK' "$target_dir/tcp/smb"/*.txt 2>/dev/null; then
+            prio_buf+="  [P1] SMB null session → smbclient -N -L //$ip/   rpcclient -U '' -N $ip"$'\n'
+        fi
+        # P1: top vulners CVE (filter to real CVE-IDs, sort by CVSS desc)
+        if [[ -s "$target_dir/loot/vulners_hits.txt" ]]; then
+            local top_cve
+            top_cve=$(grep -oE 'CVE-[0-9]{4}-[0-9]+ \([0-9.]+\)' "$target_dir/loot/vulners_hits.txt" 2>/dev/null \
+                | sort -u \
+                | awk -F'[()]' '{print $2" "$0}' \
+                | sort -rn \
+                | head -1 \
+                | awk '{$1=""; sub(/^ /,""); print}')
+            [[ -n "$top_cve" ]] && prio_buf+="  [P1] Top CVE hit: ${top_cve} → searchsploit $(echo "$top_cve" | awk '{print $1}')"$'\n'
+        fi
+        # P2: web tech with exploitable CMS
+        for _wf in "$target_dir"/tcp/http/port_*/whatweb.txt; do
+            [[ -f "$_wf" ]] || continue
+            local _wport _cms
+            _wport=$(basename "$(dirname "$_wf")" | sed 's/port_//')
+            _cms=$(grep -oiE 'Jenkins|Drupal|WordPress|GitLab|Confluence|ownCloud|Tomcat|Mezzanine|HFS|Rejetto|phpMyAdmin' "$_wf" 2>/dev/null | sort -u | head -1)
+            [[ -n "$_cms" ]] && prio_buf+="  [P2] ${_cms} on port ${_wport} → see webenum next_steps for exploit PoCs"$'\n'
+        done
+        # P2: SNMP public
+        if [[ -s "$target_dir/udp/snmp/valid_community_strings.txt" ]]; then
+            prio_buf+="  [P2] SNMP community valid → snmpwalk process args for embedded creds"$'\n'
+        fi
+        # P3: old OpenSSH (user enum)
+        if grep -qE 'OpenSSH[_ ][567]\.[0-9]([^0-9]|$)' "$target_dir/scans/nmap_tcp.nmap" 2>/dev/null; then
+            prio_buf+="  [P3] Old OpenSSH → username enumeration (CVE-2018-15473, ssh-audit)"$'\n'
+        fi
+        if [[ -n "$prio_buf" ]]; then
+            printf '%s' "$prio_buf"
+        else
+            echo "  (no high-signal paths auto-detected — review Quick Wins and Web Findings)"
+        fi
+        echo ""
+
+        # --- Credentials & Auth ---
+        echo "═══ ★ CREDENTIALS & AUTH ★ ════════════════════════════════════"
+        echo ""
+        local cred_buf=""
+        if compgen -G "$target_dir/tcp/ftp/anon_*" > /dev/null 2>&1; then
+            cred_buf+="  ★ FTP anonymous login allowed"$'\n'
+        fi
+        if [[ -s "$target_dir/udp/snmp/valid_community_strings.txt" ]]; then
+            while IFS= read -r s; do
+                [[ -z "$s" ]] && continue
+                cred_buf+="  ★ SNMP community: $s"$'\n'
+            done < "$target_dir/udp/snmp/valid_community_strings.txt"
+        fi
+        if grep -qE 'mysql.*empty|empty password' "$target_dir/scans/nmap_tcp.nmap" 2>/dev/null; then
+            cred_buf+="  ★ MySQL empty root password (nmap mysql-empty-password)"$'\n'
+        fi
+        if grep -qiE 'postgres.*trust|trust.*authentication' "$target_dir/scans/nmap_tcp.nmap" 2>/dev/null; then
+            cred_buf+="  ★ PostgreSQL trust auth (no password needed)"$'\n'
+        fi
+        if grep -qhE 'Anonymous login successful|null session' "$target_dir/tcp/smb"/*.txt 2>/dev/null; then
+            cred_buf+="  ★ SMB null session allowed"$'\n'
+        fi
+        # Usernames enumerated via VRFY
+        if [[ -f "$target_dir/tcp/smtp/vrfy_users.txt" ]]; then
+            local _vn
+            _vn=$(grep -c '^VALID:' "$target_dir/tcp/smtp/vrfy_users.txt" 2>/dev/null); _vn=${_vn:-0}
+            (( _vn > 0 )) && cred_buf+="  ★ SMTP VRFY enumerated ${_vn} usernames (tcp/smtp/vrfy_users.txt)"$'\n'
+        fi
+        # Credential-flavored lines from quick_wins
+        if [[ -s "$target_dir/loot/quick_wins.txt" ]]; then
+            local _cq
+            _cq=$(grep -iE 'credential|password|default.*cred|anonymous|empty.*pass' "$target_dir/loot/quick_wins.txt" 2>/dev/null | sort -u)
+            [[ -n "$_cq" ]] && cred_buf+=$(echo "$_cq" | sed 's/^/  ★ /')$'\n'
+        fi
+        if [[ -n "$cred_buf" ]]; then
+            printf '%s' "$cred_buf"
+        else
+            echo "  (no credentials or auth weaknesses captured — verify manually)"
+        fi
+        echo ""
+
+        # --- Anonymous / Null-Session Access ---
+        echo "═══ ★ ANONYMOUS / NULL-SESSION ACCESS ★ ═══════════════════════"
+        echo ""
+        local anon_buf=""
+        if compgen -G "$target_dir/tcp/ftp/anon_*" > /dev/null 2>&1; then
+            anon_buf+="  ★ FTP  → ftp $ip  (user: anonymous, any password)"$'\n'
+        fi
+        if grep -qhE 'Anonymous login successful|null session' "$target_dir/tcp/smb"/*.txt 2>/dev/null; then
+            anon_buf+="  ★ SMB  → smbclient -N -L //$ip/   rpcclient -U '' -N $ip"$'\n'
+        fi
+        if grep -qhiE 'anonymous.*bind|LDAP.*anonymous' "$target_dir/tcp/ldap"/*.txt 2>/dev/null; then
+            anon_buf+="  ★ LDAP → ldapsearch -x -H ldap://$ip -s base -b ''  (then enumerate DN)"$'\n'
+        fi
+        if grep -qP '^\s*/' "$target_dir/tcp/rpc/nfs_exports.txt" 2>/dev/null; then
+            local _exp
+            _exp=$(grep -P '^\s*/' "$target_dir/tcp/rpc/nfs_exports.txt" 2>/dev/null | awk '{print $1}' | tr '\n' ' ')
+            anon_buf+="  ★ NFS  → exports: $_exp  (try: mount -t nfs $ip:<export> /mnt)"$'\n'
+        fi
+        if [[ -n "$anon_buf" ]]; then
+            printf '%s' "$anon_buf"
+        else
+            echo "  (no anonymous access paths detected)"
+        fi
+        echo ""
+
+        # --- CVE Hits (vulners NSE) ---
+        echo "═══ ★ CVE HITS (vulners) ★ ════════════════════════════════════"
+        echo ""
+        if [[ -s "$target_dir/loot/vulners_hits.txt" ]]; then
+            # Show top 10 real CVEs by CVSS (filter UUID/vulners-internal IDs)
+            grep -E 'CVE-[0-9]{4}-[0-9]+' "$target_dir/loot/vulners_hits.txt" 2>/dev/null \
+                | awk '{
+                    match($0, /CVE-[0-9]{4}-[0-9]+/); cve=substr($0,RSTART,RLENGTH);
+                    match($0, /\([0-9.]+\)/); cvss=substr($0,RSTART+1,RLENGTH-2);
+                    port=$2;
+                    print cvss"|"cve"|"port
+                  }' \
+                | sort -t'|' -k1,1rn -u \
+                | head -10 \
+                | awk -F'|' '{printf "  [%s] %s  (%s)\n", $1, $2, $3}'
+            echo ""
+            echo "  Full list: $target_dir/loot/vulners_hits.txt"
+            echo "  searchsploit <CVE-ID> to find public exploits"
+        else
+            echo "  (no vulners NSE hits — confirm --script vulners ran in nmap phase)"
+        fi
+        echo ""
+
+        # --- Tech Stack / CMS Fingerprints ---
+        echo "═══ ★ TECH STACK & CMS ★ ══════════════════════════════════════"
+        echo ""
+        local tech_buf=""
+        for _wf in "$target_dir"/tcp/http/port_*/whatweb.txt; do
+            [[ -f "$_wf" ]] || continue
+            local _wport _techs
+            _wport=$(basename "$(dirname "$_wf")" | sed 's/port_//')
+            _techs=$(grep -oE '(WordPress|Drupal|Joomla|Jenkins|GitLab|Grafana|Mezzanine|phpMyAdmin|Apache[/ ][0-9.]+|nginx[/ ][0-9.]+|IIS[/ ][0-9.]+|Tomcat[/ ][0-9.]+|Confluence|ownCloud|HFS|Rejetto|Next\.?js|PHP[/ ][0-9.]+|OpenSSL[/ ][0-9.a-z-]+|Python[/ ][0-9.]+|Werkzeug[/ ][0-9.]+|Node\.?js)' "$_wf" 2>/dev/null | sort -u | tr '\n' ' ')
+            [[ -n "$_techs" ]] && tech_buf+="  Port ${_wport}: ${_techs}"$'\n'
+        done
+        if [[ -n "$tech_buf" ]]; then
+            printf '%s' "$tech_buf"
+        else
+            echo "  (no web tech fingerprints detected)"
+        fi
+        echo ""
+
         # --- Quick Wins / Loot ---
         echo "═══ ★ QUICK WINS ★ ═════════════════════════════════════════"
         echo ""
