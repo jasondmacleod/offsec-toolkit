@@ -84,13 +84,16 @@ if [[ $EUID -eq 0 ]] && [[ -n "${SUDO_USER:-}" ]]; then
     fi
     unset _inv_home_p
 fi
-# Rustscan batch size — derived from current ulimit to avoid "Too many open files" noise
+# Rustscan batch size — favor speed on engagement lab VMs, floor at 100, cap at 5000
+# to avoid "Too many open files" when ulimit is tight.
 _ulimit_n=$(ulimit -n 2>/dev/null || echo 1024)
-RUSTSCAN_BATCH_SIZE=$(( _ulimit_n / 2 ))
+RUSTSCAN_BATCH_SIZE=4500
+(( RUSTSCAN_BATCH_SIZE > _ulimit_n / 2 )) && RUSTSCAN_BATCH_SIZE=$(( _ulimit_n / 2 ))
 (( RUSTSCAN_BATCH_SIZE < 100  )) && RUSTSCAN_BATCH_SIZE=100
 (( RUSTSCAN_BATCH_SIZE > 5000 )) && RUSTSCAN_BATCH_SIZE=5000
 unset _ulimit_n
-RUSTSCAN_TIMEOUT=4000                  # Connection timeout in ms
+RUSTSCAN_TIMEOUT=2000                  # Connection timeout in ms (lab VMs are close)
+RUSTSCAN_OUTER_TIMEOUT=600             # Outer wall-clock timeout for full 65535 sweep
 NMAP_DISCOVERY_TIMEOUT=1200            # Seconds for nmap full TCP fallback/discovery
 NMAP_DISCOVERY_MIN_RATE=3000           # Full TCP fallback speed; tune lower on lossy links
 NMAP_TCP_TIMEOUT=600                   # Seconds for TCP service scan
@@ -803,7 +806,7 @@ run_rustscan() {
 
     phase "TCP Port Discovery (rustscan) → $ip"
     progress_log "$target_dir" "START" "rustscan" "batch_size=$RUSTSCAN_BATCH_SIZE"
-    _tool_start "rustscan" "$ip" "300s  batch: $RUSTSCAN_BATCH_SIZE"
+    _tool_start "rustscan" "$ip" "${RUSTSCAN_OUTER_TIMEOUT}s  batch: $RUSTSCAN_BATCH_SIZE"
     local _rs_t0
     _rs_t0=$(date +%s)
 
@@ -811,7 +814,7 @@ run_rustscan() {
     # --scripts none = skip nmap handoff (replaces deprecated --no-nmap)
     # NO --greppable: we need the "Open IP:PORT" lines for parsing.
     # Final summary line "IP -> [port,port]" is also printed with --scripts none.
-    timeout 300 rustscan -a "$ip" \
+    timeout "$RUSTSCAN_OUTER_TIMEOUT" rustscan -a "$ip" \
         --range 1-65535 \
         -b "$RUSTSCAN_BATCH_SIZE" \
         --timeout "$RUSTSCAN_TIMEOUT" \
@@ -836,7 +839,7 @@ run_rustscan() {
     fi
 
     if [[ $rustscan_exit -eq 124 && -n "$ports" ]]; then
-        warn "Rustscan hit 300s timeout but captured partial results — accepting $ports"
+        warn "Rustscan hit ${RUSTSCAN_OUTER_TIMEOUT}s timeout but captured partial results — accepting $ports"
         progress_log "$target_dir" "PARTIAL" "rustscan" "exit=124 ports=$ports"
     fi
 
