@@ -820,18 +820,25 @@ run_rustscan() {
         2>&1 | tee "$outfile"
     local rustscan_exit=$?
     _tool_done "rustscan" "$_rs_t0"
-    if [[ $rustscan_exit -ne 0 ]]; then
-        error "Rustscan failed or timed out for $ip"
+
+    # Parse open ports FIRST — rustscan may have found ports before hitting the
+    # 300s outer timeout (exit=124). Only treat as failure if we got nothing.
+    # Format 1 (per-port): "Open 10.10.10.5:22"
+    local ports=""
+    ports=$(grep -oP 'Open \S+:\K[0-9]+' "$outfile" 2>/dev/null | sort -un | tr '\n' ',' | sed 's/,$//')
+
+    if [[ $rustscan_exit -ne 0 && -z "$ports" ]]; then
+        error "Rustscan failed or timed out for $ip (exit=$rustscan_exit, no ports captured)"
         progress_log "$target_dir" "FAIL" "rustscan" "exit=$rustscan_exit"
         warn "Falling back to nmap full TCP discovery"
         run_nmap_tcp_discovery "$ip" "$target_dir"
         return $?
     fi
 
-    # Parse open ports from rustscan output
-    # Format 1 (per-port): "Open 10.10.10.5:22"
-    local ports=""
-    ports=$(grep -oP 'Open \S+:\K[0-9]+' "$outfile" 2>/dev/null | sort -un | tr '\n' ',' | sed 's/,$//')
+    if [[ $rustscan_exit -eq 124 && -n "$ports" ]]; then
+        warn "Rustscan hit 300s timeout but captured partial results — accepting $ports"
+        progress_log "$target_dir" "PARTIAL" "rustscan" "exit=124 ports=$ports"
+    fi
 
     if [[ -z "$ports" ]]; then
         # Format 2 (summary line): "10.10.10.5 -> [22,80,443]"
