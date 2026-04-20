@@ -30,7 +30,7 @@
 #   ./webenum.sh --url http://10.10.10.5 --root ~/pg         # custom output root
 #
 # OUTPUT:
-#   <root>/<host>/artifacts/web/
+#   <root>/<host>_<port>_<proto>/artifacts/
 #     fingerprint/          whatweb, headers, cookies, source hints
 #     content/              directory + file fuzzing results
 #     content/recursive/    recursive ffuf on interesting paths (--deep)
@@ -2259,7 +2259,7 @@ EXAMPLES:
   ./webenum.sh --url http://10.10.10.5 --root ~/pg
 
 OUTPUT:
-  <root>/<host>_<port>_<proto>/artifacts/web/
+  <root>/<host>_<port>_<proto>/artifacts/
     fingerprint/     whatweb, headers, cookies, source hints, sensitive paths
     content/         ffuf directory and file fuzzing (JSON + text)
     content/recursive/  recursive fuzzing on interesting dirs (--deep)
@@ -2444,7 +2444,7 @@ if [[ -z "$PROTO" || -z "$HOST" || ! "$PORT" =~ ^[0-9]+$ ]]; then
     exit 1
 fi
 TARGET_TAG="${HOST}_${PORT}_${PROTO}"
-OUTPUT_DIR="${OUTPUT_ROOT}/${TARGET_TAG}/artifacts/web"
+OUTPUT_DIR="${OUTPUT_ROOT}/${TARGET_TAG}/artifacts"
 if ! mkdir -p "${OUTPUT_DIR}"; then
     error "Failed to create output directory: ${OUTPUT_DIR}"
     exit 1
