@@ -3111,6 +3111,29 @@ generate_summary() {
                 | awk '{$1=""; sub(/^ /,""); print}')
             [[ -n "$top_cve" ]] && prio_buf+="  [P1] Top CVE hit: ${top_cve} -> searchsploit $(echo "$top_cve" | awk '{print $1}')"$'\n'
         fi
+        # P1/P2: KB-known high-risk service ports (SaltStack/Docker/k8s/Redis/etc.)
+        local _kbp
+        for _kbp in "${!OffSec_SERVICE_HINTS[@]}"; do
+            detected_tcp_port "$target_dir" "$_kbp" || continue
+            local _kbnote _kbname _kbcve _tag _suffix
+            _kbnote="${OffSec_SERVICE_HINTS[$_kbp]}"
+            _kbname=$(echo "$_kbnote" | awk -F'|' '{print $1}' | sed 's/ *$//')
+            _kbcve=$(echo "$_kbnote" | grep -oE 'CVE-[0-9]{4}-[0-9]+' | head -1)
+            # Promote to P1 if the KB note calls out "unauth" or carries a named CVE.
+            if echo "$_kbnote" | grep -qiE 'unauth|no auth'; then
+                _tag="[P1]"
+            elif [[ -n "$_kbcve" ]]; then
+                _tag="[P1]"
+            else
+                _tag="[P2]"
+            fi
+            if [[ -n "$_kbcve" ]]; then
+                _suffix="-> ${_kbcve} (searchsploit --cve ${_kbcve})"
+            else
+                _suffix="-> searchsploit $(echo "$_kbname" | awk '{print $1}')"
+            fi
+            prio_buf+="  ${_tag} :${_kbp} ${_kbname} ${_suffix}"$'\n'
+        done
         # P2: web tech with exploitable CMS
         for _wf in "$target_dir"/tcp/http/port_*/whatweb.txt; do
             [[ -f "$_wf" ]] || continue
