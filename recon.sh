@@ -800,9 +800,9 @@ run_nmap_tcp() {
     phase "TCP Service Detection (nmap) → $ip"
     progress_log "$target_dir" "START" "nmap_tcp" "ports=$ports"
 
-    # -sC: default scripts, -sV: version detection, -O: OS detection (requires root)
-    # -oA: output in all formats (grep, xml, nmap) — nmap XML is useful for parsing
-    local nmap_flags=(-sC -sV --version-intensity 7 --script-timeout 45s \
+    # -sV: version detection, --script default,vulners: default NSE + CVE mapping from banners
+    # -O: OS detection (requires root); -oA: output in all formats (grep, xml, nmap)
+    local nmap_flags=(-sV --version-intensity 7 --script "default,vulners" --script-timeout 45s \
         -p "$ports" --open --reason -oA "$outbase")
 
     if [[ $EUID -eq 0 ]]; then

