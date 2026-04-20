@@ -3039,19 +3039,19 @@ generate_summary() {
     local target_dir="$2"
     local summary="$target_dir/summary.txt"
 
-    header "Generating Summary Report → $ip"
+    header "Generating Summary Report -> $ip"
     generate_quick_wins "$ip" "$target_dir"
     generate_next_steps "$ip" "$target_dir"
 
     {
-        echo "╔══════════════════════════════════════════════════════════════╗"
-        echo "║           OffSec RECON SUMMARY — $ip"
-        echo "║           Generated: $(date)"
-        echo "╚══════════════════════════════════════════════════════════════╝"
+        echo "+==============================================================+"
+        echo "|           OffSec RECON SUMMARY -- $ip"
+        echo "|           Generated: $(date)"
+        echo "+==============================================================+"
         echo ""
 
         # --- Open Ports ---
-        echo "═══ OPEN PORTS ════════════════════════════════════════════════"
+        echo "=== OPEN PORTS ================================================"
         echo ""
         echo "TCP Ports:"
         if [[ -f "$target_dir/scans/tcp_ports.txt" ]]; then
@@ -3069,7 +3069,7 @@ generate_summary() {
         echo ""
 
         # --- Service Details (from nmap) ---
-        echo "═══ SERVICES ══════════════════════════════════════════════════"
+        echo "=== SERVICES =================================================="
         echo ""
         if [[ -f "$target_dir/scans/nmap_tcp.nmap" ]]; then
             grep -P '^\d+/(tcp|udp)\s+open\s' "$target_dir/scans/nmap_tcp.nmap" 2>/dev/null | \
@@ -3078,7 +3078,7 @@ generate_summary() {
         echo ""
 
         # --- OS Detection ---
-        echo "═══ OS DETECTION ════════════════════════════════════════════"
+        echo "=== OS DETECTION ============================================"
         echo ""
         if [[ -f "$target_dir/scans/nmap_tcp.nmap" ]]; then
             grep -A2 'OS details\|Running:' "$target_dir/scans/nmap_tcp.nmap" 2>/dev/null | \
@@ -3087,18 +3087,18 @@ generate_summary() {
         echo ""
 
         # --- Priority Attack Vectors (decision-first) ---
-        echo "═══ ★ PRIORITY ATTACK VECTORS ★ ═══════════════════════════════"
+        echo "=== * PRIORITY ATTACK VECTORS * ==============================="
         echo ""
         local prio_buf=""
         # P1: unauthenticated access / empty creds
         if grep -qE 'mysql.*empty|empty password' "$target_dir/scans/nmap_tcp.nmap" 2>/dev/null; then
-            prio_buf+="  [P1] MySQL empty root password → mysql -h $ip -u root"$'\n'
+            prio_buf+="  [P1] MySQL empty root password -> mysql -h $ip -u root"$'\n'
         fi
         if compgen -G "$target_dir/tcp/ftp/anon_*" > /dev/null 2>&1; then
-            prio_buf+="  [P1] Anonymous FTP → ftp $ip  (upload web shell if webroot writable)"$'\n'
+            prio_buf+="  [P1] Anonymous FTP -> ftp $ip  (upload web shell if webroot writable)"$'\n'
         fi
         if grep -qhE 'Anonymous login successful|null session|NT_STATUS_OK' "$target_dir/tcp/smb"/*.txt 2>/dev/null; then
-            prio_buf+="  [P1] SMB null session → smbclient -N -L //$ip/   rpcclient -U '' -N $ip"$'\n'
+            prio_buf+="  [P1] SMB null session -> smbclient -N -L //$ip/   rpcclient -U '' -N $ip"$'\n'
         fi
         # P1: top vulners CVE (filter to real CVE-IDs, sort by CVSS desc)
         if [[ -s "$target_dir/loot/vulners_hits.txt" ]]; then
@@ -3109,7 +3109,7 @@ generate_summary() {
                 | sort -rn \
                 | head -1 \
                 | awk '{$1=""; sub(/^ /,""); print}')
-            [[ -n "$top_cve" ]] && prio_buf+="  [P1] Top CVE hit: ${top_cve} → searchsploit $(echo "$top_cve" | awk '{print $1}')"$'\n'
+            [[ -n "$top_cve" ]] && prio_buf+="  [P1] Top CVE hit: ${top_cve} -> searchsploit $(echo "$top_cve" | awk '{print $1}')"$'\n'
         fi
         # P2: web tech with exploitable CMS
         for _wf in "$target_dir"/tcp/http/port_*/whatweb.txt; do
@@ -3117,81 +3117,81 @@ generate_summary() {
             local _wport _cms
             _wport=$(basename "$(dirname "$_wf")" | sed 's/port_//')
             _cms=$(grep -oiE 'Jenkins|Drupal|WordPress|GitLab|Confluence|ownCloud|Tomcat|Mezzanine|HFS|Rejetto|phpMyAdmin' "$_wf" 2>/dev/null | sort -u | head -1)
-            [[ -n "$_cms" ]] && prio_buf+="  [P2] ${_cms} on port ${_wport} → see webenum next_steps for exploit PoCs"$'\n'
+            [[ -n "$_cms" ]] && prio_buf+="  [P2] ${_cms} on port ${_wport} -> see webenum next_steps for exploit PoCs"$'\n'
         done
         # P2: SNMP public
         if [[ -s "$target_dir/udp/snmp/valid_community_strings.txt" ]]; then
-            prio_buf+="  [P2] SNMP community valid → snmpwalk process args for embedded creds"$'\n'
+            prio_buf+="  [P2] SNMP community valid -> snmpwalk process args for embedded creds"$'\n'
         fi
         # P3: old OpenSSH (user enum)
         if grep -qE 'OpenSSH[_ ][567]\.[0-9]([^0-9]|$)' "$target_dir/scans/nmap_tcp.nmap" 2>/dev/null; then
-            prio_buf+="  [P3] Old OpenSSH → username enumeration (CVE-2018-15473, ssh-audit)"$'\n'
+            prio_buf+="  [P3] Old OpenSSH -> username enumeration (CVE-2018-15473, ssh-audit)"$'\n'
         fi
         if [[ -n "$prio_buf" ]]; then
             printf '%s' "$prio_buf"
         else
-            echo "  (no high-signal paths auto-detected — review Quick Wins and Web Findings)"
+            echo "  (no high-signal paths auto-detected -- review Quick Wins and Web Findings)"
         fi
         echo ""
 
         # --- Credentials & Auth ---
-        echo "═══ ★ CREDENTIALS & AUTH ★ ════════════════════════════════════"
+        echo "=== * CREDENTIALS & AUTH * ===================================="
         echo ""
         local cred_buf=""
         if compgen -G "$target_dir/tcp/ftp/anon_*" > /dev/null 2>&1; then
-            cred_buf+="  ★ FTP anonymous login allowed"$'\n'
+            cred_buf+="  * FTP anonymous login allowed"$'\n'
         fi
         if [[ -s "$target_dir/udp/snmp/valid_community_strings.txt" ]]; then
             while IFS= read -r s; do
                 [[ -z "$s" ]] && continue
-                cred_buf+="  ★ SNMP community: $s"$'\n'
+                cred_buf+="  * SNMP community: $s"$'\n'
             done < "$target_dir/udp/snmp/valid_community_strings.txt"
         fi
         if grep -qE 'mysql.*empty|empty password' "$target_dir/scans/nmap_tcp.nmap" 2>/dev/null; then
-            cred_buf+="  ★ MySQL empty root password (nmap mysql-empty-password)"$'\n'
+            cred_buf+="  * MySQL empty root password (nmap mysql-empty-password)"$'\n'
         fi
         if grep -qiE 'postgres.*trust|trust.*authentication' "$target_dir/scans/nmap_tcp.nmap" 2>/dev/null; then
-            cred_buf+="  ★ PostgreSQL trust auth (no password needed)"$'\n'
+            cred_buf+="  * PostgreSQL trust auth (no password needed)"$'\n'
         fi
         if grep -qhE 'Anonymous login successful|null session' "$target_dir/tcp/smb"/*.txt 2>/dev/null; then
-            cred_buf+="  ★ SMB null session allowed"$'\n'
+            cred_buf+="  * SMB null session allowed"$'\n'
         fi
         # Usernames enumerated via VRFY
         if [[ -f "$target_dir/tcp/smtp/vrfy_users.txt" ]]; then
             local _vn
             _vn=$(grep -c '^VALID:' "$target_dir/tcp/smtp/vrfy_users.txt" 2>/dev/null); _vn=${_vn:-0}
-            (( _vn > 0 )) && cred_buf+="  ★ SMTP VRFY enumerated ${_vn} usernames (tcp/smtp/vrfy_users.txt)"$'\n'
+            (( _vn > 0 )) && cred_buf+="  * SMTP VRFY enumerated ${_vn} usernames (tcp/smtp/vrfy_users.txt)"$'\n'
         fi
         # Credential-flavored lines from quick_wins
         if [[ -s "$target_dir/loot/quick_wins.txt" ]]; then
             local _cq
             _cq=$(grep -iE 'credential|password|default.*cred|anonymous|empty.*pass' "$target_dir/loot/quick_wins.txt" 2>/dev/null | sort -u)
-            [[ -n "$_cq" ]] && cred_buf+=$(echo "$_cq" | sed 's/^/  ★ /')$'\n'
+            [[ -n "$_cq" ]] && cred_buf+=$(echo "$_cq" | sed 's/^/  * /')$'\n'
         fi
         if [[ -n "$cred_buf" ]]; then
             printf '%s' "$cred_buf"
         else
-            echo "  (no credentials or auth weaknesses captured — verify manually)"
+            echo "  (no credentials or auth weaknesses captured -- verify manually)"
         fi
         echo ""
 
         # --- Anonymous / Null-Session Access ---
-        echo "═══ ★ ANONYMOUS / NULL-SESSION ACCESS ★ ═══════════════════════"
+        echo "=== * ANONYMOUS / NULL-SESSION ACCESS * ======================="
         echo ""
         local anon_buf=""
         if compgen -G "$target_dir/tcp/ftp/anon_*" > /dev/null 2>&1; then
-            anon_buf+="  ★ FTP  → ftp $ip  (user: anonymous, any password)"$'\n'
+            anon_buf+="  * FTP  -> ftp $ip  (user: anonymous, any password)"$'\n'
         fi
         if grep -qhE 'Anonymous login successful|null session' "$target_dir/tcp/smb"/*.txt 2>/dev/null; then
-            anon_buf+="  ★ SMB  → smbclient -N -L //$ip/   rpcclient -U '' -N $ip"$'\n'
+            anon_buf+="  * SMB  -> smbclient -N -L //$ip/   rpcclient -U '' -N $ip"$'\n'
         fi
         if grep -qhiE 'anonymous.*bind|LDAP.*anonymous' "$target_dir/tcp/ldap"/*.txt 2>/dev/null; then
-            anon_buf+="  ★ LDAP → ldapsearch -x -H ldap://$ip -s base -b ''  (then enumerate DN)"$'\n'
+            anon_buf+="  * LDAP -> ldapsearch -x -H ldap://$ip -s base -b ''  (then enumerate DN)"$'\n'
         fi
         if grep -qP '^\s*/' "$target_dir/tcp/rpc/nfs_exports.txt" 2>/dev/null; then
             local _exp
             _exp=$(grep -P '^\s*/' "$target_dir/tcp/rpc/nfs_exports.txt" 2>/dev/null | awk '{print $1}' | tr '\n' ' ')
-            anon_buf+="  ★ NFS  → exports: $_exp  (try: mount -t nfs $ip:<export> /mnt)"$'\n'
+            anon_buf+="  * NFS  -> exports: $_exp  (try: mount -t nfs $ip:<export> /mnt)"$'\n'
         fi
         if [[ -n "$anon_buf" ]]; then
             printf '%s' "$anon_buf"
@@ -3201,7 +3201,7 @@ generate_summary() {
         echo ""
 
         # --- CVE Hits (vulners NSE) ---
-        echo "═══ ★ CVE HITS (vulners) ★ ════════════════════════════════════"
+        echo "=== * CVE HITS (vulners) * ===================================="
         echo ""
         if [[ -s "$target_dir/loot/vulners_hits.txt" ]]; then
             # Show top 10 real CVEs by CVSS (filter UUID/vulners-internal IDs)
@@ -3219,12 +3219,12 @@ generate_summary() {
             echo "  Full list: $target_dir/loot/vulners_hits.txt"
             echo "  searchsploit <CVE-ID> to find public exploits"
         else
-            echo "  (no vulners NSE hits — confirm --script vulners ran in nmap phase)"
+            echo "  (no vulners NSE hits -- confirm --script vulners ran in nmap phase)"
         fi
         echo ""
 
         # --- Tech Stack / CMS Fingerprints ---
-        echo "═══ ★ TECH STACK & CMS ★ ══════════════════════════════════════"
+        echo "=== * TECH STACK & CMS * ======================================"
         echo ""
         local tech_buf=""
         for _wf in "$target_dir"/tcp/http/port_*/whatweb.txt; do
@@ -3242,17 +3242,17 @@ generate_summary() {
         echo ""
 
         # --- Quick Wins / Loot ---
-        echo "═══ ★ QUICK WINS ★ ═════════════════════════════════════════"
+        echo "=== * QUICK WINS * ========================================="
         echo ""
         if [[ -f "$target_dir/loot/quick_wins.txt" && -s "$target_dir/loot/quick_wins.txt" ]]; then
-            while IFS= read -r line; do echo "  ★ $line"; done < "$target_dir/loot/quick_wins.txt"
+            while IFS= read -r line; do echo "  * $line"; done < "$target_dir/loot/quick_wins.txt"
         else
-            echo "  (no quick wins found — deeper manual enumeration may be needed)"
+            echo "  (no quick wins found -- deeper manual enumeration may be needed)"
         fi
         echo ""
 
         # --- HTTP Findings ---
-        echo "═══ WEB FINDINGS ════════════════════════════════════════════"
+        echo "=== WEB FINDINGS ============================================"
         echo ""
         for httpdir in "$target_dir/tcp/http"/port_*; do
             [[ -d "$httpdir" ]] || continue
@@ -3269,7 +3269,7 @@ generate_summary() {
                 # Show top interesting hits
                 grep -iE '/admin|/login|/upload|/config|/backup|/shell|/api|/console|/phpmyadmin|/wp-|/cgi' \
                     "$httpdir/gobuster_dir.txt" 2>/dev/null | head -10 | \
-                    while IFS= read -r line; do echo "    → $line"; done
+                    while IFS= read -r line; do echo "    -> $line"; done
             fi
             if [[ -f "$httpdir/robots.txt" ]] && ! grep -q '# No robots' "$httpdir/robots.txt" 2>/dev/null; then
                 echo "  robots.txt: Found (check $httpdir/robots.txt)"
@@ -3279,7 +3279,7 @@ generate_summary() {
 
         # --- SMB Findings ---
         if [[ -d "$target_dir/tcp/smb" ]]; then
-            echo "═══ SMB FINDINGS ═════════════════════════════════════════"
+            echo "=== SMB FINDINGS ========================================="
             echo ""
             if [[ -f "$target_dir/tcp/smb/smb_quick_findings.txt" ]]; then
                 while IFS= read -r line; do echo "  $line"; done < "$target_dir/tcp/smb/smb_quick_findings.txt"
@@ -3301,7 +3301,7 @@ generate_summary() {
 
         # --- SNMP Findings ---
         if [[ -d "$target_dir/udp/snmp" ]]; then
-            echo "═══ SNMP FINDINGS ════════════════════════════════════════"
+            echo "=== SNMP FINDINGS ========================================"
             echo ""
             if [[ -f "$target_dir/udp/snmp/valid_community_strings.txt" ]]; then
                 local snmp_strings
@@ -3316,10 +3316,10 @@ generate_summary() {
                 done < "$target_dir/udp/snmp/valid_community_strings.txt"
             fi
             if [[ -f "$target_dir/udp/snmp/running_processes.txt" && -s "$target_dir/udp/snmp/running_processes.txt" ]]; then
-                echo "  Running processes: $(wc -l < "$target_dir/udp/snmp/running_processes.txt") entries — check $target_dir/udp/snmp/process_args.txt for embedded creds"
+                echo "  Running processes: $(wc -l < "$target_dir/udp/snmp/running_processes.txt") entries -- check $target_dir/udp/snmp/process_args.txt for embedded creds"
             fi
             if [[ -f "$target_dir/udp/snmp/process_args.txt" && -s "$target_dir/udp/snmp/process_args.txt" ]]; then
-                echo "  ★ process_args.txt present — grep for credentials:"
+                echo "  * process_args.txt present -- grep for credentials:"
                 echo "    grep -iE 'pass|pwd|secret|key|token|cred|-p[[:space:]]' $target_dir/udp/snmp/process_args.txt"
             fi
             echo ""
@@ -3327,14 +3327,14 @@ generate_summary() {
 
         # --- SMTP Findings ---
         if grep -q "| DONE | smtp_" "$target_dir/progress.log" 2>/dev/null; then
-            echo "═══ SMTP FINDINGS ════════════════════════════════════════"
+            echo "=== SMTP FINDINGS ========================================"
             echo ""
             local vrfy_file="$target_dir/tcp/smtp/vrfy_users.txt"
             if [[ -f "$vrfy_file" ]]; then
                 local vcount
                 vcount=$(grep -c "^VALID:" "$vrfy_file" 2>/dev/null); vcount=${vcount:-0}
                 if (( vcount > 0 )); then
-                    echo "  ★ VRFY found $vcount valid users (see $vrfy_file)"
+                    echo "  * VRFY found $vcount valid users (see $vrfy_file)"
                     echo "  Top users:"
                     grep "^VALID:" "$vrfy_file" 2>/dev/null | head -10 | while IFS= read -r l; do echo "    $l"; done
                 else
@@ -3352,11 +3352,11 @@ generate_summary() {
         for proto_name in pop3 imap; do
             if grep -q "| DONE | ${proto_name}_" "$target_dir/progress.log" 2>/dev/null; then
                 if [[ "$mail_section" == "false" ]]; then
-                    echo "═══ MAIL SERVICE FINDINGS ════════════════════════════════"
+                    echo "=== MAIL SERVICE FINDINGS ================================"
                     echo ""
                     mail_section=true
                 fi
-                echo "  ${proto_name^^} detected — check $target_dir/tcp/${proto_name}/ for capabilities/banner"
+                echo "  ${proto_name^^} detected -- check $target_dir/tcp/${proto_name}/ for capabilities/banner"
                 find "$target_dir/tcp/${proto_name}" -name "banner_*.txt" 2>/dev/null | while read -r bf; do
                     local port_n
                     port_n=$(basename "$bf" | grep -oP '\d+')
@@ -3369,7 +3369,7 @@ generate_summary() {
         [[ "$mail_section" == "true" ]] && echo ""
 
         # --- Finding-driven Next-Step Commands ---
-        echo "═══ ★ NEXT-STEP COMMANDS ★ ══════════════════════════════"
+        echo "=== * NEXT-STEP COMMANDS * =============================="
         echo ""
         echo "  Full library: $target_dir/loot/next_steps.txt"
         echo ""
@@ -3385,23 +3385,23 @@ generate_summary() {
         echo ""
 
         # --- Completion Status ---
-        echo "═══ SCAN STATUS ═══════════════════════════════════════════"
+        echo "=== SCAN STATUS ==========================================="
         echo ""
         if [[ -f "$target_dir/progress.log" ]]; then
             echo "  Completed phases:"
-            grep '| DONE |' "$target_dir/progress.log" | awk -F'|' '{print "    ✓ " $3}' | sort -u
+            grep '| DONE |' "$target_dir/progress.log" | awk -F'|' '{print "    [OK] " $3}' | sort -u
             echo ""
             local failed=""
             failed=$(grep '| FAIL |' "$target_dir/progress.log" 2>/dev/null)
             if [[ -n "$failed" ]]; then
                 echo "  Failed phases (may need manual re-run):"
-                echo "$failed" | awk -F'|' '{print "    ✗ " $3 " — " $4}'
+                echo "$failed" | awk -F'|' '{print "    [FAIL] " $3 " -- " $4}'
             fi
         fi
         echo ""
 
         # --- Output Directory ---
-        echo "═══ OUTPUT FILES ════════════════════════════════════════════"
+        echo "=== OUTPUT FILES ============================================"
         echo ""
         echo "  Full results: $target_dir/"
         find "$target_dir" -type f \( -name "*.txt" -o -name "*.nmap" -o -name "*.xml" -o -name "*.json" \) 2>/dev/null | \
