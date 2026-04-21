@@ -433,6 +433,22 @@ _drop_wildcard_ffuf_rows() {
         }' "$ffuf_file" > "${ffuf_file}.tmp" && mv "${ffuf_file}.tmp" "$ffuf_file"
 }
 
+# Why: ffuf exits non-zero when killed by `timeout`, even if it completed
+# most requests and produced useful output. Don't FAIL the phase when we
+# have usable filtered results — partial is better than nothing under the
+# engagement clock. Returns 0 if any *.txt in $1 has at least one data row
+# (numeric status in column 2, past the header).
+_phase_has_results() {
+    local outdir="$1"
+    [[ -d "$outdir" ]] || return 1
+    local f
+    for f in "$outdir"/*.txt; do
+        [[ -s "$f" ]] || continue
+        awk -F'|' 'NR>2 && $2 ~ /^[[:space:]]*[0-9]+[[:space:]]*$/ { found=1; exit } END { exit !found }' "$f" && return 0
+    done
+    return 1
+}
+
 #==============================================================================
 # URL PARSING HELPERS
 #==============================================================================
@@ -970,6 +986,9 @@ phase_content() {
     fi
 
     _prune_useless_files "$outdir"
+    if [[ "$phase_ok" != "true" ]] && _phase_has_results "$outdir"; then
+        phase_ok=true  # rescue: ffuf timed out but produced usable results
+    fi
     if [[ "$phase_ok" == "true" ]]; then
         progress_log "$2" "DONE" "$phase_name" "tech=$tech"
     else
@@ -1082,6 +1101,9 @@ PYEOF
     done
 
     _prune_useless_files "$outdir"
+    if [[ "$phase_ok" != "true" ]] && _phase_has_results "$outdir"; then
+        phase_ok=true  # rescue: ffuf timed out but produced usable results
+    fi
     if [[ "$phase_ok" == "true" ]]; then
         progress_log "$2" "DONE" "$phase_name" "dirs=${#interesting_dirs[@]}"
     else
@@ -1179,6 +1201,9 @@ phase_vhosts() {
     fi
 
     _prune_useless_files "$outdir"
+    if [[ "$phase_ok" != "true" ]] && _phase_has_results "$outdir"; then
+        phase_ok=true  # rescue: ffuf timed out but produced usable results
+    fi
     if [[ "$phase_ok" == "true" ]]; then
         progress_log "$2" "DONE" "$phase_name" "found=$found_count"
     else
@@ -1302,6 +1327,9 @@ PYEOF
     done
 
     _prune_useless_files "$outdir"
+    if [[ "$phase_ok" != "true" ]] && _phase_has_results "$outdir"; then
+        phase_ok=true  # rescue: ffuf timed out but produced usable results
+    fi
     if [[ "$phase_ok" == "true" ]]; then
         progress_log "$2" "DONE" "$phase_name" "endpoints=${#endpoints[@]}"
     else
