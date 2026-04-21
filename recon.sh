@@ -2298,6 +2298,84 @@ triage_and_enumerate() {
 }
 
 #------------------------------------------------------------------------------
+# SEARCHSPLOIT XML SWEEP
+# Runs `searchsploit -j --nmap nmap_tcp.xml` and writes a deduped, OffSec-relevant
+# hit list to loot/searchsploit_hits.txt. Returns the path on success.
+#------------------------------------------------------------------------------
+run_searchsploit_xml() {
+    local target_dir="$1"
+    local xml="$target_dir/scans/nmap_tcp.xml"
+    local out="$target_dir/loot/searchsploit_hits.txt"
+    [[ -s "$xml" ]] || return 1
+    command -v searchsploit &>/dev/null || return 1
+    mkdir -p "$target_dir/loot"
+
+    local json_tmp
+    json_tmp=$(mktemp) || return 1
+    timeout 60 searchsploit -j --nmap "$xml" > "$json_tmp" 2>/dev/null || true
+
+    # searchsploit --nmap emits one JSON object per search term, interleaved
+    # with [i]/[-] log lines. Stream-decode each JSON object and filter for
+    # signal: keep only version-targeted searches (SEARCH term contains a
+    # digit, e.g. "openssh 7.4"), drop bare-product noise ("openssh"), dedupe
+    # by first CVE, and drop CVE-less DoS entries.
+    python3 - "$json_tmp" "$out" <<'PY' 2>/dev/null || { rm -f "$json_tmp"; return 1; }
+import json, re, sys
+raw = open(sys.argv[1]).read()
+dec = json.JSONDecoder()
+hits = []
+i = 0
+while i < len(raw):
+    j = raw.find("{", i)
+    if j == -1:
+        break
+    try:
+        obj, end = dec.raw_decode(raw, j)
+    except ValueError:
+        i = j + 1
+        continue
+    i = end
+    search = str(obj.get("SEARCH", "")).strip()
+    # Version-targeted queries only — bare-product queries are too noisy
+    # (e.g. "openssh" returns ~28 hits spanning 2001-2024).
+    if not re.search(r'\d', search):
+        continue
+    for h in obj.get("RESULTS_EXPLOIT", []) or []:
+        hits.append(h)
+
+seen_edb = set()
+seen_cve = set()
+rows = []
+for h in hits:
+    eid = h.get("EDB-ID") or ""
+    if not eid or eid in seen_edb:
+        continue
+    seen_edb.add(eid)
+    title = h.get("Title", "").strip()
+    ptype = (h.get("Type") or "").lower()
+    platform = (h.get("Platform") or "").lower()
+    codes = h.get("Codes") or "-"
+    if ptype == "dos" and "CVE-" not in codes:
+        continue
+    # Dedupe by first CVE — many EDBs share one CVE (e.g. CVE-2018-15473)
+    cves = re.findall(r'CVE-\d{4}-\d+', codes)
+    if cves:
+        first = cves[0]
+        if first in seen_cve:
+            continue
+        seen_cve.add(first)
+    rows.append(f"[EDB-{eid}] {title}  ({codes})  [{ptype}/{platform}]")
+with open(sys.argv[2], "w") as f:
+    f.write("\n".join(rows))
+    if rows:
+        f.write("\n")
+PY
+    rm -f "$json_tmp"
+    [[ -s "$out" ]] && echo "$out"
+    return 0
+}
+
+#------------------------------------------------------------------------------
 # FINDING-DRIVEN NEXT STEPS
 # Writes concise commands only when backed by nmap detections or non-empty result
 # files produced by this script.
@@ -2479,7 +2557,50 @@ generate_quick_wins() {
                "$httpdir/curl_headers.txt" 2>/dev/null; then
             echo "JSON API endpoint on $ip:$p — see $httpdir/curl_headers.txt" >> "$tmp_file"
         fi
+
+        # --- Nikto surfacing ---
+        # Surface only high-signal markers; ignore routine header-hardening notices.
+        if is_nonempty_file "$httpdir/nikto.txt"; then
+            local nikto_hits
+            nikto_hits=$(grep -ciE 'CVE-[0-9]+|OSVDB|/cgi-bin/|/admin|/login|/phpmyadmin|/manager|/console|/\.git|/backup|/config|default account|no authentication|directory indexing|phpinfo|Shellshock|ASP\.NET debug' \
+                "$httpdir/nikto.txt" 2>/dev/null); nikto_hits=${nikto_hits:-0}
+            if (( nikto_hits > 0 )); then
+                echo "NIKTO on $ip:$p → ${nikto_hits} interesting finding(s) — see $httpdir/nikto.txt" >> "$tmp_file"
+            fi
+        fi
+
+        # --- Feroxbuster surfacing ---
+        # Ferox row format: "STATUS GET LINES WORDS BYTES URL". Count 200/301/302
+        # results and surface interesting paths.
+        if is_nonempty_file "$httpdir/feroxbuster.txt"; then
+            local ferox_hits
+            ferox_hits=$(grep -cE '^\s*(200|301|302|401|403)\s+(GET|HEAD)\s' "$httpdir/feroxbuster.txt" 2>/dev/null)
+            ferox_hits=${ferox_hits:-0}
+            if (( ferox_hits > 0 )); then
+                local ferox_interesting
+                ferox_interesting=$(grep -ciE '/admin|/login|/upload|/config|/backup|/shell|/api|/console|/phpmyadmin|/wp-|/cgi|/manager|/\.git|/\.env' \
+                    "$httpdir/feroxbuster.txt" 2>/dev/null); ferox_interesting=${ferox_interesting:-0}
+                if (( ferox_interesting > 0 )); then
+                    echo "FEROX on $ip:$p → ${ferox_hits} path(s), ${ferox_interesting} interesting — see $httpdir/feroxbuster.txt" >> "$tmp_file"
+                else
+                    echo "FEROX on $ip:$p → ${ferox_hits} path(s) — see $httpdir/feroxbuster.txt" >> "$tmp_file"
+                fi
+            fi
+        fi
     done
+
+    # --- Searchsploit sweep of nmap XML (version-targeted exploit catalog) ---
+    local sxml_hits
+    sxml_hits=$(run_searchsploit_xml "$target_dir" 2>/dev/null || true)
+    if is_nonempty_file "$sxml_hits"; then
+        local sxml_count
+        sxml_count=$(wc -l < "$sxml_hits" 2>/dev/null); sxml_count=${sxml_count:-0}
+        if (( sxml_count > 0 )); then
+            local sxml_top
+            sxml_top=$(head -3 "$sxml_hits" 2>/dev/null | paste -sd' | ' -)
+            echo "SEARCHSPLOIT on $ip → ${sxml_count} catalog hit(s); top: ${sxml_top} — see $sxml_hits" >> "$tmp_file"
+        fi
+    fi
 
     if is_nonempty_file "$target_dir/tcp/ssh/version_info.txt"; then
         local ssh_version
@@ -3098,6 +3219,22 @@ generate_next_steps() {
 }
 
 #------------------------------------------------------------------------------
+# PRUNE RECON ARTIFACTS
+# Remove intermediate files that are never referenced once the summary,
+# quick_wins, and next_steps have been written. is_phase_done reads
+# progress.log (not files), so deletions do not break `--resume`.
+#------------------------------------------------------------------------------
+prune_recon_artifacts() {
+    local target_dir="$1"
+    [[ -d "$target_dir" ]] || return 0
+    rm -f "$target_dir"/scans/*_console.txt \
+          "$target_dir"/scans/*.gnmap \
+          "$target_dir"/scans/rustscan_tcp.txt \
+          "$target_dir"/tcp/ssh/banner.txt \
+          2>/dev/null || true
+}
+
+#------------------------------------------------------------------------------
 # GENERATE SUMMARY REPORT
 #------------------------------------------------------------------------------
 generate_summary() {
@@ -3349,7 +3486,7 @@ generate_summary() {
             p=$(basename "$httpdir" | sed 's/port_//')
             echo "  --- Port $p ---"
             if [[ -f "$httpdir/whatweb.txt" ]]; then
-                echo "  WhatWeb: $(head -1 "$httpdir/whatweb.txt" 2>/dev/null)"
+                echo "  WhatWeb: $(head -1 "$httpdir/whatweb.txt" 2>/dev/null | sed 's/\x1b\[[0-9;]*m//g')"
             fi
             if [[ -f "$httpdir/gobuster_dir.txt" ]]; then
                 local hits=""
@@ -3358,6 +3495,14 @@ generate_summary() {
                 # Show top interesting hits
                 grep -iE '/admin|/login|/upload|/config|/backup|/shell|/api|/console|/phpmyadmin|/wp-|/cgi' \
                     "$httpdir/gobuster_dir.txt" 2>/dev/null | head -10 | \
+                    while IFS= read -r line; do echo "    -> $line"; done
+            fi
+            if [[ -f "$httpdir/feroxbuster.txt" ]]; then
+                local fhits=""
+                fhits=$(grep -cE '^\s*(200|301|302|401|403)\s+(GET|HEAD)\s' "$httpdir/feroxbuster.txt" 2>/dev/null); fhits=${fhits:-0}
+                echo "  Feroxbuster: $fhits paths found"
+                grep -iE '/admin|/login|/upload|/config|/backup|/shell|/api|/console|/phpmyadmin|/wp-|/cgi|/manager|/\.git|/\.env' \
+                    "$httpdir/feroxbuster.txt" 2>/dev/null | head -10 | \
                     while IFS= read -r line; do echo "    -> $line"; done
             fi
             if [[ -f "$httpdir/robots.txt" ]] && ! grep -q '# No robots' "$httpdir/robots.txt" 2>/dev/null; then
@@ -3488,6 +3633,9 @@ generate_summary() {
             fi
         fi
         echo ""
+
+        # --- Prune intermediate artifacts before listing ---
+        prune_recon_artifacts "$target_dir" >/dev/null 2>&1
 
         # --- Output Directory ---
         echo "=== OUTPUT FILES ============================================"
