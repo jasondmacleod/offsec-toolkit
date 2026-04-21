@@ -281,6 +281,35 @@ declare -A OffSec_SERVICE_HINTS=(
   [5000]="UPnP/Flask/Docker registry (v1) | /v2/_catalog for registry"
 )
 
+#------------------------------------------------------------------------------
+# OffSec HTTP-HEADER KNOWLEDGE BASE
+# Parallel to OffSec_SERVICE_HINTS but keyed on case-insensitive regex matched
+# against each HTTP port's curl_headers.txt. Catches services exposed on
+# non-default ports where the port KB would miss them (e.g. salt-api on :8000
+# pairing with the master on :4505/:4506 — observed on Twiggy 192.168.227.62).
+#
+# Format: ["header-regex"]="name | CVE-or-hint | optional extra note"
+# To add a new product, append ONE line here — no new parser needed.
+#
+# Scope rule: only include header signatures that UNIQUELY name a product
+# (e.g. X-Jenkins:, Server: MiniServ). Broad markers like "Content-Type:
+# application/json" go in the generic quick-wins path, not here.
+#------------------------------------------------------------------------------
+declare -A OffSec_HTTP_HEADER_HINTS=(
+  ["X-Upstream:[[:space:]]*salt-api"]="SaltStack salt-api | CVE-2020-11651 + CVE-2020-11652 unauth RCE as root | pair with 4505/4506 | msf: exploit/linux/misc/saltstack_salt_api_cmd_exec"
+  ["X-Jenkins:"]="Jenkins | CVE-2024-23897 unauth arbitrary file read (<2.442 / LTS <2.426.3) | jnlpJars/jenkins-cli.jar connect-node @/etc/passwd"
+  ["X-Hudson:"]="Jenkins (Hudson legacy) | same as X-Jenkins — try CVE-2024-23897"
+  ["X-Gitlab-Meta:"]="GitLab | CVE-2023-7028 unauth account takeover via password_reset (16.1.0-16.7.1)"
+  ["X-Confluence-Request-Time:"]="Atlassian Confluence | CVE-2023-22527 OGNL unauth RCE (8.0.0-8.5.3)"
+  ["Server:[[:space:]]*Apache-Coyote"]="Apache Tomcat | default creds tomcat/tomcat, manager/html WAR deploy"
+  ["Server:[[:space:]]*MiniServ"]="Webmin | CVE-2019-15107 unauth RCE via password_change.cgi"
+  ["Server:[[:space:]]*HFS"]="Rejetto HFS | CVE-2024-23692 unauth template RCE (2.3m-2.4) via ?search=%00{.exec|CMD.}"
+  ["X-Powered-By:[[:space:]]*Werkzeug"]="Werkzeug debugger | if PIN-less or leaked → RCE via /console"
+  ["X-Powered-By:[[:space:]]*Next\\.js"]="Next.js | CVE-2025-29927 middleware auth bypass (<14.2.25 / <15.2.3) via x-middleware-subrequest header"
+  ["X-Powered-By:[[:space:]]*Express"]="Express.js | check for CVE-2024-29041 open-redirect and verb-tampering"
+  ["X-Powered-By:[[:space:]]*PHP/[45]"]="End-of-life PHP | check for CVE-2019-11043 php-fpm RCE, CVE-2012-1823 php-cgi argv"
+)
+
 # Generic KB emitter — reads OffSec_SERVICE_HINTS, emits ONE next_steps stanza per
 # open port that matches. Evidence is the port being open (from nmap_tcp.nmap).
 emit_kb_port_hints() {
@@ -305,6 +334,37 @@ emit_kb_port_hints() {
             "curl -sk ${proto}://$ip:$p/ | head -20"
         # Also surface in quick_wins for at-a-glance triage.
         echo "KB: :$p — $hint" >> "$target_dir/loot/quick_wins.txt"
+    done
+}
+
+# Generic HTTP-header KB emitter — iterates every port's curl_headers.txt and
+# applies OffSec_HTTP_HEADER_HINTS. One stanza per (port, matching header).
+emit_kb_header_hints() {
+    local ip="$1"
+    local target_dir="$2"
+    local next_file="$3"
+    local headers_file port_dir port proto hdr_pattern hint name
+    for headers_file in "$target_dir"/tcp/http/port_*/curl_headers.txt; do
+        [[ -s "$headers_file" ]] || continue
+        port_dir=$(dirname "$headers_file")
+        port=$(basename "$port_dir" | sed 's/^port_//')
+        [[ "$port" =~ ^[0-9]+$ ]] || continue
+        proto="http"
+        case "$port" in 443|8443|4443|9443) proto="https" ;; esac
+        for hdr_pattern in "${!OffSec_HTTP_HEADER_HINTS[@]}"; do
+            if grep -qiE "$hdr_pattern" "$headers_file" 2>/dev/null; then
+                hint="${OffSec_HTTP_HEADER_HINTS[$hdr_pattern]}"
+                name=$(echo "$hint" | awk -F'|' '{print $1}' | awk '{$1=$1};1')
+                append_next_finding "$next_file" \
+                    "HTTP header fingerprint :$port — $name" \
+                    "$headers_file matched header pattern: $hdr_pattern" \
+                    "# KB entry: $hint" \
+                    "searchsploit $(echo "$name" | awk '{print $1, $2}' | sed 's/ *$//')" \
+                    "cat $headers_file" \
+                    "curl -sk ${proto}://$ip:$port/ | head -20"
+                echo "HTTP-HDR: :$port — $hint" >> "$target_dir/loot/quick_wins.txt"
+            fi
+        done
     done
 }
 
@@ -1083,7 +1143,7 @@ enum_http() {
     # --- WhatWeb (quick fingerprint) ---
     if check_tool whatweb; then
         info "  → whatweb $url"
-        timeout "$GENERIC_TIMEOUT" whatweb -a 3 "$url" \
+        timeout "$GENERIC_TIMEOUT" whatweb -a 3 --colour=never "$url" \
             > "$outdir/whatweb.txt" 2>&1 || true
     fi
 
@@ -1137,10 +1197,11 @@ enum_http() {
             _tool_start "nikto" "$url" "${NIKTO_TIMEOUT}s"
             local _nikto_t0
             _nikto_t0=$(date +%s)
-            # Note: do NOT pass -Format txt when -o already ends in .txt — older nikto
-            # versions produce nikto.txt.txt with both flags set.
-            timeout "$NIKTO_TIMEOUT" nikto -h "$url" -o "$outdir/nikto.txt" \
-                -nointeractive 2>&1 | tail -5 || true
+            # Nikto 2.6.0 auto-appends a format extension to -o, so passing
+            # "-o nikto.txt" produces "nikto.txt.txt". Pass the basename only
+            # and force -Format txt so we get a single-extension "nikto.txt".
+            timeout "$NIKTO_TIMEOUT" nikto -h "$url" -o "$outdir/nikto" \
+                -Format txt -nointeractive 2>&1 | tail -5 || true
             _tool_done "nikto" "$_nikto_t0"
         fi
 
@@ -1176,8 +1237,12 @@ enum_http() {
                 _tool_start "feroxbuster" "$url" "${FEROX_RUNTIME}s"
                 local _ferox_t0
                 _ferox_t0=$(date +%s)
+                # Clean slate — feroxbuster appends to -o file, stacking config dumps across runs
+                rm -f "$outdir/feroxbuster.txt"
                 local ferox_flags=(-u "$url" -w "$GOBUSTER_WORDLIST" \
-                    -t 30 --timeout 30 -d 2 -q \
+                    -t 30 --timeout 30 -d 2 -q --no-state \
+                    --filter-status 404 --filter-status 500 \
+                    --filter-status 502 --filter-status 503 \
                     -o "$outdir/feroxbuster.txt")
                 [[ "$proto" == "https" ]] && ferox_flags+=(-k)
                 timeout "$FEROX_RUNTIME" feroxbuster "${ferox_flags[@]}" 2>&1 | tail -3 || true
@@ -3012,6 +3077,7 @@ generate_next_steps() {
     # (OffSec_SERVICE_HINTS). To add a new service, add ONE line to the KB — no new
     # code here, no new enum module.
     emit_kb_port_hints "$ip" "$target_dir" "$next_file"
+    emit_kb_header_hints "$ip" "$target_dir" "$next_file"
 
     # --- Vulners CVE hits → searchsploit/exploit hunt ---
     if is_nonempty_file "$target_dir/loot/vulners_hits.txt"; then
