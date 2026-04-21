@@ -82,7 +82,7 @@ Ground truth for the engagement this toolkit targets. All decisions in this docu
 | Bonus points | **Removed** (no coursework/lab bonus anymore) |
 | Buffer Overflow | **Removed** from course + engagement body of knowledge |
 | Metasploit / Meterpreter | Allowed on **exactly one** target; no pivoting via MSF |
-| Banned tools | Nessus, OpenVAS, Nexpose, Armitage, AutoSploit, Cobalt Strike, AI chatbots (ChatGPT, KAI, etc.) |
+| Banned tools | Nessus, OpenVAS, Nexpose, **sqlmap**, wfuzz, dirbuster, wapiti, Burp Pro Scanner, Metasploit Pro, Armitage, AutoSploit, Cobalt Strike, AI chatbots (ChatGPT, KAI, etc.) |
 | Allowed tools (highlights) | nmap, burp, gobuster/ffuf, netcat, python, bash, wireshark, tcpdump, crackmapexec/nxc, impacket, bloodhound, certipy-ad, responder |
 | Proof files | `local.txt` (low-priv) + `proof.txt` (root/admin) — screenshot + submit via control panel |
 
