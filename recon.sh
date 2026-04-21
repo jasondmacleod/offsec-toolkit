@@ -2643,9 +2643,10 @@ generate_next_steps() {
                 "${smtp_ucount} usernames in ${smtp_users_loot}" \
                 "cat $smtp_users_loot" \
                 "./sprayr.sh -U $smtp_users_loot -p 'Password1' -t $ip" \
-                "./crackr.sh --hydra smb --target $ip -U $smtp_users_loot -P /usr/share/wordlists/rockyou.txt" \
-                "./crackr.sh --hydra winrm --target $ip -U $smtp_users_loot -P /usr/share/wordlists/rockyou.txt" \
-                "./crackr.sh --hydra smtp --target $ip -U $smtp_users_loot -P /usr/share/wordlists/rockyou.txt"
+                "timeout 10m ./crackr.sh --hydra smb --target $ip -U $smtp_users_loot -P /usr/share/seclists/Passwords/Default-Credentials/default-passwords.txt" \
+                "timeout 10m ./crackr.sh --hydra winrm --target $ip -U $smtp_users_loot -P /usr/share/seclists/Passwords/Default-Credentials/default-passwords.txt" \
+                "timeout 10m ./crackr.sh --hydra smtp --target $ip -U $smtp_users_loot -P /usr/share/seclists/Passwords/Default-Credentials/default-passwords.txt" \
+                "# If time permits and default-passwords came up empty: ./crackr.sh --hydra <svc> -U $smtp_users_loot -P /usr/share/wordlists/rockyou.txt"
         fi
     fi
 
@@ -2723,14 +2724,17 @@ generate_next_steps() {
         proto=$(http_proto_for_port "$p")
         url="${proto}://${ip}:${p}"
 
-        if is_web_brute_target "$p" && is_phase_done "$target_dir" "http_${p}"; then
-            evidence="HTTP enum completed for port ${p} — whatweb/headers/robots/methods already captured at ${httpdir}/"
+        # Gate: only emit a deeper brute-force pass when the first-pass ferox
+        # (enum_http at ~line 1246) did not produce output — otherwise it is
+        # duplicate work over the same URL.
+        if is_web_brute_target "$p" && is_phase_done "$target_dir" "http_${p}" && \
+           [[ ! -s "$httpdir/feroxbuster.txt" ]]; then
+            evidence="HTTP enum completed for port ${p} — whatweb/headers/robots/methods already captured at ${httpdir}/; first-pass ferox absent/empty"
             append_next_finding "$next_file" \
                 "Web target ready for deeper enumeration" \
                 "$evidence" \
-                "./webenum.sh --url $url" \
-                "feroxbuster -u $url -w /usr/share/seclists/Discovery/Web-Content/raft-large-words.txt -x php,html,txt,bak,zip,tar.gz -o $httpdir/ferox_deep.txt" \
-                "nuclei -u $url -severity critical,high,medium -o $httpdir/nuclei.txt   # optional; requires nuclei installed"
+                "feroxbuster -u $url -w /usr/share/seclists/Discovery/Web-Content/directory-list-2.3-medium.txt -x php,html,txt -d 2 -t 50 --timeout 5 --time-limit 10m -o $httpdir/ferox_deep.txt" \
+                "nuclei -u $url -severity critical,high,medium -stats -si 10 -timeout 5 -retries 1 -o $httpdir/nuclei.txt   # optional; requires nuclei installed"
         fi
 
         if is_nonempty_file "$httpdir/http_methods.txt" && \
@@ -2779,7 +2783,7 @@ generate_next_steps() {
             "Anonymous FTP access succeeded" \
             "$target_dir/tcp/ftp/ANONYMOUS_ACCESS.txt exists" \
             "ftp $ip" \
-            "wget -r --no-passive-ftp ftp://anonymous:anon@$ip/" \
+            "wget -r --no-passive-ftp --timeout=10 --tries=1 ftp://anonymous:anon@$ip/" \
             "find $target_dir/tcp/ftp/mirror -maxdepth 5 -type f 2>/dev/null | sort" \
             "# Grep mirror for secrets/keys/creds:" \
             "grep -RniE 'pass|secret|key|token|cred|user' $target_dir/tcp/ftp/mirror 2>/dev/null | head -40" \
@@ -2828,7 +2832,8 @@ generate_next_steps() {
             "nmap/progress indicates POP3" \
             "nc -nv $ip $pop3_port" \
             "printf 'CAPA\\r\\nQUIT\\r\\n' | nc -nv $ip $pop3_port" \
-            "hydra -L <users.txt> -P /usr/share/wordlists/rockyou.txt pop3://$ip"
+            "timeout 10m hydra -L <users.txt> -P /usr/share/seclists/Passwords/Default-Credentials/default-passwords.txt -t 4 pop3://$ip" \
+            "# If time permits and default-passwords came up empty: timeout 30m hydra -L <users.txt> -P /usr/share/wordlists/rockyou.txt -t 4 pop3://$ip"
     fi
 
     imap_port=$(first_detected_port "$target_dir" 'imap|^143/tcp|^993/tcp')
@@ -2839,7 +2844,8 @@ generate_next_steps() {
             "nmap/progress indicates IMAP" \
             "nc -nv $ip $imap_port" \
             "printf '. CAPABILITY\\r\\n. LOGOUT\\r\\n' | nc -nv $ip $imap_port" \
-            "hydra -L <users.txt> -P /usr/share/wordlists/rockyou.txt imap://$ip"
+            "timeout 10m hydra -L <users.txt> -P /usr/share/seclists/Passwords/Default-Credentials/default-passwords.txt -t 4 imap://$ip" \
+            "# If time permits and default-passwords came up empty: timeout 30m hydra -L <users.txt> -P /usr/share/wordlists/rockyou.txt -t 4 imap://$ip"
     fi
 
     if is_nonempty_file "$target_dir/udp/snmp/valid_community_strings.txt"; then
@@ -2849,8 +2855,8 @@ generate_next_steps() {
             "SNMP community string found" \
             "$target_dir/udp/snmp/valid_community_strings.txt is non-empty" \
             "cat $target_dir/udp/snmp/valid_community_strings.txt" \
-            "snmpwalk -v2c -c '${community}' $ip" \
-            "snmpwalk -v2c -c '${community}' $ip 1.3.6.1.2.1.25.4.2.1.5"
+            "timeout 10m snmpbulkwalk -v2c -c '${community}' -Cr50 -t 2 -r 1 $ip 2>&1 | tee $target_dir/udp/snmp/snmpwalk_full.txt" \
+            "snmpwalk -v2c -c '${community}' -t 2 -r 1 $ip 1.3.6.1.2.1.25.4.2.1.5"
     fi
 
     if grep -qP '^\s*/' "$target_dir/tcp/rpc/nfs_exports.txt" 2>/dev/null; then
@@ -2922,7 +2928,8 @@ generate_next_steps() {
             "nmap service line includes port ${mysql_port}" \
             "mysql -h $ip -P $mysql_port -u root --password=''" \
             "mysql -h $ip -P $mysql_port -u root" \
-            "./crackr.sh --hydra mysql --target $ip -u root -P /usr/share/wordlists/rockyou.txt"
+            "timeout 10m ./crackr.sh --hydra mysql --target $ip -u root -P /usr/share/seclists/Passwords/Default-Credentials/default-passwords.txt" \
+            "# If time permits and default-passwords came up empty: ./crackr.sh --hydra mysql --target $ip -u root -P /usr/share/wordlists/rockyou.txt"
     fi
 
     local pg_port
@@ -2955,7 +2962,8 @@ generate_next_steps() {
             "nmap service line includes port ${pg_port}" \
             "psql -h $ip -p $pg_port -U postgres" \
             "PGPASSWORD=postgres psql -h $ip -p $pg_port -U postgres -c '\\l'" \
-            "./crackr.sh --hydra postgres --target $ip -u postgres -P /usr/share/wordlists/rockyou.txt"
+            "timeout 10m ./crackr.sh --hydra postgres --target $ip -u postgres -P /usr/share/seclists/Passwords/Default-Credentials/default-passwords.txt" \
+            "# If time permits and default-passwords came up empty: ./crackr.sh --hydra postgres --target $ip -u postgres -P /usr/share/wordlists/rockyou.txt"
     fi
 
     local zt_file
@@ -2999,7 +3007,8 @@ generate_next_steps() {
                 "$snmp_users_loot is non-empty" \
                 "cat $snmp_users_loot" \
                 "./sprayr.sh -U $snmp_users_loot -p 'Password1' -t $ip" \
-                "./crackr.sh --hydra winrm --target $ip -U $snmp_users_loot -P /usr/share/wordlists/rockyou.txt"
+                "timeout 10m ./crackr.sh --hydra winrm --target $ip -U $snmp_users_loot -P /usr/share/seclists/Passwords/Default-Credentials/default-passwords.txt" \
+                "# If time permits and default-passwords came up empty: ./crackr.sh --hydra winrm --target $ip -U $snmp_users_loot -P /usr/share/wordlists/rockyou.txt"
         fi
     fi
 
@@ -3029,7 +3038,8 @@ generate_next_steps() {
                 "netexec mssql $ip -u <USER> -p '<PASS>'" \
                 "impacket-mssqlclient '<DOMAIN>/<USER>:<PASS>@$ip' -windows-auth" \
                 "impacket-mssqlclient '<USER>:<PASS>@$ip' -port $mssql_port" \
-                "./crackr.sh --hydra mssql --target $ip -U <users.txt> -P /usr/share/wordlists/rockyou.txt" \
+                "timeout 10m ./crackr.sh --hydra mssql --target $ip -U <users.txt> -P /usr/share/seclists/Passwords/Default-Credentials/default-passwords.txt" \
+                "# If time permits and default-passwords came up empty: ./crackr.sh --hydra mssql --target $ip -U <users.txt> -P /usr/share/wordlists/rockyou.txt" \
                 "nmap --script ms-sql-info,ms-sql-empty-password -p $mssql_port $ip"
         fi
     fi
@@ -3090,7 +3100,7 @@ generate_next_steps() {
             "nmap service line includes port ${rsync_port}" \
             "rsync rsync://$ip:$rsync_port/" \
             "nmap --script rsync-list-modules -p $rsync_port $ip" \
-            "rsync -av rsync://$ip:$rsync_port/<MODULE>/ ./rsync_${ip//./_}_<MODULE>/"
+            "rsync -av --timeout=30 rsync://$ip:$rsync_port/<MODULE>/ ./rsync_${ip//./_}_<MODULE>/"
     fi
 
     local vnc_port
@@ -3101,7 +3111,8 @@ generate_next_steps() {
             "nmap service line includes port ${vnc_port}" \
             "nmap --script vnc-info,vnc-title,vnc-brute -p $vnc_port $ip" \
             "vncviewer $ip:$((vnc_port - 5900))" \
-            "./crackr.sh --hydra vnc --target $ip -P /usr/share/wordlists/rockyou.txt"
+            "timeout 10m ./crackr.sh --hydra vnc --target $ip -P /usr/share/seclists/Passwords/Default-Credentials/default-passwords.txt" \
+            "# If time permits and default-passwords came up empty: ./crackr.sh --hydra vnc --target $ip -P /usr/share/wordlists/rockyou.txt"
     fi
 
     local docker_port
@@ -3183,11 +3194,14 @@ generate_next_steps() {
             [[ -z "$cms_name" || -z "$cms_port" ]] && continue
             local proto="http"
             [[ "$cms_port" == "443" || "$cms_port" == "8443" ]] && proto="https"
+            local cms_query="${cms_name#Title[}"
+            cms_query="${cms_query%]}"
+            cms_query="${cms_query%% *}"
             append_next_finding "$next_file" \
                 "Named app on :${cms_port} — ${cms_name}" \
                 "WhatWeb title/plugin on $ip:$cms_port ($target_dir/tcp/http/port_${cms_port}/whatweb.txt)" \
                 "cat $target_dir/tcp/http/port_${cms_port}/whatweb.txt" \
-                "searchsploit ${cms_name%% *}" \
+                "searchsploit \"${cms_query}\"" \
                 "curl -sk ${proto}://$ip:${cms_port}/ | grep -iE 'version|generator|<meta' | head -10" \
                 "for p in /admin /admin/login /login /wp-admin /administrator /user/login /manager/html /console /api /robots.txt /.git/HEAD; do printf '%s %s\\n' \"\$(curl -sk -o /dev/null -w '%{http_code}' ${proto}://$ip:${cms_port}\$p)\" \"\$p\"; done"
         done < <(grep -i '^CMS/app fingerprint' "$target_dir/loot/quick_wins.txt" 2>/dev/null | sort -u)
@@ -3210,7 +3224,7 @@ generate_next_steps() {
             "# --- Top CVEs per service (dedup, sort by CVSS) ---" \
             "awk -F'\\t' '{print \$2, \$3}' $target_dir/loot/vulners_hits.txt | sort -u" \
             "# --- searchsploit sweep of flagged CVEs ---" \
-            "grep -oE 'CVE-[0-9]+-[0-9]+' $target_dir/loot/vulners_hits.txt | sort -u | while read cve; do echo \"=== \$cve ===\"; searchsploit --cve \"\$cve\"; done"
+            "grep -oE 'CVE-[0-9]+-[0-9]+' $target_dir/loot/vulners_hits.txt | sort -u | head -50 | while read cve; do echo \"=== \$cve ===\"; searchsploit --cve \"\$cve\"; done"
     fi
 
     if ! grep -q '^## ' "$next_file" 2>/dev/null; then
