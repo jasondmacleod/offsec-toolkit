@@ -1,33 +1,159 @@
-# AGENTS.md
+# AGENTS.md — OffSec Toolkit
 
-## Project
+Authoritative instructions for any coding agent (Claude Code, Codex, Cursor, etc.) working in this repository. Read on every session. Vault content and this file override general training knowledge.
 
-This repository contains OffSec-focused helper scripts. Prefer pragmatic, reliable,
-single-file Bash/PowerShell changes over elaborate abstractions. The scripts are
-used under engagement pressure, so outputs should be concise, grounded, and easy to
-copy-paste after human review.
+---
 
-## Core Rules
+## 1. Mission
 
-- Generated follow-up commands must be evidence-gated.
-- Do not emit commands for services or findings that are absent.
-- Do not emit anonymous access commands unless anonymous access/readability was
-  actually proven by script output.
-- Do not treat WinRM/HTTPAPI ports such as `5985`, `5986`, or `47001` as real
-  web app targets unless there is positive web-app evidence.
-- Keep command libraries concise and OffSec-practical, not exhaustive.
-- Prefer `next_steps.txt` as the primary action file. Keep legacy aliases only
-  where scripts already use them.
-- Do not add exploit automation that runs automatically. Suggestions are fine;
-  execution should remain user-controlled.
-- Do not include restricted automatic exploitation tools in scripts, setup,
-  generated commands, or docs. `nuclei` and `wpscan` may appear in default OffSec
-  follow-up output when they are tied to concrete findings, such as Grafana or
-  WordPress evidence.
-- Do not rewrite scripts from scratch. Preserve useful techniques and build on
-  existing phases, output paths, and helper functions.
-- Keep coverage OffSec-practical. Add small missing checks when they unlock real
-  engagement value; avoid large generic command dumps.
+**Get Jason to a passing OffSec score on June 6.**
+
+Every change, every suggestion, every edit is evaluated against one question: *does this make engagement-day execution faster, more reliable, or more correct?* If it doesn't, don't make it.
+
+Pass = 70 points. engagement = 23h45m + 24h report. Targets: 3 standalones (20 pts each, 10 local + 10 proof) + 1 AD set (10 + 10 + 20). The scripts and cheatsheets in this repo are the primary execution surface. Treat them as such.
+
+Bias every decision toward: **reducing cognitive load under pressure, reducing the number of things that can fail at 3am, and making the reproducibility chain that the grader will walk as tight as possible.**
+
+---
+
+## 2. Enumeration-only, always
+
+This is the bright line. Do not cross it.
+
+- Scripts in this suite are **enumeration, orchestration, and reporting only**. No auto-exploitation. Ever.
+- If a change would add an exploit trigger, a payload delivery, a credential-use-to-execute-code flow, or anything that performs the "gain a shell" step automatically — **stop**. That belongs in manual playbooks, not the suite.
+- Generating copy-paste commands for Jason to run manually is fine. Running them for him is not.
+- Credential spraying (`sprayr.sh`), hash cracking (`crackr.sh`), BloodHound collection (`adr.sh`), privesc enumeration (`escalatr.sh`) — all fine. These are enumeration, not exploitation.
+- The distinction matters for engagement compliance **and** for Jason's muscle memory. Automating exploitation is how people fail the engagement thinking their scripts will save them.
+
+---
+
+## 3. Non-negotiable tool conventions
+
+These override model defaults. Do not "correct" them.
+
+- **`nxc` (NetExec) — never `crackmapexec` or `cme`.** CME is deprecated. Every reference, every command, every doc string: `nxc`.
+- **Penelope with `-0` (zero) flag** is the standard reverse shell handler. Not `nc -lvnp`, not `rlwrap nc`, not `pwncat`. Penelope.
+- **SharpHound + `impacket-smbserver`** for BloodHound collection. `bloodhound-python` / `bloodhound-ce-python` is unreliable in this environment (DNS SRV timeouts against lab DCs). Do not suggest it as the primary path.
+- **`pipx`** for Python tool installs (e.g. `git-dumper`). Not `pip` into system Python.
+- **Wordlists live in `/usr/share/wordlists/`** unless a specific script override exists.
+- **`TOOLKIT_ROOT`** defaults to `~/toolkit`. Tools live in `~/tools/`. Scripts live in `~/scripts/`.
+- **Ligolo-ng** over chisel/SSH for pivoting when possible — real TUN interface, no proxychains.
+- **PrintSpoofer / GodPotato** for `SeImpersonatePrivilege` on modern Windows. JuicyPotato only for older boxes.
+
+---
+
+## 4. Script-first doctrine
+
+The cheatsheets and scripts are structured around one principle: **automation runs first, manual commands are the fallback.**
+
+- Manual commands in cheatsheets must be gated behind an explicit "script found nothing" trigger. Do not promote a manual command to equal status with script output.
+- When adding a feature to a cheatsheet, check whether the corresponding script already covers it. If it does, reference the script; do not duplicate the command inline at the top level.
+- Never propose replacing a script with a one-liner. The scripts exist because one-liners fail under engagement pressure.
+- **Crack-then-spray discipline:** cracked passwords flow immediately into spraying (`crackr.sh → sprayr.sh --from-creds`). Any change touching either script must preserve this loop.
+
+---
+
+## 5. Script suite inventory
+
+| Script | Purpose |
+|---|---|
+| `recon.sh` | Host recon orchestrator (rustscan → nmap → service enum) |
+| `webenum.sh` | Deep web enumeration (post-recon, extensions + recursion + vhosts + params) |
+| `escalatr.sh` | Privesc enumeration orchestrator (Linux + Windows, tool staging) — **enumeration only** |
+| `lootr.sh` / `lootr.ps1` | Credential/loot hunting (Linux / Windows) |
+| `crackr.sh` | Hash identification + cracking dispatcher |
+| `sprayr.sh` | Credential spraying across protocols |
+| `adr.sh` | AD enumeration + kill chain (`--chain` mode) |
+| `pivotr.sh` | Ligolo-ng pivot automation (TUN + routes + teardown) |
+| `servr.sh` | Workspace setup (HTTP server, Penelope, tmux layout) |
+| `evidencr.sh` | Evidence capture (terminal logs, screenshots, per-target orgs) |
+| `startr.sh` | engagement-day bootstrap |
+| `tools_setup.sh` | Fresh Kali provisioning — authoritative for directory layout |
+
+---
+
+## 6. Bash script conventions (match the suite)
+
+All scripts share a house style. New code MUST match:
+
+- **Shebang:** `#!/usr/bin/env bash`
+- **Error handling:** `set -o pipefail`. **Do NOT use `set -e`** — scripts handle errors individually; one failed phase must never kill the run.
+- **Banner block:** multi-line comment header with PURPOSE, WORKFLOW, USAGE, OUTPUT STRUCTURE, DESIGN DECISIONS. Match the visual style of `recon.sh` / `webenum.sh` / `escalatr.sh` (double-equals separator bars).
+- **Colors + logging:** `info()`, `success()`, `warn()`, `error()`, `phase()`, `cmd_log()` helpers. Timestamps via `ts()`. Auto-disable colors when `NO_COLOR=1` or stdout is not a tty.
+- **Timeouts on everything.** `timeout N <cmd>` for any external tool call. Nothing hangs the engagement. Named timeout constants at the top of the file.
+- **Graceful degradation.** If an optional tool is missing, warn and skip the phase. Only exit on truly critical missing tools (e.g. `nxc` for `adr.sh`).
+- **Resume support.** Phases check a `progress.log` / `phase_done` marker and skip if complete. `--force` re-runs.
+- **Output layout:** `$TOOLKIT_ROOT/<category>/<target>/...`. Never scatter files into cwd.
+- **Quoting:** always quote variable expansions. Prefer `"${VAR}"` over `$VAR`. Pass arrays for nxc auth (`"${NXC_AUTH[@]}"`) — never flatten.
+- **Config at top:** All tunables (timeouts, URLs, threads, ports) in a clearly-labeled CONFIGURATION section at the top.
+
+---
+
+## 7. Editing discipline
+
+This is how edits are expected to land. Deviating wastes a review cycle.
+
+- **Surgical edits only.** Tighten and insert. **Do not flatten, do not rewrite, do not restructure** unless explicitly asked.
+- **Preserve existing improvements.** If something looks odd, assume it's intentional until verified. Ask before removing.
+- **No "helpful" expansion.** Do not add examples, explanatory comments, or defensive checks that weren't requested. The docs are already tuned for execution speed; verbosity is a regression.
+- **Verify before writing.** Script-specific details (filenames, flag names, output paths, function names) are verified against actual script content before being referenced. No hallucinated flags.
+- **Don't introduce dependencies.** If a change requires a new tool, call it out and wait for approval. Do not silently add `jq`, `yq`, `python3-<whatever>`, etc.
+- **Rewrites disguised as cleanups are rejected on sight.** Symptoms: adds headers and visual polish while removing content; flattens tiered callouts into flat bullets; replaces specific commands with generic prose; "cleans up" working code into broken code.
+
+---
+
+## 8. Review format
+
+When reviewing a script or doc (before any edit), output in this exact five-part structure:
+
+1. **Verdict** — one line: ready / needs revision / broken.
+2. **What is working** — short; only note things that should be preserved.
+3. **What still slows execution** — friction points under engagement pressure.
+4. **What is missing** — coverage gaps vs. PEN-200 2025 or vs. the rest of the suite.
+5. **Done or needs revision** — explicit next step.
+
+**Do not make changes during review.** Review is read-only. The next message ("do it" / "make the change" / "go") is when edits happen. If review and edits are collapsed into one response, that's a protocol violation.
+
+---
+
+## 9. OffSec engagement compliance (hard rules)
+
+Every change is evaluated against these:
+
+- **Metasploit is restricted to ONE machine** on the engagement. The restriction is per-*machine*, not per-module. Post-exploitation modules on an already-compromised machine do not count as additional uses. Do not add Metasploit calls to scripts that run on arbitrary targets.
+- **`sqlmap` is banned** on engagement boxes. Do not reference it in engagement-path tooling.
+- **Automated exploitation tools are banned.** See §2 — this is the bright line.
+- **Commercial tools are restricted.** Burp Community is fine; Burp Pro features are not.
+- **Screenshots + `whoami` + `hostname` + flag from original path** are required on every compromise. Interactive shell — web shells do not count for proof. Any evidence-tooling edit must preserve this.
+- **Flags must be submitted to the control panel before engagement time expires.** Flags in the report but not in the control panel = zero points. Evidence tooling should make this hard to forget.
+
+---
+
+## 10. Response style
+
+- Concise and technically precise. No over-explaining basics.
+- Direct answers. No "Great question!" preamble. No hedging wrap-up.
+- Code fences use language tags (`bash`, `powershell`, `python`). Bash scripts get `bash`, not `sh`.
+- Warnings use Obsidian callout syntax: `> [!warning]`, `> [!important]`, `> [!tip]`, `> [!note]`.
+- When uncertain, say so and stop. Do not fabricate flags, paths, or function names.
+- Lab domain in docs/examples: `corp.com`. Lab Windows host: `CLIENT75`.
+
+---
+
+## 11. What NOT to do
+
+- Do not replace `nxc` with `crackmapexec`.
+- Do not replace Penelope with `nc`/`rlwrap`/`pwncat`.
+- Do not add `bloodhound-python` as the BloodHound collection path.
+- Do not add `set -e` to any script.
+- Do not flatten tiered callouts in cheatsheets into flat bullet lists.
+- Do not restructure a doc or script as part of a "while I'm here" cleanup.
+- Do not add auto-exploitation to any script.
+- Do not generate multi-file rewrites in response to a single-file review.
+- Do not skip the review step and jump straight to edits.
+
+---
 
 ## Workspace And Output Rules
 
@@ -45,11 +171,15 @@ copy-paste after human review.
   `recon/<ip>/`, `web/<target>/artifacts/web/`, `ad/<domain>/`,
   `spray/<run>/`, `crackr/`, `privesc/`, `evidence/`, and lootr target loot.
 
+---
+
 ## Evidence-Gated Next Steps
 
 - Every generated command should have a concrete trigger: non-empty output file,
   parsed positive result, nmap service line, progress marker, or validated
   credential/admin marker.
+- Prefer `next_steps.txt` as the primary action file. Keep legacy aliases only
+  where scripts already use them.
 - Summaries may preview next actions, but they must not invent findings. Prefer
   pointing to `next_steps.txt` for full command blocks.
 - Anonymous SMB/FTP/LDAP/NFS follow-ups require proven anonymous access or a
@@ -67,6 +197,17 @@ copy-paste after human review.
 - Avoid generic canned commands at the top of summaries. If a command includes
   placeholders, the surrounding evidence should explain what still needs human
   replacement.
+- Exploit payloads over ~200 chars must be staged to files in
+  `$work_dir/loot/` and referenced by path in emitted commands. Never embed
+  long exploit strings inline in `append_next_finding` or bash heredocs.
+- Emitted commands inside `append_next_finding` should also stay under ~200
+  chars per line — long lines are fragile against Edit truncation, classifier
+  blocks, and tmux paste mangling (split with line-continuations or stage
+  the payload).
+- Files staged to `$work_dir/loot/` persist across runs intentionally (they
+  serve as evidence); `prune_recon_artifacts()` does not touch them.
+
+---
 
 ## Command And Runtime Reliability
 
@@ -86,6 +227,8 @@ copy-paste after human review.
   the script already supports user-installed tooling.
 - Keep long-running phases interrupt-safe and preserve partial results.
 
+---
+
 ## Tool Setup Rules
 
 - `tools_setup.sh` should install/check OffSec-safe recon and enum helpers by
@@ -94,10 +237,14 @@ copy-paste after human review.
   `sslscan`, `wafw00f`, `dnsrecon`, `snmpcheck`, `nbtscan`, `davtest`,
   `cadaver`, `nuclei`, `wpscan`, and `jq`.
 - Keep restricted automatic exploitation tools out of `tools_setup.sh` and
-  generated next-step commands.
+  generated next-step commands. Exception: `nuclei` and `wpscan` may appear in
+  generated next-step commands when tied to concrete findings (e.g. Grafana,
+  WordPress evidence).
 - Check-mode package validation should map package names to real binaries when
   they differ, for example `httpx-toolkit` to `httpx` and `samba-common-bin` to
   `nmblookup`.
+
+---
 
 ## PowerShell / Windows Script Rules
 
@@ -110,19 +257,17 @@ copy-paste after human review.
   only exact user ACEs.
 - Keep collection passive. Generate next steps, but do not run privesc payloads.
 
+---
+
 ## Testing
 
 Run these before committing script changes:
 
 ```bash
-bash -n recon.sh webenum.sh crackr.sh sprayr.sh adr.sh escalatr.sh lootr.sh pivotr.sh servr.sh startr.sh workflow.sh tools_setup.sh evidencr.sh tests/test_next_steps.sh
-shellcheck recon.sh webenum.sh crackr.sh sprayr.sh adr.sh escalatr.sh lootr.sh pivotr.sh servr.sh startr.sh workflow.sh tools_setup.sh evidencr.sh tests/test_next_steps.sh
+bash -n recon.sh webenum.sh crackr.sh sprayr.sh adr.sh escalatr.sh lootr.sh pivotr.sh servr.sh startr.sh workflow.sh tools_setup.sh evidencr.sh
+shellcheck recon.sh webenum.sh crackr.sh sprayr.sh adr.sh escalatr.sh lootr.sh pivotr.sh servr.sh startr.sh workflow.sh tools_setup.sh evidencr.sh
 pwsh -NoProfile -Command '$errs=$null; $null=[System.Management.Automation.PSParser]::Tokenize((Get-Content -Raw ./lootr.ps1), [ref]$errs); if ($errs) { $errs | Format-List; exit 1 }'
-./tests/test_next_steps.sh
 ```
-
-For focused next-step matrix work, `./tests/test_next_steps.sh` is the minimum
-regression check. It is offline and should not require network access.
 
 Also validate relevant help/argument behavior when touching parsers:
 
@@ -145,12 +290,16 @@ bash -c 'SUDO_USER=jdoe HOME=/root OffSec_LIB_ONLY=true source ./webenum.sh; pri
 For invalid phase/mode changes, verify the script exits non-zero before creating
 new output directories.
 
+---
+
 ## Git Hygiene
 
 - Do not commit `.claude/settings.local.json`.
 - Do not commit `.DS_Store`.
 - Check `git status --short` before staging.
 - Stage only files relevant to the task.
+
+---
 
 ## Documentation
 
