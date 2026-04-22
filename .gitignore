@@ -1,3 +1,11 @@
 spaces/
 .obsidian/workspace*
 .obsidian/plugins/
+.trash/
+.DS_Store
+.makemd/
+.space/
+**/.obsidian/workspace*
+**/.obsidian/workspace-mobile.json
+*.apkg
+*.csv
