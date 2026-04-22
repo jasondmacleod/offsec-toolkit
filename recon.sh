@@ -4242,9 +4242,18 @@ for target in "${TARGETS[@]}"; do
     echo -e "  ${CYAN}$target${NC} → ${RECON_DIR}/${target}/summary.txt"
 done
 echo ""
-info "Quick wins across all targets:"
-sort -u "${RECON_DIR}"/*/loot/quick_wins.txt 2>/dev/null | while IFS= read -r line; do
-    echo -e "  ${GREEN}★${NC} $line"
+info "Quick wins across this run's targets:"
+_qw_files=()
+for _t in "${TARGETS[@]}"; do
+    _qwf="${RECON_DIR}/${_t}/loot/quick_wins.txt"
+    [[ -s "$_qwf" ]] && _qw_files+=("$_qwf")
 done
+if (( ${#_qw_files[@]} > 0 )); then
+    sort -u "${_qw_files[@]}" 2>/dev/null | while IFS= read -r line; do
+        echo -e "  ${GREEN}★${NC} $line"
+    done
+else
+    echo "  (no quick wins captured this run)"
+fi
 echo ""
 echo -e "${BOLD}Good luck on the engagement! 🎯${NC}"
