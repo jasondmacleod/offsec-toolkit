@@ -333,7 +333,7 @@ emit_kb_port_hints() {
             "nc -nv $ip $p </dev/null" \
             "curl -sk ${proto}://$ip:$p/ | head -20"
         # Also surface in quick_wins for at-a-glance triage.
-        echo "KB: :$p — $hint" >> "$target_dir/loot/quick_wins.txt"
+        quick_win "$target_dir" "KB: :$p — $hint" "grep -P '^$p/tcp\\s+open' $target_dir/scans/nmap_tcp.nmap"
     done
 }
 
@@ -362,7 +362,7 @@ emit_kb_header_hints() {
                     "searchsploit $(echo "$name" | awk '{print $1, $2}' | sed 's/ *$//')" \
                     "cat $headers_file" \
                     "curl -sk ${proto}://$ip:$port/ | head -20"
-                echo "HTTP-HDR: :$port — $hint" >> "$target_dir/loot/quick_wins.txt"
+                quick_win "$target_dir" "HTTP-HDR: :$port — $hint" "curl -skIL ${proto}://$ip:$port/  # headers matched /$hdr_pattern/"
             fi
         done
     done
@@ -598,6 +598,54 @@ append_next_finding() {
         done
         echo ""
     } >> "$next_file"
+}
+
+# Append a timestamped command invocation to this target's cmd_log.txt.
+# Provides OffSec-report-grade "what command ran" evidence for every tool
+# that materially produced a finding. Silent on missing target_dir.
+cmd_log() {
+    local td="$1"; shift
+    [[ -z "${td:-}" ]] && return 0
+    local cmd_str="$*"
+    local log="$td/cmd_log.txt"
+    mkdir -p "$td" 2>/dev/null || true
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] $cmd_str" >> "$log" 2>/dev/null || true
+}
+
+# Append a finding to quick_wins.txt AND mirror the producing command
+# into cmd_log.txt so the OffSec report can cite command/output pairs.
+# $1 = target_dir, $2 = finding text (downstream greps key off this),
+# $3 = producing command (optional but strongly recommended).
+# Format is single-line "<finding>  | cmd: <command>" so it survives the
+# sort -u pass in generate_quick_wins without scrambling finding/cmd pairs.
+quick_win() {
+    local td="$1"
+    local text="$2"
+    local cmd="${3:-}"
+    local qw="$td/loot/quick_wins.txt"
+    mkdir -p "$td/loot" 2>/dev/null || true
+    if [[ -n "$cmd" ]]; then
+        printf '%s  | cmd: %s\n' "$text" "$cmd" >> "$qw" 2>/dev/null || true
+        cmd_log "$td" "$cmd  # produced: $text"
+    else
+        printf '%s\n' "$text" >> "$qw" 2>/dev/null || true
+    fi
+}
+
+# Same as quick_win but writes to a caller-specified file — used by
+# generate_quick_wins which stages into a tmp_file before atomic replace.
+quick_win_to() {
+    local td="$1"
+    local dest="$2"
+    local text="$3"
+    local cmd="${4:-}"
+    mkdir -p "$(dirname "$dest")" 2>/dev/null || true
+    if [[ -n "$cmd" ]]; then
+        printf '%s  | cmd: %s\n' "$text" "$cmd" >> "$dest" 2>/dev/null || true
+        cmd_log "$td" "$cmd  # produced: $text"
+    else
+        printf '%s\n' "$text" >> "$dest" 2>/dev/null || true
+    fi
 }
 
 http_proto_for_port() {
@@ -1166,7 +1214,7 @@ enum_http() {
             ' -- "$ip" "$port" > "$outdir/tls_certificate.txt" 2>&1 || true
             grep -oP 'DNS:\K[^,\s]+' "$outdir/tls_certificate.txt" 2>/dev/null | sort -u > "$outdir/tls_names.txt" || true
             if is_nonempty_file "$outdir/tls_names.txt"; then
-                echo "TLS names on $ip:$port — see $outdir/tls_names.txt" >> "$target_dir/loot/quick_wins.txt"
+                quick_win "$target_dir" "TLS names on $ip:$port — see $outdir/tls_names.txt" "echo | openssl s_client -connect $ip:$port -servername $ip 2>/dev/null | openssl x509 -noout -ext subjectAltName"
             fi
         fi
     fi
@@ -1276,7 +1324,7 @@ enum_http() {
                 fi
                 if (( vhost_count > 0 )); then
                     success "  ★ ffuf found $vhost_count potential vhost(s) → $outdir/ffuf_vhosts.json"
-                    echo "VHOSTS found on $ip:$port — see $outdir/ffuf_vhosts.json" >> "$target_dir/loot/quick_wins.txt"
+                    quick_win "$target_dir" "VHOSTS found on $ip:$port — see $outdir/ffuf_vhosts.json" "ffuf -w /usr/share/seclists/Discovery/DNS/subdomains-top1million-5000.txt -u $url -H 'Host: FUZZ.$ip' -fs $baseline_size -t 30"
                 else
                     info "  ffuf vhost fuzz complete — no vhosts found"
                 fi
@@ -1362,13 +1410,14 @@ enum_smb() {
     timeout 180 nmap --script=smb-vuln-ms17-010,smb2-security-mode,smb-protocols \
         -p 445 -oN "$outdir/nmap_smb_vuln.txt" "$ip" 2>&1 | tail -5 || true
 
+    local _smb_vuln_cmd="nmap --script=smb-vuln-ms17-010,smb2-security-mode,smb-protocols -p 445 $ip -oN $outdir/nmap_smb_vuln.txt"
     if grep -qiE 'VULNERABLE.*MS17-010|State: VULNERABLE' "$outdir/nmap_smb_vuln.txt" 2>/dev/null; then
         success "  ★ SMB VULNERABLE TO MS17-010 (EternalBlue) on $ip ★"
-        echo "SMB MS17-010 VULNERABLE on $ip" >> "$target_dir/loot/quick_wins.txt"
+        quick_win "$target_dir" "SMB MS17-010 VULNERABLE on $ip" "$_smb_vuln_cmd"
     fi
     if grep -qiE 'message signing.*disabled|message_signing.*disabled|Message signing enabled but not required' "$outdir/nmap_smb_vuln.txt" 2>/dev/null; then
         success "  ★ SMB signing disabled on $ip — relay candidate ★"
-        echo "SMB SIGNING DISABLED on $ip — relay target" >> "$target_dir/loot/quick_wins.txt"
+        quick_win "$target_dir" "SMB SIGNING DISABLED on $ip — relay target" "$_smb_vuln_cmd"
     fi
 
     # --- Extract notable findings ---
@@ -1434,7 +1483,7 @@ enum_ftp() {
        grep -qiE '^230 |Login successful|logged in' "$outdir/anonymous_check.txt" 2>/dev/null; then
         success "  ★ ANONYMOUS FTP LOGIN SUCCESSFUL on $ip:$port ★"
         echo "ANONYMOUS FTP LOGIN SUCCESSFUL" > "$outdir/ANONYMOUS_ACCESS.txt"
-        echo "ANONYMOUS FTP LOGIN SUCCESSFUL on $ip:$port" >> "$target_dir/loot/quick_wins.txt"
+        quick_win "$target_dir" "ANONYMOUS FTP LOGIN SUCCESSFUL on $ip:$port" "printf 'USER anonymous\\r\\nPASS anonymous@test.com\\r\\nLIST\\r\\nQUIT\\r\\n' | nc -w 10 $ip $port"
 
         # Try to download everything with wget
         if check_tool wget; then
@@ -1459,21 +1508,22 @@ enum_ftp() {
         ftp_banner=$(grep -iE 'vsftpd|proftpd|Serv-U|FileZilla|pure-ftpd|wu-ftpd|^220' "$outdir/banner.txt" 2>/dev/null | head -1)
         if [[ -n "$ftp_banner" ]]; then
             echo "FTP banner: $ftp_banner" > "$outdir/version_info.txt"
+            local _ftp_banner_cmd="printf 'QUIT\\r\\n' | nc -w 5 $ip $port  # banner: $ftp_banner"
             if echo "$ftp_banner" | grep -qi 'vsftpd 2\.3\.4'; then
                 success "  ★ vsftpd 2.3.4 BACKDOOR (CVE-2011-2523) on $ip:$port ★"
-                echo "FTP vsftpd 2.3.4 backdoor on $ip:$port" >> "$target_dir/loot/quick_wins.txt"
+                quick_win "$target_dir" "FTP vsftpd 2.3.4 backdoor on $ip:$port" "$_ftp_banner_cmd"
             fi
             if echo "$ftp_banner" | grep -qiE 'ProFTPD 1\.3\.5[^0-9]'; then
                 success "  ★ ProFTPD 1.3.5 mod_copy RCE (CVE-2015-3306) on $ip:$port ★"
-                echo "FTP ProFTPD 1.3.5 mod_copy on $ip:$port" >> "$target_dir/loot/quick_wins.txt"
+                quick_win "$target_dir" "FTP ProFTPD 1.3.5 mod_copy on $ip:$port" "$_ftp_banner_cmd"
             fi
             if echo "$ftp_banner" | grep -qiE 'ProFTPD 1\.3\.3c'; then
                 success "  ★ ProFTPD 1.3.3c backdoor (OSVDB-69562) on $ip:$port ★"
-                echo "FTP ProFTPD 1.3.3c backdoor on $ip:$port" >> "$target_dir/loot/quick_wins.txt"
+                quick_win "$target_dir" "FTP ProFTPD 1.3.3c backdoor on $ip:$port" "$_ftp_banner_cmd"
             fi
             if echo "$ftp_banner" | grep -qi 'Serv-U'; then
                 warn "  Serv-U FTP detected — check CVE-2021-35211"
-                echo "FTP Serv-U detected on $ip:$port — check CVE-2021-35211" >> "$target_dir/loot/quick_wins.txt"
+                quick_win "$target_dir" "FTP Serv-U detected on $ip:$port — check CVE-2021-35211" "$_ftp_banner_cmd"
             fi
         fi
     fi
@@ -1521,8 +1571,8 @@ enum_ssh() {
         # Flag old/vulnerable versions
         if echo "$ssh_version" | grep -qiE 'OpenSSH_[1-6]\.|OpenSSH_7\.[0-9]([^0-9]|$)|dropbear'; then
             warn "  ★ Potentially vulnerable SSH version: $ssh_version"
-            echo "POTENTIALLY VULNERABLE SSH: $ssh_version on $ip:$port" \
-                >> "$target_dir/loot/quick_wins.txt"
+            quick_win "$target_dir" "POTENTIALLY VULNERABLE SSH: $ssh_version on $ip:$port" \
+                "echo '' | nc -w 5 $ip $port  # banner: $ssh_version"
             warn "  → Next steps for vulnerable SSH:"
             warn "    searchsploit openssh $(echo "$ssh_version" | grep -oP 'OpenSSH_\K[0-9]+\.[0-9]+')"
             warn "    ssh-audit $ip -p $port               # detailed vuln report"
@@ -1574,8 +1624,8 @@ enum_snmp() {
         if [[ -n "$found_strings" ]]; then
             success "  ★ Found SNMP community string(s): $found_strings"
             echo "$found_strings" > "$outdir/valid_community_strings.txt"
-            echo "SNMP community strings found on $ip: $found_strings" \
-                >> "$target_dir/loot/quick_wins.txt"
+            quick_win "$target_dir" "SNMP community strings found on $ip: $found_strings" \
+                "onesixtyone -c <community-list> $ip  # strings: $found_strings"
 
             if check_tool snmp-check; then
                 local found_community
@@ -1646,8 +1696,8 @@ enum_snmp() {
                 if [[ -s "$outdir/process_args.txt" ]] && \
                    grep -qiE 'pass|pwd|secret|key|token|cred' "$outdir/process_args.txt" 2>/dev/null; then
                     success "  ★ Process command-line args may contain credentials!"
-                    echo "SNMP process args may contain credentials on $ip — see $outdir/process_args.txt" \
-                        >> "$target_dir/loot/quick_wins.txt"
+                    quick_win "$target_dir" "SNMP process args may contain credentials on $ip — see $outdir/process_args.txt" \
+                        "snmpwalk -v2c -c $community $ip 1.3.6.1.2.1.25.4.2.1.5"
                 fi
 
                 break  # Found working string, don't need to try more
@@ -1691,7 +1741,8 @@ enum_mysql() {
     # Check for empty password root login
     if grep -qi 'empty password' "$outdir/nmap_mysql_scripts.txt" 2>/dev/null; then
         success "  ★ MySQL EMPTY PASSWORD found on $ip:$port ★"
-        echo "MySQL EMPTY PASSWORD on $ip:$port" >> "$target_dir/loot/quick_wins.txt"
+        quick_win "$target_dir" "MySQL EMPTY PASSWORD on $ip:$port" \
+            "nmap --script=mysql-info,mysql-enum,mysql-empty-password,mysql-databases -p $port $ip -oN $outdir/nmap_mysql_scripts.txt"
     fi
 
     # --- Try anonymous/root login ---
@@ -1703,7 +1754,8 @@ enum_mysql() {
         if ! grep -qi 'ERROR\|denied\|refused' "$outdir/root_nopass.txt" 2>/dev/null && \
            [[ -s "$outdir/root_nopass.txt" ]]; then
             success "  ★ MySQL ROOT NO-PASSWORD LOGIN SUCCESSFUL ★"
-            echo "MySQL ROOT NO-PASSWORD LOGIN on $ip:$port" >> "$target_dir/loot/quick_wins.txt"
+            quick_win "$target_dir" "MySQL ROOT NO-PASSWORD LOGIN on $ip:$port" \
+                "mysql -h $ip -P $port -u root --password='' -e 'SELECT version(); SHOW DATABASES;'"
         fi
     fi
 
@@ -1734,7 +1786,8 @@ enum_mssql() {
 
     if grep -qiE 'empty password|sa.*<empty>' "$outdir/nmap_mssql_scripts.txt" 2>/dev/null; then
         success "  ★ MSSQL EMPTY PASSWORD (sa) on $ip:$port ★"
-        echo "MSSQL EMPTY PASSWORD (sa) on $ip:$port" >> "$target_dir/loot/quick_wins.txt"
+        quick_win "$target_dir" "MSSQL EMPTY PASSWORD (sa) on $ip:$port" \
+            "nmap --script=ms-sql-info,ms-sql-ntlm-info,ms-sql-empty-password -p $port $ip -oN $outdir/nmap_mssql_scripts.txt"
     fi
 
     # --- Try default sa credentials (same pattern as enum_mysql / enum_postgres) ---
@@ -1755,7 +1808,8 @@ enum_mssql() {
             if grep -qiE 'Microsoft|SQL Server' "$outdir/login_sa_${pass:-empty}.txt" 2>/dev/null && \
                ! grep -qiE 'Login failed|authentication failed|ERROR' "$outdir/login_sa_${pass:-empty}.txt" 2>/dev/null; then
                 success "  ★ MSSQL LOGIN: sa:${pass:-<empty>} on $ip:$port ★"
-                echo "MSSQL LOGIN: sa:${pass:-<empty>} on $ip:$port" >> "$target_dir/loot/quick_wins.txt"
+                quick_win "$target_dir" "MSSQL LOGIN: sa:${pass:-<empty>} on $ip:$port" \
+                    "$mssql_cmd 'sa:${pass}@${ip}' -port $port -q 'SELECT @@version;'"
                 break
             fi
         done
@@ -1800,8 +1854,8 @@ enum_postgres() {
                     "$outdir/login_${user}_${pass:-empty}.txt" 2>/dev/null && \
                    [[ -s "$outdir/login_${user}_${pass:-empty}.txt" ]]; then
                     success "  ★ PostgreSQL LOGIN: $user:${pass:-<empty>} on $ip:$port ★"
-                    echo "PostgreSQL LOGIN: $user:${pass:-<empty>} on $ip:$port" \
-                        >> "$target_dir/loot/quick_wins.txt"
+                    quick_win "$target_dir" "PostgreSQL LOGIN: $user:${pass:-<empty>} on $ip:$port" \
+                        "PGPASSWORD='${pass}' psql -h $ip -p $port -U $user -c 'SELECT version();'"
                     break 2
                 fi
             done
@@ -1853,8 +1907,8 @@ enum_dns() {
             fi
             if grep -q 'XFR size' "$outdir/zone_transfer_${domain}.txt" 2>/dev/null; then
                 success "  ★ DNS ZONE TRANSFER SUCCESSFUL for $domain ★"
-                echo "DNS ZONE TRANSFER SUCCESSFUL: $domain via $ip" \
-                    >> "$target_dir/loot/quick_wins.txt"
+                quick_win "$target_dir" "DNS ZONE TRANSFER SUCCESSFUL: $domain via $ip" \
+                    "dig @$ip -p $port $domain axfr"
             fi
         else
             info "  No domain found for zone transfer — try manually if you discover one"
@@ -1925,8 +1979,8 @@ enum_smtp() {
             valid_count=$(grep -c "^VALID:" "$outdir/vrfy_users.txt" 2>/dev/null); valid_count=${valid_count:-0}
             if (( valid_count > 0 )); then
                 success "  ★ Found $valid_count valid SMTP user(s) via port $port"
-                echo "SMTP VRFY found $valid_count valid users on $ip (via port $port)" \
-                    >> "$target_dir/loot/quick_wins.txt"
+                quick_win "$target_dir" "SMTP VRFY found $valid_count valid users on $ip (via port $port)" \
+                    "while read u; do printf 'VRFY %s\\r\\nQUIT\\r\\n' \"\$u\" | nc -w 3 $ip $port; done < <(head -100 $users_file)  # saw $valid_count 2xx responses"
             fi
             touch "$vrfy_sentinel"
         fi
@@ -1976,7 +2030,7 @@ enum_rpc() {
         # using inverted grep which false-positives on header lines
         if grep -qP '^\s*/' "$outdir/nfs_exports.txt" 2>/dev/null; then
             success "  ★ NFS exports found on $ip ★"
-            echo "NFS EXPORTS on $ip:" >> "$target_dir/loot/quick_wins.txt"
+            quick_win "$target_dir" "NFS EXPORTS on $ip:" "showmount -e $ip"
             grep -P '^\s*/' "$outdir/nfs_exports.txt" >> "$target_dir/loot/quick_wins.txt"
             while IFS= read -r export_line; do
                 local export_path
@@ -2032,8 +2086,9 @@ enum_ldap() {
             entry_count=$(grep -c '^dn:' "$outdir/ldap_full_dump.txt" 2>/dev/null); entry_count=${entry_count:-0}
             if (( entry_count > 0 )); then
                 success "  ★ LDAP anonymous bind: $entry_count entries found"
+                quick_win "$target_dir" "LDAP anonymous bind on $ip: $entry_count entries" \
+                    "ldapsearch -x -H ldap://${ip}:${port} -b '${base_dn}'"
                 {
-                    echo "LDAP anonymous bind on $ip: $entry_count entries"
                     echo "NEXT: ldapsearch -x -H ldap://${ip}:${port} -b '${base_dn}' '(objectClass=*)' | grep -iE 'sAMAccountName|mail|description|memberOf'"
                     echo "NEXT (if domain-joined): ./adr.sh -d <DOMAIN> -u '' -p '' -dc ${ip}"
                 } >> "$target_dir/loot/quick_wins.txt"
@@ -2047,8 +2102,8 @@ enum_ldap() {
                     local ldap_ucount
                     ldap_ucount=$(wc -l < "$ldap_users_file" 2>/dev/null); ldap_ucount=${ldap_ucount:-0}
                     success "  ★ Extracted $ldap_ucount usernames → loot/ldap_users.txt"
-                    echo "LDAP extracted $ldap_ucount usernames → $ldap_users_file" \
-                        >> "$target_dir/loot/quick_wins.txt"
+                    quick_win "$target_dir" "LDAP extracted $ldap_ucount usernames → $ldap_users_file" \
+                        "grep -oP '^sAMAccountName:\\s*\\K\\S+' $outdir/ldap_full_dump.txt | grep -vE '\\\$\$|^(krbtgt|Guest)\$' | sort -u"
                 fi
             fi
         fi
@@ -2083,7 +2138,8 @@ enum_redis() {
 
         if grep -qi 'redis_version' "$outdir/info_noauth.txt" 2>/dev/null; then
             success "  ★ Redis NO-AUTH ACCESS on $ip:$port ★"
-            echo "REDIS NO-AUTH on $ip:$port" >> "$target_dir/loot/quick_wins.txt"
+            quick_win "$target_dir" "REDIS NO-AUTH on $ip:$port" \
+                "printf 'INFO\\r\\nQUIT\\r\\n' | nc -w 5 $ip $port"
 
             # Get config and keys
             # shellcheck disable=SC2016
@@ -2427,7 +2483,9 @@ generate_quick_wins() {
                 local top
                 top=$(echo "$hits" | tr ',' '\n' | awk '/CVE-/ {print}' | head -5 | paste -sd', ' -)
                 [[ -z "$top" ]] && top=$(echo "$hits" | tr ',' '\n' | head -3 | paste -sd', ' -)
-                echo "VULNERS on $ip:$svc → ${top} (full list: $vulners_dump)" >> "$tmp_file"
+                quick_win_to "$target_dir" "$tmp_file" \
+                    "VULNERS on $ip:$svc → ${top} (full list: $vulners_dump)" \
+                    "nmap -sV --script=vulners -p ${svc%/*} $ip  # parsed from $nmap_tcp"
             done
         fi
     fi
@@ -2439,27 +2497,37 @@ generate_quick_wins() {
         if is_nonempty_file "$smtp_users_loot"; then
             local smtp_ucount
             smtp_ucount=$(wc -l < "$smtp_users_loot" 2>/dev/null); smtp_ucount=${smtp_ucount:-0}
-            echo "SMTP VRFY valid usernames: ${smtp_ucount} saved to ${smtp_users_loot}" >> "$tmp_file"
+            quick_win_to "$target_dir" "$tmp_file" \
+                "SMTP VRFY valid usernames: ${smtp_ucount} saved to ${smtp_users_loot}" \
+                "grep -oP '^VALID:\\s*\\K\\S+' $vrfy_file | sort -u > $smtp_users_loot"
         fi
     fi
 
     if grep -qiE 'READ|WRITE' "$target_dir/tcp/smb/smbmap_null.txt" "$target_dir/tcp/smb/smbmap_guest.txt" 2>/dev/null; then
-        echo "SMB readable share via null/guest session — see $target_dir/tcp/smb/smb_quick_findings.txt" >> "$tmp_file"
+        quick_win_to "$target_dir" "$tmp_file" \
+            "SMB readable share via null/guest session — see $target_dir/tcp/smb/smb_quick_findings.txt" \
+            "smbmap -H $ip; smbmap -H $ip -u guest -p ''"
     fi
 
     if is_nonempty_file "$target_dir/tcp/ftp/ANONYMOUS_ACCESS.txt"; then
-        echo "Anonymous FTP login succeeded on $ip — mirrored files under $target_dir/tcp/ftp/mirror/" >> "$tmp_file"
+        quick_win_to "$target_dir" "$tmp_file" \
+            "Anonymous FTP login succeeded on $ip — mirrored files under $target_dir/tcp/ftp/mirror/" \
+            "wget -r -l 3 --no-passive-ftp ftp://anonymous:anon@${ip}/ -P $target_dir/tcp/ftp/mirror/"
     fi
 
     if is_nonempty_file "$target_dir/udp/snmp/valid_community_strings.txt"; then
         local community_count
         community_count=$(wc -l < "$target_dir/udp/snmp/valid_community_strings.txt" 2>/dev/null); community_count=${community_count:-0}
-        echo "SNMP community string found (${community_count}) — see $target_dir/udp/snmp/valid_community_strings.txt" >> "$tmp_file"
+        quick_win_to "$target_dir" "$tmp_file" \
+            "SNMP community string found (${community_count}) — see $target_dir/udp/snmp/valid_community_strings.txt" \
+            "onesixtyone -c <community-list> $ip"
     fi
 
     if is_nonempty_file "$target_dir/udp/snmp/process_args.txt" && \
        grep -qiE 'pass|pwd|secret|key|token|cred|-p[[:space:]]' "$target_dir/udp/snmp/process_args.txt" 2>/dev/null; then
-        echo "SNMP process arguments contain credential keywords — see $target_dir/udp/snmp/process_args.txt" >> "$tmp_file"
+        quick_win_to "$target_dir" "$tmp_file" \
+            "SNMP process arguments contain credential keywords — see $target_dir/udp/snmp/process_args.txt" \
+            "snmpwalk -v2c -c <community> $ip 1.3.6.1.2.1.25.4.2.1.5"
     fi
 
     if is_nonempty_file "$target_dir/udp/snmp/windows_users.txt"; then
@@ -2468,30 +2536,42 @@ generate_quick_wins() {
         if is_nonempty_file "$snmp_users_loot"; then
             local snmp_ucount
             snmp_ucount=$(wc -l < "$snmp_users_loot" 2>/dev/null); snmp_ucount=${snmp_ucount:-0}
-            echo "Windows usernames exposed via SNMP: ${snmp_ucount} saved to ${snmp_users_loot}" >> "$tmp_file"
+            quick_win_to "$target_dir" "$tmp_file" \
+                "Windows usernames exposed via SNMP: ${snmp_ucount} saved to ${snmp_users_loot}" \
+                "snmpwalk -v2c -c <community> $ip 1.3.6.1.4.1.77.1.2.25"
         fi
     fi
 
     local zt_file
     zt_file=$(find "$target_dir/tcp/dns" -name 'zone_transfer_*.txt' -type f 2>/dev/null | head -1)
     if is_nonempty_file "$zt_file" && grep -q 'XFR size' "$zt_file" 2>/dev/null; then
-        echo "DNS zone transfer succeeded — see $zt_file" >> "$tmp_file"
+        local zt_domain
+        zt_domain=$(basename "$zt_file" | sed 's/^zone_transfer_//;s/\.txt$//')
+        quick_win_to "$target_dir" "$tmp_file" \
+            "DNS zone transfer succeeded — see $zt_file" \
+            "dig @$ip $zt_domain axfr"
     fi
 
     if is_nonempty_file "$target_dir/tcp/ldap/ldap_full_dump.txt"; then
         local ldap_entries
         ldap_entries=$(grep -c '^dn:' "$target_dir/tcp/ldap/ldap_full_dump.txt" 2>/dev/null); ldap_entries=${ldap_entries:-0}
         if (( ldap_entries > 0 )); then
-            echo "LDAP anonymous bind returned ${ldap_entries} entries — see $target_dir/tcp/ldap/ldap_full_dump.txt" >> "$tmp_file"
+            quick_win_to "$target_dir" "$tmp_file" \
+                "LDAP anonymous bind returned ${ldap_entries} entries — see $target_dir/tcp/ldap/ldap_full_dump.txt" \
+                "ldapsearch -x -H ldap://$ip -b <BASE_DN>  # see $target_dir/tcp/ldap/naming_contexts.txt"
         fi
     fi
 
     if grep -qi 'empty password' "$target_dir/tcp/mysql/nmap_mysql_scripts.txt" 2>/dev/null; then
-        echo "MySQL empty password reported by nmap scripts on $ip" >> "$tmp_file"
+        quick_win_to "$target_dir" "$tmp_file" \
+            "MySQL empty password reported by nmap scripts on $ip" \
+            "nmap --script=mysql-info,mysql-enum,mysql-empty-password -p 3306 $ip"
     fi
     if is_nonempty_file "$target_dir/tcp/mysql/root_nopass.txt" && \
        ! grep -qi 'ERROR\|denied\|refused' "$target_dir/tcp/mysql/root_nopass.txt" 2>/dev/null; then
-        echo "MySQL root no-password login succeeded on $ip — see $target_dir/tcp/mysql/root_nopass.txt" >> "$tmp_file"
+        quick_win_to "$target_dir" "$tmp_file" \
+            "MySQL root no-password login succeeded on $ip — see $target_dir/tcp/mysql/root_nopass.txt" \
+            "mysql -h $ip -u root --password='' -e 'SHOW DATABASES;'"
     fi
 
     local pg_login
@@ -2503,16 +2583,24 @@ generate_quick_wins() {
     done)
     if [[ -n "$pg_login" ]]; then
         pg_login="${pg_login/:empty/:<empty>}"
-        echo "PostgreSQL LOGIN: ${pg_login} on $ip — see $target_dir/tcp/postgres/" >> "$tmp_file"
+        local _pg_user="${pg_login%%:*}" _pg_pass="${pg_login#*:}"
+        [[ "$_pg_pass" == "<empty>" ]] && _pg_pass=""
+        quick_win_to "$target_dir" "$tmp_file" \
+            "PostgreSQL LOGIN: ${pg_login} on $ip — see $target_dir/tcp/postgres/" \
+            "PGPASSWORD='${_pg_pass}' psql -h $ip -U ${_pg_user} -c 'SELECT version();'"
     fi
 
     if is_nonempty_file "$target_dir/tcp/redis/info_noauth.txt" && \
        grep -qi 'redis_version' "$target_dir/tcp/redis/info_noauth.txt" 2>/dev/null; then
-        echo "REDIS NO-AUTH on $ip — see $target_dir/tcp/redis/info_noauth.txt" >> "$tmp_file"
+        quick_win_to "$target_dir" "$tmp_file" \
+            "REDIS NO-AUTH on $ip — see $target_dir/tcp/redis/info_noauth.txt" \
+            "printf 'INFO\\r\\nQUIT\\r\\n' | nc -w 5 $ip 6379"
     fi
 
     if grep -qP '^\s*/' "$target_dir/tcp/rpc/nfs_exports.txt" 2>/dev/null; then
-        echo "NFS exports found on $ip — see $target_dir/tcp/rpc/nfs_exports.txt" >> "$tmp_file"
+        quick_win_to "$target_dir" "$tmp_file" \
+            "NFS exports found on $ip — see $target_dir/tcp/rpc/nfs_exports.txt" \
+            "showmount -e $ip"
     fi
 
     local httpdir
@@ -2520,14 +2608,19 @@ generate_quick_wins() {
         [[ -d "$httpdir" ]] || continue
         local p
         p=$(basename "$httpdir" | sed 's/port_//')
+        local _proto_p="http"; case "$p" in 443|8443|4443|9443) _proto_p="https" ;; esac
         if is_nonempty_file "$httpdir/http_methods.txt" && \
            grep -qiE 'Allow:.*(TRACE|PUT|DELETE|CONNECT|PROPFIND)|Public:.*(TRACE|PUT|DELETE|CONNECT|PROPFIND)' "$httpdir/http_methods.txt" 2>/dev/null; then
-            echo "Risky HTTP method on $ip:$p — see $httpdir/http_methods.txt" >> "$tmp_file"
+            quick_win_to "$target_dir" "$tmp_file" \
+                "Risky HTTP method on $ip:$p — see $httpdir/http_methods.txt" \
+                "curl -skIX OPTIONS ${_proto_p}://$ip:$p/"
         fi
         if is_nonempty_file "$httpdir/tls_names.txt"; then
             local tls_first
             tls_first=$(head -1 "$httpdir/tls_names.txt" 2>/dev/null)
-            echo "TLS certificate names found on $ip:$p (first: ${tls_first}) — see $httpdir/tls_names.txt" >> "$tmp_file"
+            quick_win_to "$target_dir" "$tmp_file" \
+                "TLS certificate names found on $ip:$p (first: ${tls_first}) — see $httpdir/tls_names.txt" \
+                "echo | openssl s_client -connect $ip:$p -servername $ip 2>/dev/null | openssl x509 -noout -ext subjectAltName"
         fi
         if is_nonempty_file "$httpdir/ffuf_vhosts.json"; then
             local vhost_count
@@ -2537,7 +2630,9 @@ generate_quick_wins() {
                 vhost_count=$(grep -c '"url"' "$httpdir/ffuf_vhosts.json" 2>/dev/null); vhost_count=${vhost_count:-0}
             fi
             if (( vhost_count > 0 )); then
-                echo "Vhosts discovered on $ip:$p (${vhost_count}) — see $httpdir/ffuf_vhosts.json" >> "$tmp_file"
+                quick_win_to "$target_dir" "$tmp_file" \
+                    "Vhosts discovered on $ip:$p (${vhost_count}) — see $httpdir/ffuf_vhosts.json" \
+                    "ffuf -w /usr/share/seclists/Discovery/DNS/subdomains-top1million-5000.txt -u ${_proto_p}://$ip:$p/ -H 'Host: FUZZ.$ip'"
             fi
         fi
 
@@ -2547,7 +2642,9 @@ generate_quick_wins() {
             cms_hit=$(grep -oiE 'Title\[[^]]*\]|Mezzanine|WordPress|Joomla|Drupal|Jenkins|GitLab|Grafana|phpMyAdmin|Tomcat|Nagios|Zabbix|OctoberCMS|Magento|Bolt|Ghost|Strapi|ColdFusion|osTicket|RoundCube|SquirrelMail|SolarWinds|ManageEngine|rConfig|LibreNMS|Cacti|WebMin|Webmin|pfSense|Zimbra|Kibana|Elasticsearch|SonarQube|Nexus Repository|Artifactory|Bitbucket|Gitea|Gogs|Moodle|Mantis|BugZilla|Redmine|Confluence|Jira|SharePoint|OWA|Exchange|Citrix|Pulse Secure|FortiGate' \
                 "$httpdir/whatweb.txt" 2>/dev/null | sort -u | head -5 | tr '\n' ' ')
             if [[ -n "$cms_hit" ]]; then
-                echo "CMS/app fingerprint on $ip:$p → ${cms_hit}— see $httpdir/whatweb.txt" >> "$tmp_file"
+                quick_win_to "$target_dir" "$tmp_file" \
+                    "CMS/app fingerprint on $ip:$p → ${cms_hit}— see $httpdir/whatweb.txt" \
+                    "whatweb ${_proto_p}://$ip:$p/"
             fi
         fi
 
@@ -2555,7 +2652,9 @@ generate_quick_wins() {
         if is_nonempty_file "$httpdir/curl_headers.txt" && \
            grep -qiE 'Content-Type:\s*application/json|x-upstream:|access-control-allow-credentials' \
                "$httpdir/curl_headers.txt" 2>/dev/null; then
-            echo "JSON API endpoint on $ip:$p — see $httpdir/curl_headers.txt" >> "$tmp_file"
+            quick_win_to "$target_dir" "$tmp_file" \
+                "JSON API endpoint on $ip:$p — see $httpdir/curl_headers.txt" \
+                "curl -skIL ${_proto_p}://$ip:$p/"
         fi
 
         # --- Nikto surfacing ---
@@ -2565,7 +2664,9 @@ generate_quick_wins() {
             nikto_hits=$(grep -ciE 'CVE-[0-9]+|OSVDB|/cgi-bin/|/admin|/login|/phpmyadmin|/manager|/console|/\.git|/backup|/config|default account|no authentication|directory indexing|phpinfo|Shellshock|ASP\.NET debug' \
                 "$httpdir/nikto.txt" 2>/dev/null); nikto_hits=${nikto_hits:-0}
             if (( nikto_hits > 0 )); then
-                echo "NIKTO on $ip:$p → ${nikto_hits} interesting finding(s) — see $httpdir/nikto.txt" >> "$tmp_file"
+                quick_win_to "$target_dir" "$tmp_file" \
+                    "NIKTO on $ip:$p → ${nikto_hits} interesting finding(s) — see $httpdir/nikto.txt" \
+                    "nikto -h ${_proto_p}://$ip:$p/ -Format txt -o $httpdir/nikto"
             fi
         fi
 
@@ -2580,10 +2681,15 @@ generate_quick_wins() {
                 local ferox_interesting
                 ferox_interesting=$(grep -ciE '/admin|/login|/upload|/config|/backup|/shell|/api|/console|/phpmyadmin|/wp-|/cgi|/manager|/\.git|/\.env' \
                     "$httpdir/feroxbuster.txt" 2>/dev/null); ferox_interesting=${ferox_interesting:-0}
+                local _ferox_cmd="feroxbuster -u ${_proto_p}://$ip:$p/ -w $GOBUSTER_WORDLIST -t 30 --timeout 30 -d 2 -q --no-state --filter-status 404,500,502,503 -o $httpdir/feroxbuster.txt"
                 if (( ferox_interesting > 0 )); then
-                    echo "FEROX on $ip:$p → ${ferox_hits} path(s), ${ferox_interesting} interesting — see $httpdir/feroxbuster.txt" >> "$tmp_file"
+                    quick_win_to "$target_dir" "$tmp_file" \
+                        "FEROX on $ip:$p → ${ferox_hits} path(s), ${ferox_interesting} interesting — see $httpdir/feroxbuster.txt" \
+                        "$_ferox_cmd"
                 else
-                    echo "FEROX on $ip:$p → ${ferox_hits} path(s) — see $httpdir/feroxbuster.txt" >> "$tmp_file"
+                    quick_win_to "$target_dir" "$tmp_file" \
+                        "FEROX on $ip:$p → ${ferox_hits} path(s) — see $httpdir/feroxbuster.txt" \
+                        "$_ferox_cmd"
                 fi
             fi
         fi
@@ -2598,7 +2704,9 @@ generate_quick_wins() {
         if (( sxml_count > 0 )); then
             local sxml_top
             sxml_top=$(head -3 "$sxml_hits" 2>/dev/null | paste -sd' | ' -)
-            echo "SEARCHSPLOIT on $ip → ${sxml_count} catalog hit(s); top: ${sxml_top} — see $sxml_hits" >> "$tmp_file"
+            quick_win_to "$target_dir" "$tmp_file" \
+                "SEARCHSPLOIT on $ip → ${sxml_count} catalog hit(s); top: ${sxml_top} — see $sxml_hits" \
+                "searchsploit -j --nmap $target_dir/scans/nmap_tcp.xml"
         fi
     fi
 
@@ -2606,10 +2714,18 @@ generate_quick_wins() {
         local ssh_version
         ssh_version=$(head -1 "$target_dir/tcp/ssh/version_info.txt" 2>/dev/null | sed 's/^SSH Version: //')
         if echo "$ssh_version" | grep -qiE 'OpenSSH_[1-6]\.|OpenSSH_7\.[0-9]([^0-9]|$)|dropbear'; then
-            echo "POTENTIALLY VULNERABLE SSH: ${ssh_version} on $ip — see $target_dir/tcp/ssh/version_info.txt" >> "$tmp_file"
+            quick_win_to "$target_dir" "$tmp_file" \
+                "POTENTIALLY VULNERABLE SSH: ${ssh_version} on $ip — see $target_dir/tcp/ssh/version_info.txt" \
+                "grep -E 'OpenSSH|dropbear' $target_dir/tcp/ssh/version_info.txt  # banner: $ssh_version"
         fi
     fi
 
+    # Absorb any inline quick_win writes emitted by enum_* phases so that
+    # downstream generate_next_steps greps (MS17-010, MSSQL LOGIN, etc.)
+    # still see them after the dedup pass.
+    if [[ -s "$qw_file" ]]; then
+        cat "$qw_file" >> "$tmp_file"
+    fi
     if [[ -s "$tmp_file" ]]; then
         sort -u "$tmp_file" > "$qw_file"
     else
