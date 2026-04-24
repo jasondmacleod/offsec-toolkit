@@ -355,15 +355,43 @@ is_nonempty_file() {
     [[ -f "$1" && -s "$1" ]]
 }
 
+# Append a timestamped command invocation to this run's cmd_log.txt.
+# Called immediately after any phase function runs a command that writes an
+# evidence file consumed by generate_next_steps. The log lets the operator
+# cite the exact discovery command (with timestamp) in their OffSec report.
+# $1 = work_dir, $2+ = the command string as it was run.
+cmd_log() {
+    local wd="$1"; shift
+    [[ -z "${wd:-}" ]] && return 0
+    local cmd_str="$*"
+    local log="$wd/loot/cmd_log.txt"
+    mkdir -p "$wd/loot" 2>/dev/null || true
+    printf '[%s] %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$cmd_str" >> "$log" 2>/dev/null || true
+}
+
 append_next_finding() {
     local next_file="$1"
     local title="$2"
     local evidence="$3"
     shift 3
 
+    # Try to pull a Discovery line from cmd_log.txt by extracting path-like
+    # tokens from the evidence string and looking them up. First match wins.
+    # Falls through silently if cmd_log.txt is absent or no path matches.
+    local log discovery=""
+    log="$(dirname "$next_file")/cmd_log.txt"
+    if [[ -f "$log" ]]; then
+        local tok
+        for tok in $(printf '%s\n' "$evidence" | grep -oE '/[A-Za-z0-9_./-]+\.(txt|html|json|log)' | sort -u); do
+            discovery=$(grep -F -- "$tok" "$log" 2>/dev/null | tail -1)
+            [[ -n "$discovery" ]] && break
+        done
+    fi
+
     {
         echo "## ${title}"
         echo "Evidence: ${evidence}"
+        [[ -n "$discovery" ]] && echo "Discovery: ${discovery}"
         local cmd
         for cmd in "$@"; do
             [[ -n "$cmd" ]] && echo "$cmd"
@@ -543,6 +571,7 @@ phase_fingerprint() {
         _ww_t0=$(date +%s)
         timeout "$WHATWEB_TIMEOUT" whatweb -a 3 --color never "$url" \
             > "$outdir/whatweb.txt" 2>&1 || true
+        cmd_log "$2" "whatweb -a 3 --color never $url > $outdir/whatweb.txt"
         # Also run in verbose mode for plugin detail
         timeout "$WHATWEB_TIMEOUT" whatweb -a 3 -v --color never "$url" \
             > "$outdir/whatweb_verbose.txt" 2>&1 || true
@@ -555,12 +584,14 @@ phase_fingerprint() {
         --max-redirs 5 \
         -A "Mozilla/5.0 (X11; Linux x86_64)" \
         "$url" > "$outdir/headers.txt" 2>&1 || true
+    cmd_log "$2" "curl -skIL --max-redirs 5 $url > $outdir/headers.txt"
 
     # --- HTTP methods (stored for finding-driven next steps) ---
     info "  → HTTP OPTIONS methods"
     timeout "$CURL_TIMEOUT" curl -skIX OPTIONS \
         -A "Mozilla/5.0 (X11; Linux x86_64)" \
         "$url" > "$outdir/http_methods.txt" 2>&1 || true
+    cmd_log "$2" "curl -skIX OPTIONS $url > $outdir/http_methods.txt"
 
     # --- TLS/WAF context ---
     if [[ "$(get_proto "$url")" == "https" ]]; then
@@ -576,6 +607,7 @@ phase_fingerprint() {
                 echo | openssl s_client -connect "$1:$2" -servername "$1" 2>/dev/null |
                     openssl x509 -noout -subject -issuer -dates -ext subjectAltName 2>/dev/null
             ' -- "$(get_host "$url")" "$(get_port "$url")" > "$outdir/tls_certificate.txt" 2>&1 || true
+            cmd_log "$2" "echo | openssl s_client -connect $(get_host "$url"):$(get_port "$url") -servername $(get_host "$url") | openssl x509 -noout -ext subjectAltName > $outdir/tls_certificate.txt"
             grep -oP 'DNS:\K[^,\s]+' "$outdir/tls_certificate.txt" 2>/dev/null | sort -u > "$outdir/tls_names.txt" || true
         fi
     fi
@@ -599,6 +631,7 @@ phase_fingerprint() {
     timeout "$CURL_TIMEOUT" curl -sk \
         -A "Mozilla/5.0 (X11; Linux x86_64)" \
         "$url" 2>/dev/null | head -500 > "$outdir/homepage_source.html" || true
+    cmd_log "$2" "curl -sk $url | head -500 > $outdir/homepage_source.html"
 
     # --- Extract comments and hints from source ---
     info "  → extracting source hints (comments, paths, emails)"
@@ -673,6 +706,7 @@ PYEOF
     find "$outdir/js" -type f -name '*.js' -print 2>/dev/null | while IFS= read -r js_file; do
         grep -hEo '(/[A-Za-z0-9._~:/?#\[\]@!$&'\''()*+,;=%-]{3,})' "$js_file" 2>/dev/null || true
     done | sort -u > "$outdir/js_endpoints.txt"
+    cmd_log "$2" "find $outdir/js -name '*.js' | xargs grep -hEo '/path-like-tokens' | sort -u > $outdir/js_endpoints.txt"
     # Why: bare keyword grep floods on framework code — jQuery's "input:password"
     # selector, Bootstrap's "autoToken" variable, etc. Two filters applied:
     # (1) filename blocklist for well-known libraries (case-insensitive basename);
@@ -689,6 +723,7 @@ PYEOF
             grep -hnEo '(sk-[A-Za-z0-9]{20,}|AKIA[0-9A-Z]{16}|eyJ[A-Za-z0-9_-]+\.eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+)' "$js_file" 2>/dev/null || true
         done
     } | head -100 > "$outdir/js_secret_hints.txt"
+    cmd_log "$2" "grep -hnE 'api_key|token|secret|password|authorization|bearer|sk-[A-Z0-9]+|AKIA[0-9A-Z]+|eyJ[...JWT...]' $outdir/js/*.js > $outdir/js_secret_hints.txt"
     find "$outdir/js" -type f -name '*.js' -print 2>/dev/null | while IFS= read -r js_file; do
         grep -hEo 'sourceMappingURL=[^[:space:]]+' "$js_file" 2>/dev/null | sed 's/^sourceMappingURL=//' || true
     done | sort -u > "$outdir/js_source_maps.txt"
@@ -697,6 +732,7 @@ PYEOF
     # Empty/404 responses are pruned by _prune_useless_files at phase end.
     info "  → robots.txt"
     timeout "$CURL_TIMEOUT" curl -sk "${url%/}/robots.txt" > "$outdir/robots.txt" 2>&1 || true
+    cmd_log "$2" "curl -sk ${url%/}/robots.txt > $outdir/robots.txt"
     info "  → sitemap.xml"
     timeout "$CURL_TIMEOUT" curl -sk "${url%/}/sitemap.xml" > "$outdir/sitemap.xml" 2>&1 || true
     info "  → security.txt"
@@ -741,6 +777,7 @@ PYEOF
                 fi
             done
         ' -- "$url" > "$outdir/sensitive_paths.txt" 2>&1 || warn "Sensitive path probing timed out"
+        cmd_log "$2" "for path in /.git/HEAD /.env /phpinfo.php /admin /login /swagger.json ... ; do curl -sk -o /dev/null -w '%{http_code}' ${url%/}\$path; done > $outdir/sensitive_paths.txt"
     fi
 
     # --- Operator workflow notes grounded in this target URL ---
@@ -958,6 +995,7 @@ phase_content() {
             -o "$outdir/dirs_medium.json" -of json \
             > "$outdir/dirs_medium_console.txt" 2>&1 || phase_ok=false
         _tool_done "ffuf dirs" "$_ffuf_d_t0"
+        cmd_log "$2" "ffuf -w ${wl_dir}:FUZZ -u ${url%/}/FUZZ -mc 200,201,204,301,302,307,401,403,405 -o $outdir/dirs_medium.json"
 
         # Also save human-readable version
         ffuf_json_to_text "$outdir/dirs_medium.json" > "$outdir/dirs_medium.txt" 2>/dev/null || true
@@ -980,6 +1018,7 @@ phase_content() {
             -o "$outdir/files_medium.json" -of json \
             > "$outdir/files_medium_console.txt" 2>&1 || phase_ok=false
         _tool_done "ffuf files" "$_ffuf_f_t0"
+        cmd_log "$2" "ffuf -w ${wl_files}:FUZZ -u ${url%/}/FUZZ -e .${extensions//,/,.} -mc 200,201,204,301,302,307,401,403,405 -o $outdir/files_medium.json"
 
         ffuf_json_to_text "$outdir/files_medium.json" > "$outdir/files_medium.txt" 2>/dev/null || true
         _drop_wildcard_ffuf_rows "$outdir/files_medium.txt" "$outdir/ffuf_baseline.txt"
@@ -994,6 +1033,7 @@ phase_content() {
             -u "${url%/}/FUZZ" \
             -o "$outdir/dirs_large.json" -of json \
             > "$outdir/dirs_large_console.txt" 2>&1 || phase_ok=false
+        cmd_log "$2" "ffuf -w ${WL_DIR_LARGE}:FUZZ -u ${url%/}/FUZZ -o $outdir/dirs_large.json"
 
         ffuf_json_to_text "$outdir/dirs_large.json" > "$outdir/dirs_large.txt" 2>/dev/null || true
         _drop_wildcard_ffuf_rows "$outdir/dirs_large.txt" "$outdir/ffuf_baseline.txt"
@@ -1110,6 +1150,7 @@ PYEOF
             -e ".${extensions//,/,.}" \
             -o "$outdir/${safe_name}.json" -of json \
             > "$outdir/${safe_name}_console.txt" 2>&1 || phase_ok=false
+        cmd_log "$2" "ffuf -w ${wl_dir}:FUZZ -u ${dir_url%/}/FUZZ -e .${extensions//,/,.} -o $outdir/${safe_name}.json  # recursive"
 
         ffuf_json_to_text "$outdir/${safe_name}.json" > "$outdir/${safe_name}.txt" 2>/dev/null || true
     done
@@ -1193,6 +1234,7 @@ phase_vhosts() {
         -o "$outdir/vhosts.json" -of json \
         > "$outdir/vhosts_console.txt" 2>&1 || phase_ok=false
     _tool_done "ffuf vhosts" "$_ffuf_vh_t0"
+    cmd_log "$2" "ffuf -w ${wl}:FUZZ -u $url -H 'Host: FUZZ.${VHOST_DOMAIN}' ${fs_flag[*]} -o $outdir/vhosts.json"
 
     ffuf_json_to_text "$outdir/vhosts.json" > "$outdir/vhosts.txt" 2>/dev/null || true
 
@@ -1335,6 +1377,7 @@ PYEOF
             -u "${endpoint}?FUZZ=testvalue" \
             -o "$outdir/params_${safe_name}.json" -of json \
             > "$outdir/params_${safe_name}_console.txt" 2>&1 || phase_ok=false
+        cmd_log "$2" "ffuf -w ${WL_PARAMS}:FUZZ -u ${endpoint}?FUZZ=testvalue -mc all ${param_fs_flag[*]} -o $outdir/params_${safe_name}.json"
 
         ffuf_json_to_text "$outdir/params_${safe_name}.json" \
             > "$outdir/params_${safe_name}.txt" 2>/dev/null || true
@@ -1807,6 +1850,7 @@ PY
     fi
 
     progress_log "$work_dir" "DONE" "$phase_name" "probed=$probed suspects=$flagged"
+    cmd_log "$work_dir" "phase_sqli_probe: ${probed} param(s) sent single-quote break, ${flagged} flagged with DB error markers > $suspects"
 }
 
 #==============================================================================
