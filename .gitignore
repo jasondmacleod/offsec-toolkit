@@ -10,3 +10,4 @@ spaces/
 *.apkg
 *.csv
 .claude/settings.local.json
+/.obsidian/
