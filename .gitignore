@@ -9,3 +9,4 @@ spaces/
 **/.obsidian/workspace-mobile.json
 *.apkg
 *.csv
+.claude/settings.local.json
