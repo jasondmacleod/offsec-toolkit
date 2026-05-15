@@ -155,6 +155,45 @@ Every change is evaluated against these:
 
 ---
 
+## 12. exploitdb subproject
+
+`~/scripts/exploitdb/` is a local Flask app: read-only OffSec technique reference (442 entries served, FTS5-indexed) + per-engagement findings intake. Companion to the `.sh` scripts, not a replacement. Vault doc: [[exploitdb]] at `vault/_SCRIPTS/exploitdb.md`.
+
+**Architecture you must respect:**
+
+- **Drop-and-rebuild loader, not migrations.** `load_seed.py` deletes `data/exploitdb.sqlite` and recreates it from `data/seed/*.json` in ~30ms. Schema change = edit `SCHEMA` + `INSERT_COLS` + `normalize_entry()` + the FTS `INSERT` statement, then `./run.sh rebuild`. No `ALTER TABLE` logic exists or is needed.
+- **Two SQLite files, different lifecycles.** `data/exploitdb.sqlite` (curated reference, gitignored, regenerated from seed). `$TOOLKIT_ROOT/findings/findings.sqlite` (per-engagement user data, gitignored, lives under the engagement directory like every other toolkit artifact; survives rebuild). Don't merge them.
+- **Banned-entry filter at load time.** Entries with `compliance: offsec_banned` are excluded by `load_seed.py`. Source has 443+ entries; app serves 442 (and rising as new entries are curated). Filter is intentional — banned techniques have no operator use.
+
+**Testing model:** `audit_app.py` is the test framework. End-to-end against a running server; ~574 requests in ~3s; reports failures + warnings + p50/p95/max timings. Extend by adding `# ---- 7x. <feature> ----` blocks following the existing pattern; clean up any test rows you create. **Do not introduce pytest.**
+
+**UI conventions:**
+
+- Server-rendered Jinja + htmx partials. Templates with leading `_` are partials. `HX-Request` header switches a route to its partial response (see `/search`, `/category/<name>`, `/intake/slug-complete`).
+- All static assets vendored — htmx, Pico.classless CSS, custom `app.css`. **No CDNs.** Verify with `audit_app.py` if you change static deps.
+- No JS framework. Vanilla JS for keyboard handlers and copy buttons; htmx for everything else.
+
+**Toolkit-integration contracts (don't break these):**
+
+- `produced_by_script` field on an entry → app renders canonical `$TOOLKIT_ROOT/...` output paths from the `SCRIPT_OUTPUTS` mapping in `app.py`. If you change a `.sh` script's output paths, update `SCRIPT_OUTPUTS` to match.
+- Obsidian deep-links use `obsidian://open?vault={EXPLOITDB_VAULT_NAME}&file=_SCRIPTS/<script>` to surface the script's vault doc from inside the app. The vault must have those docs.
+- Commands are rendered verbatim from seed JSON. **No paraphrasing, no "modernization", no silent corrections.** If a command needs fixing, fix the seed JSON.
+
+**Gate discipline for structured handoffs:**
+
+Kickoff prompts under `exploitdb/` (see `APP_BUILD_BRIEF.md`, prior handoff messages) include explicit gates: "Step 0: read first, report, wait for confirmation" and intermediate "show me the rendered example before continuing past step N". Respect them. The operator has been consistent about these; skipping them wastes review cycles.
+
+**What NOT to do in exploitdb:**
+
+- Don't merge findings into the entries DB
+- Don't add pytest, a JS framework, or a build step
+- Don't auto-launch exploits or auto-import terminal scrollback
+- Don't paraphrase commands in templates — render `e.commands` as-is
+- Don't write to `$TOOLKIT_ROOT` from the app (read-only contract — only `.sh` scripts write there; the findings DB is the one exception, and the path is parameterised by TOOLKIT_ROOT explicitly)
+- Don't bypass the "Step 0" gate on a fresh handoff prompt
+
+---
+
 ## Workspace And Output Rules
 
 - Default OffSec output belongs under `$TOOLKIT_ROOT`, with `$HOME/toolkit` as the
