@@ -1,0 +1,67 @@
+{% extends "base.html" %}
+{% block title %}{{ q or "search" }}{% endblock %}
+{% block content %}
+
+<form action="{{ url_for('search') }}" method="get" role="search" id="search-form">
+  <input id="q" type="search" name="q" value="{{ q }}"
+         placeholder="Search vault…" autocomplete="off" autofocus
+         aria-label="Search vault">
+</form>
+
+{% if q and not shortcuts and not chunks %}
+  <p class="muted">No matches for <code>{{ q }}</code>. Try fewer / different terms,
+     or browse <a href="{{ url_for('shortcuts_index') }}">all shortcuts</a>.</p>
+{% endif %}
+
+<ol class="results" id="results">
+  {% for s in shortcuts %}
+  <li class="result" tabindex="-1"
+      data-href="{{ url_for('shortcut_view', slug=s.slug) }}"
+      data-expand="{{ url_for('shortcut_view', slug=s.slug) }}?partial=1">
+    <div class="result-head">
+      <span class="badge shortcut">shortcut</span>
+      {% if s.is_broken %}<span class="badge broken">BROKEN</span>{% endif %}
+      <a href="{{ url_for('shortcut_view', slug=s.slug) }}"><strong>{{ s.title }}</strong></a>
+    </div>
+    <div class="result-src">
+      {% if s.answer_type == 'chunk_ref' %}↪ {{ s.target_chunk_id }}
+      {% else %}inline answer{% if s.inline_followup %} · more: {{ s.inline_followup }}{% endif %}{% endif %}
+      <span class="muted">· trigger: “{{ s.matched_trigger }}”</span>
+    </div>
+    {% if s.answer_type == 'inline' and s.inline_answer %}
+      <p class="snippet">{{ s.inline_answer.replace('\n',' ')[:150] }}{% if s.inline_answer|length > 150 %}…{% endif %}</p>
+    {% endif %}
+    {% if s.tags %}<div class="tags">{% for t in s.tags.split() %}<span class="badge tag">{{ t }}</span>{% endfor %}</div>{% endif %}
+    <div class="expansion" hidden></div>
+  </li>
+  {% endfor %}
+
+  {% for c in chunks %}
+  <li class="result" tabindex="-1"
+      data-href="{{ url_for('chunk_view', chunk_id=c.chunk_id) }}"
+      data-expand="{{ url_for('chunk_view', chunk_id=c.chunk_id) }}?partial=1">
+    <div class="result-head">
+      <span class="badge {{ c.match_type }}">{{ c.match_type }}</span>
+      <a href="{{ url_for('chunk_view', chunk_id=c.chunk_id) }}"><strong>{{ c.doc_title }}{% if c.heading %} — {{ c.heading }}{% endif %}</strong></a>
+    </div>
+    <div class="result-src">{{ c.display_path }}</div>
+    {% if c.snippet %}<p class="snippet">{{ c.snippet }}</p>{% endif %}
+    {% if c.tag_list %}<div class="tags">{% for t in c.tag_list %}<span class="badge tag">{{ t }}</span>{% endfor %}</div>{% endif %}
+    <div class="expansion" hidden></div>
+  </li>
+  {% endfor %}
+</ol>
+
+{% if not q %}
+<section class="popular">
+  <h2>Popular shortcuts</h2>
+  <ul class="shortcut-quick">
+    {% for s in popular %}
+    <li><a href="{{ url_for('shortcut_view', slug=s.slug) }}">{{ s.title }}</a>
+        {% if s.tags %}<span class="muted">{{ s.tags.split()[0] }}</span>{% endif %}</li>
+    {% endfor %}
+  </ul>
+  <p class="muted"><a href="{{ url_for('shortcuts_index') }}">All shortcuts →</a></p>
+</section>
+{% endif %}
+{% endblock %}

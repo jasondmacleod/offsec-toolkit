@@ -1,0 +1,23 @@
+{# Inline-answer shortcut. Used standalone and as an expansion fragment. #}
+<article class="chunk inline-shortcut">
+  <div class="breadcrumb">
+    <span class="badge shortcut">shortcut</span>
+    <strong>{{ inline_shortcut.title }}</strong>
+  </div>
+  <div class="md-body">{{ answer_html | safe }}</div>
+  {% if followup %}
+  <footer class="related">
+    <span class="muted">More depth:</span>
+    {% if followup.exists %}
+      <a href="{{ followup.url }}">{{ followup.chunk_id }}</a>
+    {% else %}
+      <span class="badge broken">BROKEN</span>
+      <code>{{ followup.chunk_id }}</code>
+    {% endif %}
+  </footer>
+  {% endif %}
+  <footer class="related">
+    <span class="muted">Triggers:</span>
+    {% for t in inline_shortcut.triggers %}<code>{{ t }}</code>{% endfor %}
+  </footer>
+</article>

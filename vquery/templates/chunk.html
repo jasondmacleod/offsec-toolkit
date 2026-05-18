@@ -1,0 +1,11 @@
+{% extends "base.html" %}
+{% block title %}{{ title }}{% endblock %}
+{% block content %}
+<p class="backlink"><a href="{{ url_for('index') }}">← search</a></p>
+
+{% if inline_shortcut %}
+  {% include "_inline.html" %}
+{% else %}
+  {% include "_chunk.html" %}
+{% endif %}
+{% endblock %}

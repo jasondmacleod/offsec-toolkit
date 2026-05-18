@@ -1,0 +1,113 @@
+[
+  {
+    "slug": "45-minute-rule",
+    "triggers": ["45 minute rule", "when to move on", "stuck rotate", "time box", "rotation rule", "am i stuck", "how long before moving on"],
+    "title": "The 45-minute rule",
+    "answer_type": "inline",
+    "inline_answer": "No measurable progress on a **vector** in ~45 min → rotate to a different vector on the same box. Whole **box** stalled (all vectors dry) → note state, screenshot, move to the next target; come back with fresh eyes. The engagement is lost by tunnelling on one box, not by missing one technique.",
+    "inline_followup": "BUS_REVIEW/OffSec_Exam_Methodology_Complete.md#the-45-minute-rule",
+    "tags": "methodology time stuck",
+    "priority": 205
+  },
+  {
+    "slug": "box-loop",
+    "triggers": ["box loop", "the loop", "per box steps", "what do i do on a box", "box workflow", "box checklist"],
+    "title": "The box loop (memorize this)",
+    "answer_type": "inline",
+    "inline_answer": "Recon → enumerate services → identify foothold vector → exploit → **shell → stabilize (TTY) → screenshot** → loot creds → **spray new creds everywhere** → privesc enum → escalate → **proof.txt + screenshot** → capture evidence → submit flags. Never skip stabilize/screenshot/spray.",
+    "inline_followup": "_EXAM/00_START_HERE.md#the-box-loop-memorize-this",
+    "tags": "methodology workflow",
+    "priority": 205
+  },
+  {
+    "slug": "proof-requirements",
+    "triggers": ["proof requirements", "proof.txt", "local.txt", "what screenshot proof", "flag proof", "proof rules"],
+    "title": "Proof requirements (per OffSec)",
+    "answer_type": "inline",
+    "inline_answer": "`local.txt` (user) and `proof.txt` (root/SYSTEM) from their **original path**. One screenshot per flag showing, in a single image: an **interactive shell**, `whoami`, `hostname`, `ip a` / `ipconfig`, and the flag `cat`/`type` from the original location. **Web shells do not count.** Submit every flag to the control panel before time expires.",
+    "inline_followup": "_EXAM/OffSec_Exam_Day_Notes.md#proof-requirements",
+    "tags": "methodology proof evidence",
+    "priority": 205
+  },
+  {
+    "slug": "triage-decision-tree",
+    "triggers": ["triage", "triage tree", "after recon decision", "what to attack first", "triage decision", "recon done what next"],
+    "title": "Triage decision tree",
+    "answer_type": "chunk_ref",
+    "target_chunk_id": "BUS_REVIEW/OffSec_Exam_Methodology_Complete.md#triage-decision-tree",
+    "tags": "methodology triage decision",
+    "priority": 195
+  },
+  {
+    "slug": "mvp-pass-paths",
+    "triggers": ["pass paths", "minimum to pass", "70 points", "how to pass", "mvp paths", "points to pass", "passing combinations"],
+    "title": "Minimum viable pass paths",
+    "answer_type": "chunk_ref",
+    "target_chunk_id": "BUS_REVIEW/OffSec_Exam_Methodology_Complete.md#minimum-viable-pass-paths",
+    "tags": "methodology points strategy",
+    "priority": 195
+  },
+  {
+    "slug": "attack-order",
+    "triggers": ["attack order", "what order", "engagement order", "recommended order", "sequencing", "which box first order"],
+    "title": "Recommended attack order",
+    "answer_type": "chunk_ref",
+    "target_chunk_id": "BUS_REVIEW/OffSec_Exam_Methodology_Complete.md#recommended-attack-order",
+    "tags": "methodology strategy",
+    "priority": 185
+  },
+  {
+    "slug": "engagement-default-chain",
+    "triggers": ["default chain", "script chain", "engagement chain", "what scripts to run", "default workflow", "script order"],
+    "title": "engagement default script chain",
+    "answer_type": "chunk_ref",
+    "target_chunk_id": "BUS_REVIEW/Toolkit_Strategy_Bus_Review.md#engagement-default-chain",
+    "tags": "methodology toolkit workflow",
+    "priority": 185
+  },
+  {
+    "slug": "credential-loop",
+    "triggers": ["credential loop", "core engine", "cred loop", "the loop creds", "credential lifecycle", "crack spray loop"],
+    "title": "The credential loop (core engine)",
+    "answer_type": "chunk_ref",
+    "target_chunk_id": "BUS_REVIEW/Toolkit_Strategy_Bus_Review.md#the-credential-loop-your-core-engine",
+    "tags": "methodology credentials doctrine",
+    "priority": 190
+  },
+  {
+    "slug": "rules-burn-in",
+    "triggers": ["rules to remember", "burn into brain", "engagement rules", "key rules", "golden rules", "rules to burn"],
+    "title": "Rules to burn into your brain",
+    "answer_type": "chunk_ref",
+    "target_chunk_id": "BUS_REVIEW/OffSec_Exam_Methodology_Complete.md#rules-to-burn-into-your-brain",
+    "tags": "methodology rules",
+    "priority": 185
+  },
+  {
+    "slug": "rotation-stop-rules",
+    "triggers": ["stop rules", "rotation rules", "when to stop", "when to rotate", "stop conditions"],
+    "title": "Rotation / stop rules",
+    "answer_type": "chunk_ref",
+    "target_chunk_id": "BUS_REVIEW/Toolkit_Strategy_Bus_Review.md#rotation-stop-rules",
+    "tags": "methodology time stuck",
+    "priority": 185
+  },
+  {
+    "slug": "stuck-rules",
+    "triggers": ["stuck no shell", "cant get foothold", "stuck initial", "no foothold", "stuck on box", "stuck what now", "im stuck"],
+    "title": "Stuck rules",
+    "answer_type": "chunk_ref",
+    "target_chunk_id": "_EXAM/00_START_HERE.md#stuck-rules-from-master-strategy",
+    "tags": "methodology stuck",
+    "priority": 190
+  },
+  {
+    "slug": "hour-by-hour",
+    "triggers": ["hour by hour", "game plan", "engagement timeline", "time plan", "24 hour plan", "hourly plan"],
+    "title": "Hour-by-hour game plan",
+    "answer_type": "chunk_ref",
+    "target_chunk_id": "BUS_REVIEW/OffSec_Exam_Methodology_Complete.md#hour-by-hour-game-plan",
+    "tags": "methodology time strategy",
+    "priority": 180
+  }
+]

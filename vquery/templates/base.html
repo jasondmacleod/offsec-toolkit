@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}vquery{% endblock %} · vquery</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+  <script src="{{ url_for('static', filename='app.js') }}" defer></script>
+</head>
+<body>
+<header>
+  <nav>
+    <strong><a href="{{ url_for('index') }}">vquery</a></strong>
+    <span class="muted">vault query engine · port 5051</span>
+    <span class="spacer"></span>
+    <a href="{{ url_for('shortcuts_index') }}">shortcuts</a>
+    <span class="muted kbd-hint"><kbd>/</kbd> search · <kbd>↑↓</kbd> move · <kbd>↵</kbd> expand · <kbd>Esc</kbd> clear · <kbd>o</kbd> source</span>
+  </nav>
+</header>
+<main>
+  {% block content %}{% endblock %}
+</main>
+</body>
+</html>

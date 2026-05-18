@@ -1,0 +1,152 @@
+[
+  {
+    "slug": "nmap-syntax",
+    "triggers": ["nmap syntax", "nmap command", "nmap scan", "nmap flags", "how to nmap", "full port scan"],
+    "title": "Nmap — the commands you actually run",
+    "answer_type": "inline",
+    "inline_answer": "```\n# full TCP, then targeted version/script on found ports\nnmap -p- --min-rate 2000 -T4 -oN tcp.all TARGET\nnmap -p<csv> -sCV -oN tcp.deep TARGET\n# top UDP (slow — run in parallel)\nnmap -sU --top-ports 50 -oN udp.top TARGET\n```\n\n`recon.sh` does this for you with parsing — manual nmap is the fallback when it fails.",
+    "inline_followup": "_CHEATSHEETS/Active_Recon.md#nmap-quick-reference",
+    "tags": "recon nmap enumeration",
+    "priority": 205
+  },
+  {
+    "slug": "smb-enum",
+    "triggers": ["smb enum", "enum smb", "port 445", "smbclient", "139 445", "null session smb", "enum4linux"],
+    "title": "SMB enumeration (139/445)",
+    "answer_type": "inline",
+    "inline_answer": "```\nnxc smb TARGET -u '' -p ''            # null; then -u guest -p ''\nnxc smb TARGET -u U -p P --shares --users --pass-pol\nsmbclient -N -L //TARGET/            # list shares anon\nsmbclient -N //TARGET/SHARE          # browse; recurse;prompt;mget *\nenum4linux-ng -A TARGET\nrpcclient -U '' -N TARGET             # enumdomusers, querydispinfo\n```",
+    "inline_followup": "_CHEATSHEETS/Active_Recon.md#smb-rpc-deep-dive",
+    "tags": "recon smb enumeration",
+    "priority": 200
+  },
+  {
+    "slug": "snmp-enum",
+    "triggers": ["snmp enum", "snmpwalk", "port 161", "snmp-check", "community string", "snmp udp"],
+    "title": "SNMP enumeration (161/UDP)",
+    "answer_type": "inline",
+    "inline_answer": "```\nsnmpwalk -v2c -c public TARGET                 # whole tree\nsnmpwalk -v2c -c public TARGET 1.3.6.1.4.1.77.1.2.25   # users\nsnmpwalk -v2c -c public TARGET 1.3.6.1.2.1.25.4.2.1.2  # processes (creds in args!)\nsnmp-check TARGET ; onesixtyone -c communities.txt TARGET\n```\n\nTry community strings `public`, `private`, `community`, the org name.",
+    "inline_followup": "_CHEATSHEETS/Active_Recon.md#snmp-follow-up",
+    "tags": "recon snmp enumeration",
+    "priority": 195
+  },
+  {
+    "slug": "ldap-enum",
+    "triggers": ["ldap enum", "ldapsearch", "anonymous bind", "port 389", "ldap null bind", "389 636"],
+    "title": "LDAP enumeration (389/636)",
+    "answer_type": "inline",
+    "inline_answer": "```\nldapsearch -x -H ldap://TARGET -s base namingcontexts     # find base DN\nldapsearch -x -H ldap://TARGET -b 'DC=corp,DC=com'        # anon dump\nldapsearch -x -H ldap://TARGET -b 'DC=corp,DC=com' '(objectClass=user)' sAMAccountName description\nnxc ldap TARGET -u U -p P --users --asreproast a.txt\n```\n\n`description` fields frequently hold passwords.",
+    "inline_followup": "_CHEATSHEETS/Active_Recon.md#ldap-anonymous-bind-follow-up",
+    "tags": "recon ldap ad enumeration",
+    "priority": 195
+  },
+  {
+    "slug": "ftp-anon",
+    "triggers": ["ftp anonymous", "port 21", "anonymous ftp", "ftp enum", "ftp login"],
+    "title": "FTP (21) — anonymous + enum",
+    "answer_type": "inline",
+    "inline_answer": "```\nftp TARGET            # anonymous / anonymous  (or anonymous / blank)\n# binary; ls -la; recursively grab everything:\nwget -m --no-passive ftp://anonymous:anonymous@TARGET\n```\n\nNote the banner/version → searchsploit (vsftpd 2.3.4, ProFTPD mod_copy). Check if the FTP root == webroot (upload a shell).",
+    "inline_followup": "Checklists/Foothold_Paths_Checklist_Methodology.md#b-1-ftp-21",
+    "tags": "recon ftp enumeration",
+    "priority": 190
+  },
+  {
+    "slug": "vhost-fuzz",
+    "triggers": ["vhost", "vhost fuzzing", "subdomain fuzz", "host header fuzz", "virtual host", "ffuf vhost"],
+    "title": "Vhost / subdomain fuzzing",
+    "answer_type": "inline",
+    "inline_answer": "```\nffuf -u http://TARGET/ -H 'Host: FUZZ.domain.com' \\\n  -w /usr/share/seclists/Discovery/DNS/subdomains-top1million-5000.txt \\\n  -fs <baseline_size>          # filter the default-response size\n```\n\nAdd every discovered vhost to `/etc/hosts`. A different size/code = a real vhost. Also try gobuster `vhost --append-domain`.",
+    "inline_followup": "_CHEATSHEETS/Active_Recon.md#vhost-subdomain-enumeration-manual-tuning",
+    "tags": "recon web vhost enumeration",
+    "priority": 190
+  },
+  {
+    "slug": "recon-first-5-min",
+    "triggers": ["after recon", "recon done now what", "first 5 minutes", "recon completed", "recon output now what"],
+    "title": "First 5 minutes after recon completes",
+    "answer_type": "chunk_ref",
+    "target_chunk_id": "_CHEATSHEETS/Active_Recon.md#first-5-minutes-after-recon-completes",
+    "tags": "recon methodology",
+    "priority": 190
+  },
+  {
+    "slug": "spray-everywhere",
+    "triggers": ["spray everywhere", "every cred every target", "found creds spray", "credential spray doctrine", "reuse creds everywhere"],
+    "title": "Credentials found anywhere → spray everywhere",
+    "answer_type": "chunk_ref",
+    "target_chunk_id": "Checklists/Initial_Recon_Triage_Checklist_Methodology.md#4-4-credentials-found-anywhere-spray-everywhere",
+    "tags": "recon spraying doctrine",
+    "priority": 190
+  },
+  {
+    "slug": "port-service-index",
+    "triggers": ["what to do with port", "port reference", "service enum index", "open port now what", "foothold paths", "service playbook"],
+    "title": "Per-service foothold playbook (port index)",
+    "answer_type": "chunk_ref",
+    "target_chunk_id": "Checklists/Foothold_Paths_Checklist_Methodology.md",
+    "tags": "recon methodology services",
+    "priority": 185
+  },
+  {
+    "slug": "time-allocation",
+    "triggers": ["time allocation", "how long per target", "time budget recon", "when to move on target", "time per box"],
+    "title": "Time allocation per target",
+    "answer_type": "chunk_ref",
+    "target_chunk_id": "Checklists/Initial_Recon_Triage_Checklist_Methodology.md#1-3-time-allocation",
+    "tags": "recon methodology time",
+    "priority": 185
+  },
+  {
+    "slug": "target-scoring",
+    "triggers": ["which target first", "target scoring", "prioritize targets", "easiest box first", "which box first"],
+    "title": "Per-target scoring — which box first",
+    "answer_type": "chunk_ref",
+    "target_chunk_id": "Checklists/Initial_Recon_Triage_Checklist_Methodology.md#1-1-per-target-scoring",
+    "tags": "recon methodology triage",
+    "priority": 185
+  },
+  {
+    "slug": "domain-recognition",
+    "triggers": ["is this ad", "domain recognition", "is it a domain", "ad triggers", "is this active directory"],
+    "title": "Domain recognition triggers (is this AD?)",
+    "answer_type": "chunk_ref",
+    "target_chunk_id": "Checklists/Initial_Recon_Triage_Checklist_Methodology.md#4-2-domain-recognition-triggers",
+    "tags": "recon ad triage",
+    "priority": 180
+  },
+  {
+    "slug": "winrm-access",
+    "triggers": ["winrm", "port 5985", "evil-winrm", "5986", "winrm access", "winrm login"],
+    "title": "WinRM (5985/5986) access",
+    "answer_type": "chunk_ref",
+    "target_chunk_id": "Checklists/Foothold_Paths_Checklist_Methodology.md#b-14-winrm-5985-5986",
+    "tags": "recon winrm lateral",
+    "priority": 180
+  },
+  {
+    "slug": "mssql-enum",
+    "triggers": ["mssql enum", "port 1433", "mssqlclient", "sql server enum", "impacket-mssql", "1433"],
+    "title": "MSSQL (1433) enumeration",
+    "answer_type": "chunk_ref",
+    "target_chunk_id": "Checklists/Foothold_Paths_Checklist_Methodology.md#b-9-mssql-1433",
+    "tags": "recon mssql database",
+    "priority": 175
+  },
+  {
+    "slug": "redis-enum",
+    "triggers": ["redis enum", "port 6379", "redis-cli", "redis unauth", "6379"],
+    "title": "Redis (6379) enumeration",
+    "answer_type": "chunk_ref",
+    "target_chunk_id": "Checklists/Foothold_Paths_Checklist_Methodology.md#b-12-redis-6379",
+    "tags": "recon redis database",
+    "priority": 175
+  },
+  {
+    "slug": "nfs-enum",
+    "triggers": ["nfs enum", "showmount", "port 2049", "nfs shares", "2049", "111 2049"],
+    "title": "NFS (111/2049) enumeration",
+    "answer_type": "chunk_ref",
+    "target_chunk_id": "Checklists/Foothold_Paths_Checklist_Methodology.md#b-5-nfs-111-2049",
+    "tags": "recon nfs enumeration",
+    "priority": 175
+  }
+]

@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% block title %}{{ title }}{% endblock %}
+{% block content %}
+<p class="backlink"><a href="{{ url_for('index') }}">← search</a></p>
+<article class="chunk" data-src="{{ source_abs }}">
+  <h1 class="doc-title">{{ doc_title }}</h1>
+  <div class="source-line" hidden><code>{{ source_abs }}</code></div>
+  <p class="muted">{{ doc_path }} · {{ chunks|length }} chunk(s)</p>
+  {% for ch in chunks %}
+  <section class="doc-section" id="{{ ch.anchor }}">
+    {% if ch.heading %}
+    <h2><a href="{{ url_for('chunk_view', chunk_id=ch.chunk_id) }}">{{ ch.heading }}</a></h2>
+    {% endif %}
+    <div class="md-body">{{ ch.html | safe }}</div>
+  </section>
+  {% endfor %}
+</article>
+{% endblock %}

@@ -1,0 +1,101 @@
+[
+  {
+    "slug": "which-script",
+    "triggers": ["which script", "what script", "scripts overview", "toolkit scripts", "list scripts", "script for", "13 scripts"],
+    "title": "Which script does what (toolkit at a glance)",
+    "answer_type": "chunk_ref",
+    "target_chunk_id": "BUS_REVIEW/Toolkit_Strategy_Bus_Review.md#the-13-scripts-at-a-glance",
+    "tags": "toolkit scripts overview",
+    "priority": 195
+  },
+  {
+    "slug": "script-interaction-map",
+    "triggers": ["script interaction", "script map", "how scripts connect", "script pipeline", "scripts together", "script flow"],
+    "title": "Script interaction map",
+    "answer_type": "chunk_ref",
+    "target_chunk_id": "BUS_REVIEW/Toolkit_Strategy_Bus_Review.md#script-interaction-map-quick-reference",
+    "tags": "toolkit scripts overview",
+    "priority": 185
+  },
+  {
+    "slug": "offsec-recon-sh",
+    "triggers": ["recon", "recon.sh", "recon script", "recon orchestrator", "offsec recon"],
+    "title": "recon.sh — recon orchestrator",
+    "answer_type": "chunk_ref",
+    "target_chunk_id": "_SCRIPTS/recon.md#engagement-day-workflow",
+    "tags": "toolkit recon script",
+    "priority": 185
+  },
+  {
+    "slug": "escalatr-sh",
+    "triggers": ["escalatr", "escalatr.sh", "privesc script", "escalation script", "privesc enum script"],
+    "title": "escalatr.sh — privesc enum orchestrator",
+    "answer_type": "chunk_ref",
+    "target_chunk_id": "_SCRIPTS/escalatr.md#workflow",
+    "tags": "toolkit privesc script",
+    "priority": 185
+  },
+  {
+    "slug": "adr-sh",
+    "triggers": ["adr", "adr.sh", "ad script", "ad chain script", "adr chain", "ad enum script"],
+    "title": "adr.sh — AD enumeration + kill chain",
+    "answer_type": "chunk_ref",
+    "target_chunk_id": "_SCRIPTS/adr.md#usage",
+    "tags": "toolkit ad script",
+    "priority": 185
+  },
+  {
+    "slug": "sprayr-sh",
+    "triggers": ["sprayr", "sprayr.sh", "spray script", "spraying script", "credential spray script"],
+    "title": "sprayr.sh — credential spraying",
+    "answer_type": "chunk_ref",
+    "target_chunk_id": "_SCRIPTS/sprayr.md#quick-reference",
+    "tags": "toolkit spraying script",
+    "priority": 185
+  },
+  {
+    "slug": "crackr-sh",
+    "triggers": ["crackr", "crackr.sh", "crack script", "cracking script", "hash crack script"],
+    "title": "crackr.sh — hash cracking dispatcher",
+    "answer_type": "chunk_ref",
+    "target_chunk_id": "_SCRIPTS/crackr.md#quick-reference",
+    "tags": "toolkit cracking script",
+    "priority": 185
+  },
+  {
+    "slug": "pivotr-sh",
+    "triggers": ["pivotr", "pivotr.sh", "pivot script", "pivoting script", "ligolo automation script"],
+    "title": "pivotr.sh — Ligolo pivot automation",
+    "answer_type": "chunk_ref",
+    "target_chunk_id": "_SCRIPTS/pivotr.md#decision-tree",
+    "tags": "toolkit pivoting script",
+    "priority": 185
+  },
+  {
+    "slug": "lootr-sh",
+    "triggers": ["lootr", "lootr.sh", "lootr.ps1", "loot script", "credential hunting script", "loot collection script"],
+    "title": "lootr.sh / lootr.ps1 — loot hunting",
+    "answer_type": "chunk_ref",
+    "target_chunk_id": "_SCRIPTS/lootr.md#quick-decision-tree",
+    "tags": "toolkit loot script",
+    "priority": 185
+  },
+  {
+    "slug": "webenum-sh",
+    "triggers": ["webenum", "webenum.sh", "web enum script", "web enumeration script"],
+    "title": "webenum.sh — deep web enumeration",
+    "answer_type": "chunk_ref",
+    "target_chunk_id": "BUS_REVIEW/Toolkit_Strategy_Bus_Review.md#phase-1b-web-enum-webenum-sh",
+    "tags": "toolkit web script",
+    "priority": 180
+  },
+  {
+    "slug": "servr-sh",
+    "triggers": ["servr", "servr.sh", "file server script", "http server script", "workspace script"],
+    "title": "servr.sh — workspace / file serving",
+    "answer_type": "chunk_ref",
+    "target_chunk_id": "BUS_REVIEW/Toolkit_Strategy_Bus_Review.md#phase-4-file-serving-servr-sh",
+    "tags": "toolkit serving script",
+    "priority": 180
+  }
+]

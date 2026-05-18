@@ -1,0 +1,21 @@
+{# Expanded / standalone chunk body. Used both as a fragment (inline
+   expansion) and inside chunk.html. #}
+<article class="chunk" data-src="{{ c.source_abs }}"
+         data-lines="{{ c.line_start }}-{{ c.line_end }}">
+  <div class="breadcrumb">
+    <a href="{{ url_for('doc_view', doc_path=c.doc_path) }}">{{ c.doc_title }}</a>
+    {% if c.heading %}<span class="sep">→</span>
+      <a href="{{ url_for('chunk_view', chunk_id=c.chunk_id) }}">{{ c.heading }}</a>{% endif %}
+  </div>
+  <div class="source-line" hidden>
+    <code>{{ c.source_abs }}</code> · lines {{ c.line_start }}–{{ c.line_end }}
+  </div>
+  {% if c.tag_list %}<div class="tags">{% for t in c.tag_list %}<span class="badge tag">{{ t }}</span>{% endfor %}</div>{% endif %}
+  <div class="md-body">{{ body_html | safe }}</div>
+  {% if c.wikilinks %}
+  <footer class="related">
+    <span class="muted">Related:</span>
+    {% for w in c.wikilinks %}<a href="{{ w.url }}">{{ w.label }}</a>{% endfor %}
+  </footer>
+  {% endif %}
+</article>
