@@ -19,9 +19,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import markdown as md
-from flask import (Flask, abort, g, jsonify, redirect, render_template,
-                   request, url_for)
+from flask import (Flask, abort, g, jsonify, make_response, redirect,
+                   render_template, request, url_for)
 
+import storage
 from indexer.chunker import slugify
 from indexer.indexer import build_index
 from indexer.shortcut_loader import load_shortcuts
@@ -29,6 +30,17 @@ from indexer.shortcut_loader import load_shortcuts
 HERE = Path(__file__).parent
 DB_PATH = HERE / "data" / "vquery.sqlite"
 SHORTCUTS_DIR = HERE / "data" / "shortcuts"
+
+# exploitdb is the source of truth for cross-references (handoff: one
+# place to author, no out-of-sync mode). We read its seed JSON at
+# rebuild; we link out to its running app for the entry pages.
+EXPLOITDB_SEED_DIR = Path(os.environ.get(
+    "VQUERY_EXPLOITDB_SEED",
+    str(HERE.parent / "exploitdb" / "data" / "seed"))).resolve()
+EXPLOITDB_BASE_URL = os.environ.get(
+    "VQUERY_EXPLOITDB_URL", "http://127.0.0.1:5050").rstrip("/")
+
+SESSION_COOKIE = "vq_sid"
 
 VAULT_PATH = Path(os.environ.get(
     "VQUERY_VAULT_PATH", os.path.expanduser("~/scripts/vault"))).resolve()
@@ -59,6 +71,15 @@ def get_db() -> sqlite3.Connection:
             abort(503, description="Index not built. Run: ./run.sh rebuild")
         conn = sqlite3.connect(DB_PATH)
         conn.row_factory = sqlite3.Row
+        # Idempotent: the phase-2 persistent tables (gaps, pins) survive
+        # ./run.sh rebuild because that drops only the derived index
+        # tables, never the DB file. Cheap to assert on every open.
+        storage.ensure_schema(conn)
+        # First run after a rebuild: populate the xref cache lazily so a
+        # bare `./run.sh start` still gets cross-references without a
+        # separate step. unavailable exploitdb degrades, doesn't crash.
+        if storage.get_xref_status(conn) == "never_built":
+            storage.rebuild_xref(conn, EXPLOITDB_SEED_DIR)
         g.db = conn
     return g.db
 
@@ -68,6 +89,26 @@ def close_db(exc):
     db = g.pop("db", None)
     if db is not None:
         db.close()
+
+
+def session_id() -> str:
+    """Opaque per-browser id for soft-zero correlation. Stored only in a
+    cookie; every fact lives in SQLite. Set on the response in
+    _attach_session_cookie when freshly minted."""
+    if "session_id" not in g:
+        sid, is_new = storage.get_or_make_session_id(
+            request.cookies.get(SESSION_COOKIE))
+        g.session_id = sid
+        g.session_is_new = is_new
+    return g.session_id
+
+
+@app.after_request
+def _attach_session_cookie(resp):
+    if g.get("session_is_new") and g.get("session_id"):
+        resp.set_cookie(SESSION_COOKIE, g.session_id, max_age=60 * 60 * 24 * 365,
+                        httponly=True, samesite="Lax")
+    return resp
 
 
 # -- Search -------------------------------------------------------------
@@ -342,14 +383,46 @@ def _do_search(q: str, n: int) -> dict:
     return {"q": q, "shortcuts": shortcuts, "chunks": chunks, "n": n}
 
 
+HOME_PIN_LIMIT = 15  # handoff: max 15 on the home page, "show all" if more
+
+
+def _resolve_pins(pins: list[dict]) -> list[dict]:
+    """Inflate pin rows into renderable items (title, url, liveness)."""
+    db = get_db()
+    out: list[dict] = []
+    for p in pins:
+        tt, tid = p["target_type"], p["target_id"]
+        item = {"pin_id": p["pin_id"], "target_type": tt, "target_id": tid,
+                "note": p.get("note")}
+        if tt == "chunk":
+            row = db.execute(
+                "SELECT display_path, doc_title, heading FROM chunks "
+                "WHERE chunk_id = ?", (tid,)).fetchone()
+            item["exists"] = row is not None
+            item["title"] = (row["display_path"] if row else tid)
+            item["url"] = url_for("chunk_view", chunk_id=tid)
+        else:  # shortcut
+            row = db.execute(
+                "SELECT title FROM shortcuts WHERE slug = ?", (tid,)).fetchone()
+            item["exists"] = row is not None
+            item["title"] = row["title"] if row else tid
+            item["url"] = url_for("shortcut_view", slug=tid)
+        out.append(item)
+    return out
+
+
 @app.route("/")
 def index():
     q = request.args.get("q", "").strip()
     if q:
         return search()
+    db = get_db()
+    pins = _resolve_pins(storage.list_pins(db))
     return render_template(
         "search.html", q="", shortcuts=[], chunks=[],
-        popular=_popular_shortcuts(), n=DEFAULT_N)
+        popular=_popular_shortcuts(), n=DEFAULT_N,
+        pins=pins[:HOME_PIN_LIMIT], pins_total=len(pins),
+        gap_counts=storage.gap_counts(db))
 
 
 @app.route("/search")
@@ -360,8 +433,22 @@ def search():
     if request.accept_mimetypes.best == "application/json" or \
        request.args.get("format") == "json":
         return jsonify(data)
+
+    # Log only genuine user-facing HTML searches (not the JSON API, not
+    # htmx-style partials) so the gap signal isn't polluted by machinery.
+    query_id = None
+    is_hard_zero = False
+    if q and not request.args.get("partial"):
+        db = get_db()
+        result_count = len(data["shortcuts"]) + len(data["chunks"])
+        shortcut_matched = bool(data["shortcuts"])
+        query_id = storage.log_query(
+            db, q, result_count, shortcut_matched, session_id())
+        is_hard_zero = (result_count == 0 and not shortcut_matched)
+
     return render_template(
-        "search.html", popular=(_popular_shortcuts() if not q else []), **data)
+        "search.html", popular=(_popular_shortcuts() if not q else []),
+        query_id=query_id, is_hard_zero=is_hard_zero, **data)
 
 
 @app.route("/chunk/<path:chunk_id>")
@@ -371,9 +458,16 @@ def chunk_view(chunk_id: str):
         abort(404)
     c["wikilinks"] = _doc_wikilinks(c["doc_path"], c["chunk_id"])
     body_html = render_markdown(c["body"], cur_doc=c["doc_path"])
-    tmpl = "_chunk.html" if request.args.get("partial") else "chunk.html"
-    return render_template(tmpl, c=c, body_html=body_html,
-                           title=c["display_path"])
+    if request.args.get("partial"):
+        # Inline expansion inside the result list — no page chrome.
+        return render_template("_chunk.html", c=c, body_html=body_html)
+    db = get_db()
+    return render_template(
+        "chunk.html", c=c, body_html=body_html, title=c["display_path"],
+        pinned=storage.is_pinned(db, "chunk", c["chunk_id"]),
+        xref_groups=storage.xref_for_chunk(db, c["chunk_id"]),
+        xref_status=storage.get_xref_status(db),
+        exploitdb_base=EXPLOITDB_BASE_URL)
 
 
 def _doc_wikilinks(doc_path: str, chunk_id: str) -> list[dict]:
@@ -432,10 +526,13 @@ def shortcut_view(slug: str):
             "exists": _chunk_exists(fu),
             "url": url_for("chunk_view", chunk_id=fu),
         }
-    tmpl = "_inline.html" if partial else "chunk.html"
-    return render_template(tmpl, inline_shortcut=s,
-                           answer_html=answer_html, followup=followup,
-                           title=s["title"])
+    if partial:
+        return render_template("_inline.html", inline_shortcut=s,
+                               answer_html=answer_html, followup=followup)
+    return render_template(
+        "chunk.html", inline_shortcut=s, answer_html=answer_html,
+        followup=followup, title=s["title"],
+        pinned=storage.is_pinned(db, "shortcut", slug))
 
 
 @app.route("/doc/<path:doc_path>")
@@ -480,6 +577,109 @@ def shortcuts_index():
         total=len(rows), broken=broken, title="Shortcuts")
 
 
+# -- Feature 1: gaps ----------------------------------------------------
+
+@app.route("/gaps")
+def gaps():
+    db = get_db()
+    sort = request.args.get("sort", "count")
+    if sort not in ("count", "date", "alpha"):
+        sort = "count"
+    return render_template(
+        "gaps.html", title="Gaps", sort=sort,
+        active=storage.active_gaps(db, sort),
+        resolved=storage.resolved_gaps(db),
+        resolution_types=sorted(storage.RESOLUTION_TYPES))
+
+
+@app.route("/gaps/resolve", methods=["POST"])
+def gaps_resolve():
+    db = get_db()
+    ok = storage.resolve_gap(
+        db,
+        request.form.get("normalized_query", "").strip(),
+        request.form.get("resolution_type", "").strip(),
+        request.form.get("target_slug"),
+        request.form.get("notes"),
+    )
+    if not ok:
+        abort(400, description="invalid gap resolution")
+    return redirect(url_for("gaps", sort=request.args.get("sort", "count")))
+
+
+@app.route("/api/result-open", methods=["POST"])
+def api_result_open():
+    """Beacon: the user engaged with a result (expand / open / copy).
+    Keyed by query_id so a later re-query won't be scored a soft-zero."""
+    qid = request.form.get("query_id", type=int)
+    if qid is not None:
+        storage.record_open(get_db(), qid)
+    return ("", 204)
+
+
+@app.route("/api/gap", methods=["POST"])
+def api_gap():
+    """Explicit 'didn't help' on a result card."""
+    qid = request.form.get("query_id", type=int)
+    if qid is None:
+        return ("", 400)
+    storage.record_explicit_gap(
+        get_db(), qid, (request.form.get("chunk_id") or "").strip() or None)
+    return ("", 204)
+
+
+# -- Feature 2: pins ----------------------------------------------------
+
+@app.route("/api/pin", methods=["POST"])
+def api_pin():
+    tt = (request.form.get("target_type") or "").strip()
+    tid = (request.form.get("target_id") or "").strip()
+    try:
+        pinned = storage.toggle_pin(get_db(), tt, tid)
+    except ValueError:
+        return jsonify({"error": "bad target"}), 400
+    return jsonify({"pinned": pinned})
+
+
+@app.route("/pins")
+def pins_page():
+    db = get_db()
+    pins = _resolve_pins(storage.list_pins(db))
+    return render_template("pins.html", title="Pins", pins=pins)
+
+
+@app.route("/api/pins/reorder", methods=["POST"])
+def api_pins_reorder():
+    ids = request.form.getlist("pin_id", type=int)
+    if ids:
+        storage.reorder_pins(get_db(), ids)
+    return ("", 204)
+
+
+@app.route("/api/pins/note", methods=["POST"])
+def api_pins_note():
+    pid = request.form.get("pin_id", type=int)
+    if pid is not None:
+        storage.set_pin_note(get_db(), pid, request.form.get("note", ""))
+    return redirect(url_for("pins_page"))
+
+
+# -- Feature 3: cross-reference health ---------------------------------
+
+@app.route("/xref-health")
+def xref_health():
+    db = get_db()
+    total_chunks = db.execute(
+        "SELECT COUNT(*) AS n FROM chunk_meta").fetchone()["n"]
+    health = storage.xref_health(
+        db, total_chunks,
+        storage.served_exploitdb_slugs(EXPLOITDB_SEED_DIR))
+    return render_template(
+        "xref_health.html", title="Cross-reference health", h=health,
+        exploitdb_base=EXPLOITDB_BASE_URL,
+        seed_dir=str(EXPLOITDB_SEED_DIR))
+
+
 @app.route("/api/healthz")
 def healthz():
     if not DB_PATH.exists():
@@ -517,6 +717,12 @@ def api_rebuild():
     except (FileNotFoundError, RuntimeError) as e:
         return jsonify({"status": "error", "error": str(e)}), 500
     stats.update(sc)
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        storage.ensure_schema(conn)
+        stats["xref"] = storage.rebuild_xref(conn, EXPLOITDB_SEED_DIR)
+    finally:
+        conn.close()
     stats["status"] = "ok"
     stats["rebuilt_at"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
     return jsonify(stats)

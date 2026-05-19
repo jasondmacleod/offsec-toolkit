@@ -14,6 +14,9 @@ import os
 import sys
 from pathlib import Path
 
+import sqlite3
+
+import storage
 from indexer.indexer import build_index
 from indexer.shortcut_loader import load_shortcuts
 
@@ -22,6 +25,9 @@ DB_PATH = HERE / "data" / "vquery.sqlite"
 SHORTCUTS_DIR = HERE / "data" / "shortcuts"
 VAULT_PATH = Path(os.environ.get(
     "VQUERY_VAULT_PATH", os.path.expanduser("~/scripts/vault"))).resolve()
+EXPLOITDB_SEED_DIR = Path(os.environ.get(
+    "VQUERY_EXPLOITDB_SEED",
+    str(HERE.parent / "exploitdb" / "data" / "seed"))).resolve()
 
 _NC = os.environ.get("NO_COLOR") or not sys.stdout.isatty()
 
@@ -51,6 +57,24 @@ def main() -> int:
     except (FileNotFoundError, RuntimeError) as e:
         print(_c("31", "[error]"), e, file=sys.stderr)
         return 1
+
+    # Persistent user tables (gaps, pins) are created here if absent and
+    # never dropped — drop-and-rebuild is only the derived index. The
+    # xref cache *is* derived, so it's cleared and rebuilt every time.
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        storage.ensure_schema(conn)
+        x = storage.rebuild_xref(conn, EXPLOITDB_SEED_DIR)
+    finally:
+        conn.close()
+    if x["status"] == "ok":
+        print(_c("32", "[xref]"),
+              f"{x['xref_rows']} cross-refs from {x['entries_with_xref']} "
+              f"exploitdb entries")
+    else:
+        print(_c("33", "[xref]"),
+              f"exploitdb seed unavailable ({x['seed_dir']}) — "
+              f"sidebar will show retry hint")
     print(_c("32", "[ok]"), f"db at {DB_PATH}")
     return 0
 

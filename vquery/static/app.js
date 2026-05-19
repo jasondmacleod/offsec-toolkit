@@ -130,4 +130,130 @@
   document.addEventListener("DOMContentLoaded", function () {
     addCopyButtons(document);
   });
+
+  // ===== Phase 2 =====================================================
+
+  // -- result-open beacon: one engagement is enough to clear soft-zero --
+  var openSent = false;
+  function markOpened() {
+    if (openSent) return;
+    var ol = document.getElementById("results");
+    var qid = ol && ol.getAttribute("data-query-id");
+    if (!qid) return;
+    openSent = true;
+    var body = new URLSearchParams({ query_id: qid });
+    if (navigator.sendBeacon) {
+      navigator.sendBeacon("/api/result-open", body);
+    } else {
+      fetch("/api/result-open", { method: "POST", body: body, keepalive: true });
+    }
+  }
+
+  // -- "didn't help" -> explicit_gap ----------------------------------
+  function logDidntHelp(btn) {
+    var ol = document.getElementById("results");
+    var qid = ol && ol.getAttribute("data-query-id");
+    if (!qid || btn.classList.contains("logged")) return;
+    var body = new URLSearchParams({
+      query_id: qid, chunk_id: btn.getAttribute("data-chunk-id") || ""
+    });
+    fetch("/api/gap", { method: "POST", body: body }).then(function () {
+      btn.classList.add("logged");
+      btn.textContent = "✓ logged";
+    }).catch(function () { btn.textContent = "err"; });
+  }
+
+  // -- pin toggle ------------------------------------------------------
+  function togglePin(btn) {
+    var body = new URLSearchParams({
+      target_type: btn.getAttribute("data-target-type"),
+      target_id: btn.getAttribute("data-target-id")
+    });
+    fetch("/api/pin", { method: "POST", body: body })
+      .then(function (r) { return r.json(); })
+      .then(function (d) {
+        var on = !!d.pinned;
+        btn.classList.toggle("pinned", on);
+        btn.setAttribute("aria-pressed", on ? "true" : "false");
+        var ico = btn.querySelector(".pin-ico");
+        var lab = btn.querySelector(".pin-label");
+        if (ico) ico.textContent = on ? "★" : "☆";
+        if (lab) lab.textContent = on ? "pinned" : "pin";
+      }).catch(function () {});
+  }
+
+  // -- related sidebar toggle -----------------------------------------
+  function toggleRelated() {
+    var aside = document.getElementById("related-aside");
+    if (!aside) return;
+    aside.classList.toggle("collapsed");
+    aside.classList.toggle("force-open");
+  }
+
+  document.addEventListener("click", function (e) {
+    var btn;
+    if ((btn = e.target.closest(".didnt-help"))) { logDidntHelp(btn); return; }
+    if ((btn = e.target.closest("#pin-btn"))) { togglePin(btn); return; }
+    if (e.target.closest("#related-toggle")) { toggleRelated(); return; }
+    if (e.target.closest(".copy-btn")) { markOpened(); return; }
+    // Engaging with a result (open link or expand the card) clears soft-zero.
+    if (e.target.closest("#results .result a") ||
+        e.target.closest("#results .result")) { markOpened(); }
+  });
+
+  document.addEventListener("keydown", function (e) {
+    if (isTyping(e)) return;
+    if (e.key === "p") {
+      var pb = document.getElementById("pin-btn");
+      if (pb) { e.preventDefault(); togglePin(pb); }
+      return;
+    }
+    if (e.key === "r") {
+      if (document.getElementById("related-aside")) {
+        e.preventDefault(); toggleRelated();
+      }
+      return;
+    }
+    if (e.key === "Enter" && selected()) { markOpened(); }
+  });
+
+  // -- /pins drag reorder (no library; HTML5 DnD) ---------------------
+  (function () {
+    var list = document.getElementById("pin-reorder");
+    if (!list) return;
+    var dragEl = null;
+    list.querySelectorAll("li").forEach(function (li) {
+      var h = li.querySelector(".drag-handle");
+      if (!h) return;
+      h.setAttribute("draggable", "true");
+      h.addEventListener("dragstart", function (ev) {
+        dragEl = li; li.classList.add("dragging");
+        ev.dataTransfer.effectAllowed = "move";
+      });
+      h.addEventListener("dragend", function () {
+        li.classList.remove("dragging");
+        if (!dragEl) return;
+        dragEl = null;
+        var ids = Array.prototype.map.call(
+          list.querySelectorAll("li"), function (x) { return x.getAttribute("data-pin-id"); });
+        var body = new URLSearchParams();
+        ids.forEach(function (id) { body.append("pin_id", id); });
+        fetch("/api/pins/reorder", { method: "POST", body: body });
+      });
+    });
+    list.addEventListener("dragover", function (ev) {
+      ev.preventDefault();
+      if (!dragEl) return;
+      var after = null;
+      list.querySelectorAll("li:not(.dragging)").forEach(function (li) {
+        var box = li.getBoundingClientRect();
+        if (ev.clientY > box.top + box.height / 2) after = li;
+      });
+      if (after && after.nextSibling !== dragEl) {
+        list.insertBefore(dragEl, after.nextSibling);
+      } else if (!after && list.firstElementChild !== dragEl) {
+        list.insertBefore(dragEl, list.firstElementChild);
+      }
+    });
+  })();
 })();

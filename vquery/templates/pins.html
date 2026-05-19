@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% block title %}pins{% endblock %}
+{% block content %}
+<p class="backlink"><a href="{{ url_for('index') }}">← search</a></p>
+<h1>Pins <span class="muted">{{ pins|length }}</span></h1>
+
+{% if not pins %}
+<p class="muted">Nothing pinned. Press <kbd>p</kbd> on any chunk or shortcut to pin it.</p>
+{% else %}
+<p class="muted">Drag the handle to reorder. Order is saved server-side and drives the home-page list.</p>
+<ul class="pin-list reorderable" id="pin-reorder">
+  {% for p in pins %}
+  <li data-pin-id="{{ p.pin_id }}">
+    <span class="drag-handle" title="Drag to reorder">⠿</span>
+    <a href="{{ p.url }}">{{ p.title }}</a>
+    <span class="badge tag">{{ p.target_type }}</span>
+    {% if not p.exists %}<span class="badge broken">BROKEN</span>{% endif %}
+    <form action="{{ url_for('api_pins_note') }}" method="post" class="pin-note-form">
+      <input type="hidden" name="pin_id" value="{{ p.pin_id }}">
+      <input type="text" name="note" value="{{ p.note or '' }}"
+             placeholder="note…" size="28">
+      <button type="submit">save</button>
+    </form>
+  </li>
+  {% endfor %}
+</ul>
+{% endif %}
+{% endblock %}

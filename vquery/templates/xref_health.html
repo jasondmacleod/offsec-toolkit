@@ -1,0 +1,59 @@
+{% extends "base.html" %}
+{% block title %}xref health{% endblock %}
+{% block content %}
+<p class="backlink"><a href="{{ url_for('index') }}">← search</a></p>
+<h1>Cross-reference health</h1>
+<p class="muted">Curator dashboard. Cross-references are authored on the exploitdb
+  side (<code>related_vquery</code> on each entry) and ingested here by
+  <code>./run.sh rebuild</code>. Seed: <code>{{ seed_dir }}</code></p>
+
+{% if h.status != 'ok' %}
+<div class="banner-bad">
+  exploitdb integration <strong>{{ h.status }}</strong> — run
+  <code>./run.sh rebuild</code> after exploitdb's seed is reachable.
+</div>
+{% endif %}
+
+<div class="stat-row">
+  <div class="stat"><span class="stat-n">{{ h.total_xrefs }}</span><span class="stat-l">cross-references</span></div>
+  <div class="stat"><span class="stat-n">{{ h.entries_covered }}</span><span class="stat-l">exploitdb entries covered</span></div>
+  <div class="stat"><span class="stat-n">{{ h.chunks_covered }} / {{ h.total_chunks }}</span><span class="stat-l">chunks with ≥1 xref</span></div>
+  <div class="stat{% if h.broken_chunks %} stat-bad{% endif %}"><span class="stat-n">{{ h.broken_chunks|length }}</span><span class="stat-l">broken chunk_ids</span></div>
+  <div class="stat{% if h.broken_slugs %} stat-bad{% endif %}"><span class="stat-n">{{ h.broken_slugs|length }}</span><span class="stat-l">broken exploitdb slugs</span></div>
+</div>
+<p class="muted">Ingested: {{ h.ingested_at or '—' }}</p>
+
+{% if h.broken_chunks %}
+<h2>Broken chunk references <span class="muted">({{ h.broken_chunks|length }})</span></h2>
+<p class="muted">These point at chunk_ids that don't exist in the current index.
+  Fix the <code>chunk_id</code> in the exploitdb entry, then rebuild.</p>
+<table class="gap-table">
+  <thead><tr><th>exploitdb slug</th><th>missing chunk_id</th><th>relevance</th><th>note</th></tr></thead>
+  <tbody>
+  {% for b in h.broken_chunks %}
+  <tr><td><a href="{{ exploitdb_base }}/entry/{{ b.exploitdb_slug }}" target="_blank" rel="noopener noreferrer"><code>{{ b.exploitdb_slug }}</code></a></td>
+      <td><code>{{ b.chunk_id }}</code></td><td>{{ b.relevance }}</td><td class="muted">{{ b.note or '' }}</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endif %}
+
+{% if h.broken_slugs %}
+<h2>Broken exploitdb slugs <span class="muted">({{ h.broken_slugs|length }})</span></h2>
+<p class="muted">xref points at an exploitdb slug not served by the corpus (removed
+  or banned). Re-author or remove the <code>related_vquery</code> item.</p>
+<table class="gap-table">
+  <thead><tr><th>missing slug</th><th>chunk_id</th><th>relevance</th><th>note</th></tr></thead>
+  <tbody>
+  {% for b in h.broken_slugs %}
+  <tr><td><code>{{ b.exploitdb_slug }}</code></td><td><code>{{ b.chunk_id }}</code></td>
+      <td>{{ b.relevance }}</td><td class="muted">{{ b.note or '' }}</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endif %}
+
+{% if not h.broken_chunks and not h.broken_slugs and h.status == 'ok' %}
+<p class="all-good">✓ No broken cross-references.</p>
+{% endif %}
+{% endblock %}

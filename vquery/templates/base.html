@@ -6,6 +6,7 @@
   <title>{% block title %}vquery{% endblock %} · vquery</title>
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
   <script src="{{ url_for('static', filename='app.js') }}" defer></script>
+  {% block head_extra %}{% endblock %}
 </head>
 <body>
 <header>
@@ -14,7 +15,10 @@
     <span class="muted">vault query engine · port 5051</span>
     <span class="spacer"></span>
     <a href="{{ url_for('shortcuts_index') }}">shortcuts</a>
-    <span class="muted kbd-hint"><kbd>/</kbd> search · <kbd>↑↓</kbd> move · <kbd>↵</kbd> expand · <kbd>Esc</kbd> clear · <kbd>o</kbd> source</span>
+    <a href="{{ url_for('pins_page') }}">pins</a>
+    <a href="{{ url_for('gaps') }}">gaps</a>
+    <a href="{{ url_for('xref_health') }}">xref</a>
+    <span class="muted kbd-hint"><kbd>/</kbd> search · <kbd>↑↓</kbd> move · <kbd>↵</kbd> expand · <kbd>Esc</kbd> clear · <kbd>o</kbd> source · <kbd>p</kbd> pin · <kbd>r</kbd> related</span>
   </nav>
 </header>
 <main>

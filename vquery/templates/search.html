@@ -2,6 +2,25 @@
 {% block title %}{{ q or "search" }}{% endblock %}
 {% block content %}
 
+{% if not q and pins %}
+<section class="pinned">
+  <h2>Pinned <span class="muted">{{ pins_total }}</span></h2>
+  <ul class="pin-list">
+    {% for p in pins %}
+    <li>
+      <a href="{{ p.url }}">{{ p.title }}</a>
+      <span class="badge tag">{{ p.target_type }}</span>
+      {% if not p.exists %}<span class="badge broken">BROKEN</span>{% endif %}
+      {% if p.note %}<span class="muted pin-note">— {{ p.note }}</span>{% endif %}
+    </li>
+    {% endfor %}
+  </ul>
+  {% if pins_total > pins|length %}
+  <p class="muted"><a href="{{ url_for('pins_page') }}">Show all {{ pins_total }} pins →</a></p>
+  {% endif %}
+</section>
+{% endif %}
+
 <form action="{{ url_for('search') }}" method="get" role="search" id="search-form">
   <input id="q" type="search" name="q" value="{{ q }}"
          placeholder="Search vault…" autocomplete="off" autofocus
@@ -13,7 +32,8 @@
      or browse <a href="{{ url_for('shortcuts_index') }}">all shortcuts</a>.</p>
 {% endif %}
 
-<ol class="results" id="results">
+<ol class="results" id="results"
+    {% if query_id %}data-query-id="{{ query_id }}"{% endif %}>
   {% for s in shortcuts %}
   <li class="result" tabindex="-1"
       data-href="{{ url_for('shortcut_view', slug=s.slug) }}"
@@ -47,10 +67,27 @@
     <div class="result-src">{{ c.display_path }}</div>
     {% if c.snippet %}<p class="snippet">{{ c.snippet }}</p>{% endif %}
     {% if c.tag_list %}<div class="tags">{% for t in c.tag_list %}<span class="badge tag">{{ t }}</span>{% endfor %}</div>{% endif %}
+    <div class="result-foot">
+      {% if query_id %}
+      <button type="button" class="didnt-help" data-chunk-id="{{ c.chunk_id }}"
+              title="Log this result as unhelpful for the query above">↓ didn't help</button>
+      {% endif %}
+    </div>
     <div class="expansion" hidden></div>
   </li>
   {% endfor %}
 </ol>
+
+{% if q and (is_hard_zero or shortcuts or chunks) and query_id %}
+<p class="gap-footer{% if not is_hard_zero %} gap-footer-quiet{% endif %}" id="gap-footer">
+  {% if is_hard_zero %}
+  This query didn't find anything useful. We've logged it —
+  {% else %}
+  Nothing here?
+  {% endif %}
+  view all gaps at <a href="{{ url_for('gaps') }}">/gaps</a>.
+</p>
+{% endif %}
 
 {% if not q %}
 <section class="popular">
@@ -61,7 +98,12 @@
         {% if s.tags %}<span class="muted">{{ s.tags.split()[0] }}</span>{% endif %}</li>
     {% endfor %}
   </ul>
-  <p class="muted"><a href="{{ url_for('shortcuts_index') }}">All shortcuts →</a></p>
+  <p class="muted">
+    <a href="{{ url_for('shortcuts_index') }}">All shortcuts →</a>
+    {% if gap_counts and gap_counts.active %}
+    · <a href="{{ url_for('gaps') }}">{{ gap_counts.active }} open gap{{ 's' if gap_counts.active != 1 else '' }} →</a>
+    {% endif %}
+  </p>
 </section>
 {% endif %}
 {% endblock %}
