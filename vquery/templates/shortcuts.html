@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+{% block title %}shortcuts{% endblock %}
+{% block content %}
+<p class="backlink"><a href="{{ url_for('index') }}">← search</a></p>
+<h1>Shortcuts <span class="muted">{{ total }} total{% if broken %} · <span class="badge broken">{{ broken }} BROKEN</span>{% endif %}</span></h1>
+
+{% for tag, rows in groups %}
+<section class="sc-group">
+  <h2>{{ tag }}</h2>
+  <table class="sc-table">
+    <thead><tr><th>Title</th><th>First trigger</th><th>Target</th><th>Source</th></tr></thead>
+    <tbody>
+    {% for s in rows %}
+    <tr{% if s.is_broken %} class="broken-row"{% endif %}>
+      <td><a href="{{ url_for('shortcut_view', slug=s.slug) }}">{{ s.title }}</a>
+          <code class="slug">{{ s.slug }}</code></td>
+      <td><code>{{ s.triggers[0] if s.triggers else '—' }}</code></td>
+      <td>
+        {% if s.answer_type == 'chunk_ref' %}
+          {% if s.is_broken %}<span class="badge broken">BROKEN</span>{% endif %}
+          <code>{{ s.target_chunk_id }}</code>
+        {% else %}<span class="muted">inline</span>
+          {% if s.inline_followup %}<code class="muted">→ {{ s.inline_followup }}</code>{% endif %}
+        {% endif %}
+      </td>
+      <td class="muted">{{ s.source_file }}</td>
+    </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endfor %}
+{% endblock %}

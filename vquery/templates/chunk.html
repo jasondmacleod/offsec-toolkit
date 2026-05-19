@@ -1,0 +1,72 @@
+{% extends "base.html" %}
+{% block title %}{{ title }}{% endblock %}
+{# Syntax highlighting is lazy: vendored Prism loads only on this
+   standalone chunk page, never on search/home (handoff). Untagged or
+   unknown-language fences carry no language- class, so Prism leaves them
+   plain — no guessing. #}
+{% block head_extra %}
+  <link rel="stylesheet" href="{{ url_for('static', filename='prism.css') }}">
+  <script src="{{ url_for('static', filename='prism.js') }}" defer></script>
+{% endblock %}
+{% block content %}
+<p class="backlink"><a href="{{ url_for('index') }}">← search</a></p>
+
+{% if inline_shortcut %}
+  {% set pin_type = 'shortcut' %}
+  {% set pin_id = inline_shortcut.slug %}
+{% else %}
+  {% set pin_type = 'chunk' %}
+  {% set pin_id = c.chunk_id %}
+{% endif %}
+
+<div class="chunk-controls">
+  <button type="button" id="pin-btn" class="pin-btn{% if pinned %} pinned{% endif %}"
+          data-target-type="{{ pin_type }}" data-target-id="{{ pin_id }}"
+          aria-pressed="{{ 'true' if pinned else 'false' }}"
+          title="Pin / unpin (p)">
+    <span class="pin-ico">{{ '★' if pinned else '☆' }}</span>
+    <span class="pin-label">{{ 'pinned' if pinned else 'pin' }}</span>
+  </button>
+  {% if not inline_shortcut %}
+  <button type="button" id="related-toggle" class="related-toggle"
+          title="Toggle related exploitdb sidebar (r)">related ▸</button>
+  {% endif %}
+</div>
+
+<div class="chunk-layout{% if inline_shortcut %} no-aside{% endif %}">
+  <div class="chunk-main">
+    {% if inline_shortcut %}
+      {% include "_inline.html" %}
+    {% else %}
+      {% include "_chunk.html" %}
+    {% endif %}
+  </div>
+
+  {% if not inline_shortcut %}
+  <aside class="chunk-aside" id="related-aside">
+    <h2 class="aside-title">Related in exploitdb</h2>
+    {% if xref_status != 'ok' %}
+      <p class="aside-empty">exploitdb integration unavailable —
+        <code>./run.sh rebuild</code> to retry.</p>
+    {% elif not xref_groups %}
+      <p class="aside-empty">No curated cross-references yet for this chunk.</p>
+    {% else %}
+      {% for g in xref_groups %}
+      <div class="xref-group">
+        <p class="xref-rel">{{ g.relevance | upper }} <span class="muted">({{ g['items']|length }})</span></p>
+        <ul>
+          {% for it in g['items'] %}
+          <li>
+            <a href="{{ exploitdb_base }}/entry/{{ it.exploitdb_slug }}"
+               target="_blank" rel="noopener noreferrer">→ {{ it.exploitdb_slug }}</a>
+            {% if it.note %}<span class="xref-note">{{ it.note }}</span>{% endif %}
+          </li>
+          {% endfor %}
+        </ul>
+      </div>
+      {% endfor %}
+    {% endif %}
+  </aside>
+  {% endif %}
+</div>
+{% endblock %}

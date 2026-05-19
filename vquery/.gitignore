@@ -1,0 +1,5 @@
+# Derived index — rebuilt from the vault + shortcut JSON. Never committed.
+data/vquery.sqlite
+.run/
+__pycache__/
+*.pyc

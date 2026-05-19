@@ -1,0 +1,70 @@
+{% extends "base.html" %}
+{% block title %}gaps{% endblock %}
+{% block content %}
+<p class="backlink"><a href="{{ url_for('index') }}">← search</a></p>
+<h1>Gaps <span class="muted">{{ active|length }} open</span></h1>
+<p class="muted">Queries that returned nothing useful. Author a shortcut or vault
+  content to fill them, then resolve the row so it leaves this list.</p>
+
+<p class="gap-sort">
+  sort:
+  <a href="{{ url_for('gaps', sort='count') }}" class="{{ 'on' if sort == 'count' }}">most common</a> ·
+  <a href="{{ url_for('gaps', sort='date') }}" class="{{ 'on' if sort == 'date' }}">most recent</a> ·
+  <a href="{{ url_for('gaps', sort='alpha') }}" class="{{ 'on' if sort == 'alpha' }}">A–Z</a>
+</p>
+
+{% if not active %}
+<p class="muted">No open gaps. Either the vault is answering everything or nothing's been searched yet.</p>
+{% endif %}
+
+<table class="gap-table">
+  <thead><tr><th>Query</th><th>×</th><th>Last seen</th><th>Signals</th><th>Resolve as</th></tr></thead>
+  <tbody>
+  {% for g in active %}
+  <tr>
+    <td>
+      <code>{{ g.query_text }}</code>
+      <a class="re-run muted" href="{{ url_for('search', q=g.query_text) }}" title="Re-run this search">↗</a>
+    </td>
+    <td>{{ g.occurrences }}</td>
+    <td class="muted">{{ g.last_seen.replace('T', ' ').rstrip('Z') }}</td>
+    <td>
+      {% for st in g.signal_types %}<span class="badge sig-{{ st }}">{{ st.replace('_', ' ') }}</span>{% endfor %}
+    </td>
+    <td>
+      <form action="{{ url_for('gaps_resolve', sort=sort) }}" method="post" class="resolve-form">
+        <input type="hidden" name="normalized_query" value="{{ g.normalized_query }}">
+        <select name="resolution_type" aria-label="resolution type">
+          {% for rt in resolution_types %}<option value="{{ rt }}">{{ rt.replace('_', ' ') }}</option>{% endfor %}
+        </select>
+        <input type="text" name="target_slug" placeholder="slug (optional)" size="14">
+        <input type="text" name="notes" placeholder="note (optional)" size="16">
+        <button type="submit">resolve</button>
+      </form>
+    </td>
+  </tr>
+  {% endfor %}
+  </tbody>
+</table>
+
+{% if resolved %}
+<details class="gap-history">
+  <summary>Resolved / skipped ({{ resolved|length }})</summary>
+  <table class="gap-table">
+    <thead><tr><th>Query</th><th>Resolution</th><th>Target</th><th>When</th><th>Note</th></tr></thead>
+    <tbody>
+    {% for r in resolved %}
+    <tr class="{{ 'wontfix-row' if r.resolution_type == 'wont_fix' }}">
+      <td><code>{{ r.normalized_query }}</code></td>
+      <td><span class="badge res-{{ r.resolution_type }}">{{ r.resolution_type.replace('_', ' ') }}</span></td>
+      <td>{% if r.target_slug %}<code>{{ r.target_slug }}</code>{% else %}<span class="muted">—</span>{% endif %}</td>
+      <td class="muted">{{ r.resolved_at.replace('T', ' ').rstrip('Z') }}</td>
+      <td class="muted">{{ r.notes or '' }}</td>
+    </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  <p class="muted">“noise” resolutions are hidden everywhere by design.</p>
+</details>
+{% endif %}
+{% endblock %}
