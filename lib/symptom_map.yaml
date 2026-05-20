@@ -1,0 +1,1485 @@
+# symptom_map.yaml — stuckr.sh symptom → action map
+#
+# Schema (per stuckr design spec §5):
+#   - symptom:        sentinel key (matches what enum scripts emit to sentinels.log)
+#     context:        one-line plain-English surface text (operator sees this)
+#     category:       lifecycle bucket — foothold | privesc | lateral | recon-extension
+#     actions:        2-4 ordered by author preference
+#       - slug:           must resolve in exploitdb corpus (gaps logged silently to symptom_map_gaps.md)
+#         match_strength: strong | moderate | weak
+#         requires:       precondition list (creds, foothold, domain-context, adjacent-host,
+#                         web-app, windows-host, linux-host, ad-context, smb-port, db-port)
+#
+# Authoring conventions:
+#   - Two or more actions per symptom; cap at four
+#   - First action is "if you have the easiest follow-on path, take this"
+#   - Substituted slugs (gap-fill) are invisible at output layer — see
+#     ~/scripts/exploitdb/data/seed/symptom_map_gaps.md for the substitution log
+#
+# Last updated: 2026-05-20
+#==============================================================================
+
+# ── smb-* ────────────────────────────────────────────────────────────────────
+- symptom: smb-no-anon
+  context: "SMB anonymous listing returned no shares"
+  category: foothold
+  actions:
+    - slug: ad-enum-nxc-smb-credentialed
+      match_strength: strong
+      requires: [creds]
+    - slug: re-smb-impacket-lookupsid-rid-brute
+      match_strength: strong
+      requires: []
+    - slug: ad-relay-ntlmrelayx-smb-to-smb
+      match_strength: moderate
+      requires: [adjacent-host]
+    - slug: re-smb-enum4linux-ng
+      match_strength: moderate
+      requires: []
+
+- symptom: smb-no-null-session
+  context: "SMB null session refused — modern Windows blocks this by default"
+  category: foothold
+  actions:
+    - slug: ad-enum-nxc-smb-credentialed
+      match_strength: strong
+      requires: [creds]
+    - slug: re-smb-impacket-lookupsid-rid-brute
+      match_strength: moderate
+      requires: []
+    - slug: ad-spray-nxc-smb
+      match_strength: moderate
+      requires: [creds]
+
+- symptom: smb-no-shares-authed
+  context: "Authed SMB share enum returned no readable non-default shares"
+  category: foothold
+  actions:
+    - slug: ad-enum-bloodhound-collection
+      match_strength: strong
+      requires: [creds, domain-context]
+    - slug: ad-enum-nxc-ldap-credentialed
+      match_strength: strong
+      requires: [creds, domain-context]
+    - slug: re-smb-smbmap-shares
+      match_strength: moderate
+      requires: [creds]
+    - slug: ad-spray-nxc-smb
+      match_strength: moderate
+      requires: [creds]
+
+- symptom: smb-no-rid-cycling
+  context: "SMB RID brute force returned no users"
+  category: foothold
+  actions:
+    - slug: ad-enum-kerbrute-userenum
+      match_strength: strong
+      requires: [domain-context]
+    - slug: ad-enum-nxc-ldap-credentialed
+      match_strength: moderate
+      requires: [creds, domain-context]
+    - slug: ad-relay-ntlmrelayx-smb-to-smb
+      match_strength: moderate
+      requires: [adjacent-host]
+
+- symptom: smb-no-relay-targets
+  context: "SMB signing required on every scanned host — no NTLM relay candidates"
+  category: lateral
+  actions:
+    - slug: ad-cve-petitpotam-2021-36942
+      match_strength: strong
+      requires: [ad-context]
+    - slug: ad-spray-kerbrute-passwordspray
+      match_strength: moderate
+      requires: [domain-context]
+    - slug: ad-loot-sysvol-gpp-passwords
+      match_strength: moderate
+      requires: [creds, domain-context]
+
+# ── web-* part 1 ─────────────────────────────────────────────────────────────
+- symptom: web-no-dirs
+  context: "Common-wordlist content fuzz returned nothing"
+  category: recon-extension
+  actions:
+    - slug: re-web-vhost-enumeration
+      match_strength: strong
+      requires: []
+    - slug: re-web-whatweb-and-wappalyzer-cli
+      match_strength: strong
+      requires: []
+    - slug: re-web-nikto-scan
+      match_strength: moderate
+      requires: []
+    - slug: re-dns-subdomain-enum
+      match_strength: moderate
+      requires: []
+
+- symptom: web-no-vhosts
+  context: "vhost enumeration returned no additional hosts"
+  category: recon-extension
+  actions:
+    - slug: re-dns-subdomain-enum
+      match_strength: strong
+      requires: []
+    - slug: re-web-whatweb-and-wappalyzer-cli
+      match_strength: moderate
+      requires: []
+    - slug: re-web-nikto-scan
+      match_strength: moderate
+      requires: []
+
+- symptom: web-no-params
+  context: "Parameter discovery (arjun/ffuf) returned no hidden parameters"
+  category: foothold
+  actions:
+    - slug: web-exposed-git-dumper
+      match_strength: strong
+      requires: []
+    - slug: web-exposed-env-file
+      match_strength: strong
+      requires: []
+    - slug: web-exposed-config-files
+      match_strength: moderate
+      requires: []
+    - slug: re-web-nikto-scan
+      match_strength: moderate
+      requires: []
+
+- symptom: web-default-creds-fail
+  context: "Default credentials against the login page were rejected"
+  category: foothold
+  actions:
+    - slug: ad-spray-from-creds-pipeline
+      match_strength: strong
+      requires: [creds]
+    - slug: web-exposed-env-file
+      match_strength: moderate
+      requires: []
+    - slug: web-exposed-git-dumper
+      match_strength: moderate
+      requires: []
+    - slug: re-web-whatweb-and-wappalyzer-cli
+      match_strength: moderate
+      requires: []
+
+- symptom: web-no-tech-fingerprint
+  context: "whatweb/wappalyzer returned nothing identifiable — site is generic"
+  category: recon-extension
+  actions:
+    - slug: re-web-nikto-scan
+      match_strength: strong
+      requires: []
+    - slug: web-exposed-git-dumper
+      match_strength: moderate
+      requires: []
+    - slug: re-web-vhost-enumeration
+      match_strength: moderate
+      requires: []
+    - slug: re-dns-subdomain-enum
+      match_strength: moderate
+      requires: []
+
+# ── web-* part 2 ─────────────────────────────────────────────────────────────
+- symptom: web-no-tls-names
+  context: "TLS SAN cert extraction returned no additional names"
+  category: recon-extension
+  actions:
+    - slug: re-web-vhost-enumeration
+      match_strength: strong
+      requires: []
+    - slug: re-dns-subdomain-enum
+      match_strength: strong
+      requires: []
+    - slug: re-nse-ssl-tls
+      match_strength: moderate
+      requires: []
+
+- symptom: web-no-js-endpoints
+  context: "JS endpoint extraction returned no internal URLs"
+  category: recon-extension
+  actions:
+    - slug: re-web-vhost-enumeration
+      match_strength: strong
+      requires: []
+    - slug: re-web-nikto-scan
+      match_strength: moderate
+      requires: []
+    - slug: web-exposed-git-dumper
+      match_strength: moderate
+      requires: []
+    - slug: re-nse-http-enum
+      match_strength: moderate
+      requires: []
+
+- symptom: web-no-js-secrets
+  context: "JS file grep returned no API keys, tokens, or hidden endpoints"
+  category: foothold
+  actions:
+    - slug: web-exposed-git-dumper
+      match_strength: strong
+      requires: []
+    - slug: web-exposed-env-file
+      match_strength: strong
+      requires: []
+    - slug: web-exposed-config-files
+      match_strength: moderate
+      requires: []
+    - slug: re-web-nikto-scan
+      match_strength: moderate
+      requires: []
+
+- symptom: web-no-robots-paths
+  context: "robots.txt empty or absent — no disallowed paths to investigate"
+  category: recon-extension
+  actions:
+    - slug: re-web-vhost-enumeration
+      match_strength: strong
+      requires: []
+    - slug: re-web-nikto-scan
+      match_strength: moderate
+      requires: []
+    - slug: web-exposed-git-dumper
+      match_strength: moderate
+      requires: []
+
+- symptom: web-no-source-leak
+  context: ".git / .env / .bak and sensitive-paths probes all empty"
+  category: foothold
+  actions:
+    - slug: web-lfi-basic-traversal
+      match_strength: strong
+      requires: []
+    - slug: web-pathtrav-download-endpoint
+      match_strength: moderate
+      requires: []
+    - slug: re-web-vhost-enumeration
+      match_strength: moderate
+      requires: []
+    - slug: web-cmdi-shell-metachar
+      match_strength: moderate
+      requires: []
+
+# ── web-* part 3 ─────────────────────────────────────────────────────────────
+- symptom: web-no-cms-detected
+  context: "No WordPress/Joomla/Drupal/Magento markers — site is hand-rolled or generic"
+  category: recon-extension
+  actions:
+    - slug: re-web-whatweb-and-wappalyzer-cli
+      match_strength: strong
+      requires: []
+    - slug: re-web-nikto-scan
+      match_strength: strong
+      requires: []
+    - slug: web-exposed-git-dumper
+      match_strength: moderate
+      requires: []
+    - slug: re-web-vhost-enumeration
+      match_strength: moderate
+      requires: []
+
+- symptom: web-no-sqli-suspects
+  context: "SQLi probe found no error signatures across tested params"
+  category: foothold
+  actions:
+    - slug: sqli-detect-boolean
+      match_strength: strong
+      requires: []
+    - slug: sqli-detect-time-based
+      match_strength: strong
+      requires: []
+    - slug: sqli-authbypass-classic
+      match_strength: moderate
+      requires: []
+    - slug: web-cmdi-shell-metachar
+      match_strength: moderate
+      requires: []
+
+# ── recon-* ──────────────────────────────────────────────────────────────────
+- symptom: recon-no-tcp-ports
+  context: "nmap + rustscan returned no open TCP ports — host may be filtered or down"
+  category: recon-extension
+  actions:
+    - slug: re-scan-nmap-udp-top
+      match_strength: strong
+      requires: []
+    - slug: re-discover-nmap-ping-sweep
+      match_strength: moderate
+      requires: []
+    - slug: re-scan-nmap-full-tcp
+      match_strength: moderate
+      requires: []
+
+- symptom: recon-no-udp-ports
+  context: "nmap UDP top-port scan returned no open UDP ports"
+  category: recon-extension
+  actions:
+    - slug: re-scan-nmap-version-default-scripts
+      match_strength: strong
+      requires: []
+    - slug: re-nse-discovery-broad
+      match_strength: moderate
+      requires: []
+
+# ── ftp-* / ssh-* ────────────────────────────────────────────────────────────
+- symptom: ftp-no-anon
+  context: "Anonymous FTP login refused"
+  category: foothold
+  actions:
+    - slug: re-ftp-banner-and-bounce
+      match_strength: strong
+      requires: []
+    - slug: ad-spray-from-creds-pipeline
+      match_strength: strong
+      requires: [creds]
+    - slug: re-nse-vuln-broad
+      match_strength: moderate
+      requires: []
+
+- symptom: ssh-no-userenum
+  context: "Pre-auth SSH user enum returned no usernames (CVE-2018-15473)"
+  category: foothold
+  actions:
+    - slug: ad-spray-from-creds-pipeline
+      match_strength: strong
+      requires: [creds]
+    - slug: re-ssh-banner-algo-enum
+      match_strength: moderate
+      requires: []
+    - slug: ad-spray-kerbrute-passwordspray
+      match_strength: weak
+      requires: [domain-context]
+
+# ── snmp-* / mysql-* / mssql-* / postgres-* ─────────────────────────────────
+- symptom: snmp-no-community
+  context: "SNMP community-string brute returned no valid community"
+  category: foothold
+  actions:
+    - slug: ph-wordlist-cewl-target-derived
+      match_strength: strong
+      requires: []
+    - slug: re-snmp-snmp-check
+      match_strength: moderate
+      requires: []
+    - slug: re-scan-nmap-udp-top
+      match_strength: moderate
+      requires: []
+
+- symptom: snmp-no-walk-data
+  context: "SNMP community accepted but walk returned no users/processes/network info"
+  category: recon-extension
+  actions:
+    - slug: re-snmp-snmpwalk-walk
+      match_strength: strong
+      requires: []
+    - slug: re-snmp-snmp-check
+      match_strength: moderate
+      requires: []
+
+- symptom: mysql-no-empty-root
+  context: "MySQL empty-password root login refused"
+  category: foothold
+  actions:
+    - slug: ad-spray-from-creds-pipeline
+      match_strength: strong
+      requires: [creds]
+    - slug: re-db-mysql-mariadb-enum
+      match_strength: moderate
+      requires: []
+    - slug: ph-wordlist-username-as-password
+      match_strength: moderate
+      requires: []
+
+- symptom: mysql-no-default-creds
+  context: "MySQL default-cred attempts (root, admin) all refused"
+  category: foothold
+  actions:
+    - slug: ad-spray-from-creds-pipeline
+      match_strength: strong
+      requires: [creds]
+    - slug: re-db-mysql-mariadb-enum
+      match_strength: moderate
+      requires: []
+    - slug: ph-wordlist-cewl-target-derived
+      match_strength: moderate
+      requires: []
+
+- symptom: mssql-no-default-creds
+  context: "MSSQL sa with common passwords refused"
+  category: foothold
+  actions:
+    - slug: ad-spray-from-creds-pipeline
+      match_strength: strong
+      requires: [creds]
+    - slug: re-db-mssql-impacket-mssqlclient-discover
+      match_strength: moderate
+      requires: []
+    - slug: ph-wordlist-username-as-password
+      match_strength: moderate
+      requires: []
+
+- symptom: postgres-no-default-creds
+  context: "PostgreSQL with common passwords (postgres/admin) refused"
+  category: foothold
+  actions:
+    - slug: ad-spray-from-creds-pipeline
+      match_strength: strong
+      requires: [creds]
+    - slug: re-db-postgres-enum
+      match_strength: moderate
+      requires: []
+    - slug: ph-wordlist-username-as-password
+      match_strength: moderate
+      requires: []
+
+- symptom: postgres-no-trust-auth
+  context: "PostgreSQL trust authentication not permitted from this host"
+  category: foothold
+  actions:
+    - slug: re-db-postgres-enum
+      match_strength: strong
+      requires: []
+    - slug: ad-spray-from-creds-pipeline
+      match_strength: moderate
+      requires: [creds]
+
+# ── dns-* / smtp-* / rpc-* / ldap-* / redis-* ───────────────────────────────
+- symptom: dns-no-zone-transfer
+  context: "AXFR zone transfer refused on all discovered domains"
+  category: recon-extension
+  actions:
+    - slug: re-dns-subdomain-enum
+      match_strength: strong
+      requires: []
+    - slug: re-dns-reverse-lookup-sweep
+      match_strength: moderate
+      requires: []
+    - slug: ad-enum-dns-zone-transfer
+      match_strength: moderate
+      requires: [domain-context]
+
+- symptom: dns-no-subdomains
+  context: "DNS subdomain brute returned no additional names"
+  category: recon-extension
+  actions:
+    - slug: re-web-vhost-enumeration
+      match_strength: strong
+      requires: [web-app]
+    - slug: re-dns-reverse-lookup-sweep
+      match_strength: moderate
+      requires: []
+    - slug: re-nse-ssl-tls
+      match_strength: moderate
+      requires: [web-app]
+
+- symptom: smtp-no-vrfy-users
+  context: "SMTP VRFY/EXPN/RCPT returned no valid users"
+  category: foothold
+  actions:
+    - slug: re-smtp-smtp-user-enum-tool
+      match_strength: strong
+      requires: []
+    - slug: ph-spray-prep-username-formats
+      match_strength: moderate
+      requires: []
+
+- symptom: smtp-no-open-relay
+  context: "SMTP relay test refused"
+  category: recon-extension
+  actions:
+    - slug: re-smtp-user-enum-vrfy-rcpt
+      match_strength: strong
+      requires: []
+    - slug: re-smtp-smtp-user-enum-tool
+      match_strength: moderate
+      requires: []
+
+- symptom: rpc-no-enum
+  context: "rpcclient / rpcinfo returned no usable output"
+  category: foothold
+  actions:
+    - slug: re-rpc-rpcdump-impacket
+      match_strength: strong
+      requires: []
+    - slug: re-smb-impacket-lookupsid-rid-brute
+      match_strength: moderate
+      requires: []
+    - slug: ad-enum-rpc-null-session
+      match_strength: moderate
+      requires: []
+
+- symptom: rpc-no-anon-shares
+  context: "rpcclient anonymous enumshares returned nothing"
+  category: foothold
+  actions:
+    - slug: re-smb-smbmap-shares
+      match_strength: strong
+      requires: [creds]
+    - slug: ad-enum-nxc-smb-credentialed
+      match_strength: strong
+      requires: [creds]
+    - slug: re-smb-enum4linux-ng
+      match_strength: moderate
+      requires: []
+
+- symptom: ldap-no-anon-bind
+  context: "LDAP anonymous bind refused"
+  category: foothold
+  actions:
+    - slug: ad-enum-nxc-ldap-credentialed
+      match_strength: strong
+      requires: [creds, domain-context]
+    - slug: re-ldap-nxc-enum-modules
+      match_strength: strong
+      requires: [creds]
+    - slug: re-ldap-bloodyad-msldap
+      match_strength: moderate
+      requires: [creds, domain-context]
+
+- symptom: ldap-no-naming-context
+  context: "LDAP anonymous bind worked but rootDSE returned no naming context"
+  category: foothold
+  actions:
+    - slug: ad-enum-nxc-ldap-credentialed
+      match_strength: strong
+      requires: [creds, domain-context]
+    - slug: ad-enum-windapsearch
+      match_strength: moderate
+      requires: [creds, domain-context]
+    - slug: re-ldap-nxc-enum-modules
+      match_strength: moderate
+      requires: [creds]
+
+- symptom: redis-no-noauth
+  context: "Redis requires AUTH — connection refused without credentials"
+  category: foothold
+  actions:
+    - slug: ad-spray-from-creds-pipeline
+      match_strength: strong
+      requires: [creds]
+    - slug: re-db-redis-enum-unauth
+      match_strength: moderate
+      requires: []
+    - slug: ph-wordlist-cewl-target-derived
+      match_strength: moderate
+      requires: []
+
+- symptom: redis-no-write
+  context: "Redis connected unauth but CONFIG SET denied (no SSH-key drop)"
+  category: foothold
+  actions:
+    - slug: re-db-redis-enum-unauth
+      match_strength: strong
+      requires: []
+    - slug: ad-spray-from-creds-pipeline
+      match_strength: moderate
+      requires: [creds]
+    - slug: ph-wordlist-cewl-target-derived
+      match_strength: moderate
+      requires: []
+
+# ── ad-* part 1 ──────────────────────────────────────────────────────────────
+- symptom: ad-no-users
+  context: "RID + LDAP + kerbrute all returned no users"
+  category: foothold
+  actions:
+    - slug: ad-spray-from-creds-pipeline
+      match_strength: strong
+      requires: [creds]
+    - slug: ad-poison-responder-default
+      match_strength: strong
+      requires: [adjacent-host]
+    - slug: ad-cve-zerologon-2020-1472
+      match_strength: moderate
+      requires: [domain-context]
+    - slug: ph-spray-prep-username-formats
+      match_strength: moderate
+      requires: []
+
+- symptom: ad-no-asreproast
+  context: "No AS-REP roastable accounts (DONT_REQ_PREAUTH not set)"
+  category: foothold
+  actions:
+    - slug: ad-roast-kerberoast
+      match_strength: strong
+      requires: [creds, domain-context]
+    - slug: ad-spray-kerbrute-passwordspray
+      match_strength: strong
+      requires: [domain-context]
+    - slug: ad-poison-responder-default
+      match_strength: moderate
+      requires: [adjacent-host]
+
+- symptom: ad-no-kerberoast
+  context: "No Kerberoastable SPNs"
+  category: foothold
+  actions:
+    - slug: ad-roast-asrep-roast
+      match_strength: strong
+      requires: [creds, domain-context]
+    - slug: ad-acl-genericwrite-user-spn
+      match_strength: moderate
+      requires: [creds, domain-context]
+    - slug: ad-roast-kerberoast-targeted
+      match_strength: moderate
+      requires: [creds, domain-context]
+
+- symptom: ad-no-spray-hits
+  context: "Cracked-password spray returned no valid credentials"
+  category: foothold
+  actions:
+    - slug: ad-roast-kerberoast
+      match_strength: strong
+      requires: [creds, domain-context]
+    - slug: ad-poison-responder-default
+      match_strength: moderate
+      requires: [adjacent-host]
+    - slug: ad-cve-zerologon-2020-1472
+      match_strength: moderate
+      requires: [domain-context]
+    - slug: ph-workflow-shadow-to-cleartext
+      match_strength: moderate
+      requires: [foothold]
+
+- symptom: ad-no-bloodhound-paths
+  context: "BloodHound collected but no path-to-DA from current principal"
+  category: lateral
+  actions:
+    - slug: ad-enum-bloodhound-canned-queries
+      match_strength: strong
+      requires: [creds, domain-context]
+    - slug: ad-enum-mark-compromised-owned
+      match_strength: strong
+      requires: [creds, domain-context]
+    - slug: ad-enum-bloodhound-custom-cypher-acl-chain
+      match_strength: moderate
+      requires: [creds, domain-context]
+    - slug: ad-spray-from-creds-pipeline
+      match_strength: moderate
+      requires: [creds]
+
+# ── ad-* part 2 ──────────────────────────────────────────────────────────────
+- symptom: ad-no-anon-ldap
+  context: "Anonymous LDAP bind refused"
+  category: foothold
+  actions:
+    - slug: ad-enum-kerbrute-userenum
+      match_strength: strong
+      requires: [domain-context]
+    - slug: ad-enum-nxc-ldap-credentialed
+      match_strength: strong
+      requires: [creds, domain-context]
+    - slug: re-smb-impacket-lookupsid-rid-brute
+      match_strength: moderate
+      requires: []
+
+- symptom: ad-no-domain-context
+  context: "Couldn't resolve domain / DC — no AD context established"
+  category: foothold
+  actions:
+    - slug: re-dns-reverse-lookup-sweep
+      match_strength: strong
+      requires: []
+    - slug: re-smb-enum4linux-ng
+      match_strength: strong
+      requires: []
+    - slug: ad-enum-adr-orchestrator
+      match_strength: moderate
+      requires: []
+
+- symptom: ad-no-laps
+  context: "LAPS not deployed or no readable attributes from current principal"
+  category: lateral
+  actions:
+    - slug: ad-enum-nxc-ldap-credentialed
+      match_strength: strong
+      requires: [creds, domain-context]
+    - slug: ad-loot-sysvol-gpp-passwords
+      match_strength: moderate
+      requires: [creds, domain-context]
+    - slug: ad-spray-from-creds-pipeline
+      match_strength: moderate
+      requires: [creds]
+
+- symptom: ad-no-gmsa-readable
+  context: "gMSA accounts exist but not readable by current principal"
+  category: lateral
+  actions:
+    - slug: ad-enum-bloodhound-collection
+      match_strength: strong
+      requires: [creds, domain-context]
+    - slug: ad-acl-genericall-user
+      match_strength: moderate
+      requires: [creds, domain-context]
+    - slug: ad-spray-from-creds-pipeline
+      match_strength: moderate
+      requires: [creds]
+
+- symptom: ad-no-delegation
+  context: "No unconstrained / constrained / RBCD delegation paths"
+  category: lateral
+  actions:
+    - slug: ad-enum-bloodhound-canned-queries
+      match_strength: strong
+      requires: [creds, domain-context]
+    - slug: ad-adcs-certipy-find
+      match_strength: strong
+      requires: [creds, domain-context]
+    - slug: ad-cve-zerologon-2020-1472
+      match_strength: moderate
+      requires: [domain-context]
+
+- symptom: ad-no-trusts
+  context: "No domain trusts (single-domain or trust enum blocked)"
+  category: lateral
+  actions:
+    - slug: ad-enum-bloodhound-canned-queries
+      match_strength: strong
+      requires: [creds, domain-context]
+    - slug: ad-trust-enum-domain-forest
+      match_strength: moderate
+      requires: [creds, domain-context]
+    - slug: ft-trust-enum-domain
+      match_strength: moderate
+      requires: [creds, domain-context]
+
+# ── ad-* part 3 ──────────────────────────────────────────────────────────────
+- symptom: ad-no-adcs-vuln
+  context: "certipy find -vulnerable returned no exploitable templates"
+  category: lateral
+  actions:
+    - slug: ad-adcs-certipy-find
+      match_strength: strong
+      requires: [creds, domain-context]
+    - slug: ad-deleg-find-delegation
+      match_strength: moderate
+      requires: [creds, domain-context]
+    - slug: ad-acl-writedacl-dcsync
+      match_strength: moderate
+      requires: [creds, domain-context]
+
+- symptom: ad-no-signing-off-hosts
+  context: "All scanned hosts have SMB signing required — no relay candidates"
+  category: lateral
+  actions:
+    - slug: ad-cve-petitpotam-2021-36942
+      match_strength: strong
+      requires: [ad-context]
+    - slug: ad-adcs-esc8-petitpotam-relay-to-web-enrollment
+      match_strength: strong
+      requires: [creds, domain-context]
+    - slug: ad-spray-kerbrute-passwordspray
+      match_strength: moderate
+      requires: [domain-context]
+
+- symptom: ad-no-gpp-creds
+  context: "SYSVOL Groups.xml scan found no cpassword entries"
+  category: foothold
+  actions:
+    - slug: ad-enum-bloodhound-collection
+      match_strength: strong
+      requires: [creds, domain-context]
+    - slug: ad-enum-user-description-creds
+      match_strength: moderate
+      requires: [creds, domain-context]
+    - slug: ad-spray-from-creds-pipeline
+      match_strength: moderate
+      requires: [creds]
+
+- symptom: ad-no-sessions
+  context: "Active-session enumeration returned no logged-in users"
+  category: lateral
+  actions:
+    - slug: ad-enum-bloodhound-collection
+      match_strength: strong
+      requires: [creds, domain-context]
+    - slug: ad-postexploit-secretsdump-remote
+      match_strength: moderate
+      requires: [creds]
+    - slug: ad-spray-nxc-smb
+      match_strength: moderate
+      requires: [creds]
+
+- symptom: ad-no-readable-shares
+  context: "Authed share enum returned no readable non-default shares"
+  category: foothold
+  actions:
+    - slug: ad-enum-bloodhound-collection
+      match_strength: strong
+      requires: [creds, domain-context]
+    - slug: ad-enum-nxc-ldap-credentialed
+      match_strength: moderate
+      requires: [creds, domain-context]
+    - slug: ad-roast-kerberoast
+      match_strength: moderate
+      requires: [creds, domain-context]
+
+- symptom: ad-no-cracked-passwords
+  context: "No cracked passwords in loot to spray with"
+  category: foothold
+  actions:
+    - slug: ad-roast-asrep-roast
+      match_strength: strong
+      requires: [creds, domain-context]
+    - slug: ad-roast-kerberoast
+      match_strength: strong
+      requires: [creds, domain-context]
+    - slug: ph-workflow-shadow-to-cleartext
+      match_strength: moderate
+      requires: [foothold]
+    - slug: ad-poison-responder-default
+      match_strength: moderate
+      requires: [adjacent-host]
+
+# ── linux-* loot ─────────────────────────────────────────────────────────────
+- symptom: linux-no-loot-flags
+  context: "lootr found no local.txt / proof.txt on this host"
+  category: privesc
+  actions:
+    - slug: lpe-linpeas-run
+      match_strength: strong
+      requires: [foothold, linux-host]
+    - slug: lpe-creds-shadow-readable
+      match_strength: moderate
+      requires: [foothold, linux-host]
+    - slug: lpe-suid-find
+      match_strength: moderate
+      requires: [foothold, linux-host]
+
+- symptom: linux-no-ssh-keys
+  context: "No id_rsa / authorized_keys found anywhere readable"
+  category: lateral
+  actions:
+    - slug: pel-ssh-config-known-hosts
+      match_strength: strong
+      requires: [foothold, linux-host]
+    - slug: lpe-creds-config-files
+      match_strength: strong
+      requires: [foothold, linux-host]
+    - slug: pel-ssh-agent-socket-hijack
+      match_strength: moderate
+      requires: [foothold, linux-host]
+
+- symptom: linux-no-shell-history
+  context: "bash / zsh / python history files empty or absent"
+  category: lateral
+  actions:
+    - slug: lpe-creds-config-files
+      match_strength: strong
+      requires: [foothold, linux-host]
+    - slug: pel-history-environment-files
+      match_strength: strong
+      requires: [foothold, linux-host]
+    - slug: pel-history-mysql-postgres-client
+      match_strength: moderate
+      requires: [foothold, linux-host]
+
+- symptom: linux-no-config-secrets
+  context: "Config-file password-grep returned no creds"
+  category: lateral
+  actions:
+    - slug: lpe-creds-ssh-keys
+      match_strength: strong
+      requires: [foothold, linux-host]
+    - slug: pel-config-database-server
+      match_strength: moderate
+      requires: [foothold, linux-host]
+    - slug: lpe-creds-db-localhost
+      match_strength: moderate
+      requires: [foothold, linux-host]
+    - slug: lpe-creds-process-args
+      match_strength: moderate
+      requires: [foothold, linux-host]
+
+- symptom: linux-no-home-creds
+  context: "Homedir credential files (.aws, .docker, .git-credentials) absent"
+  category: lateral
+  actions:
+    - slug: pel-dev-git-credentials
+      match_strength: strong
+      requires: [foothold, linux-host]
+    - slug: pel-cloud-aws-azure-gcp-cli
+      match_strength: moderate
+      requires: [foothold, linux-host]
+    - slug: pel-browser-firefox-logins
+      match_strength: moderate
+      requires: [foothold, linux-host]
+    - slug: lpe-creds-history-files
+      match_strength: moderate
+      requires: [foothold, linux-host]
+
+- symptom: linux-no-nm-psk
+  context: "NetworkManager wifi PSKs absent or unreadable"
+  category: lateral
+  actions:
+    - slug: pel-config-database-server
+      match_strength: moderate
+      requires: [foothold, linux-host]
+    - slug: pel-dev-git-credentials
+      match_strength: moderate
+      requires: [foothold, linux-host]
+    - slug: lpe-creds-config-files
+      match_strength: moderate
+      requires: [foothold, linux-host]
+
+- symptom: linux-no-kerberos-ccache
+  context: "No .ccache or .keytab files found"
+  category: lateral
+  actions:
+    - slug: pel-ssh-config-known-hosts
+      match_strength: strong
+      requires: [foothold, linux-host]
+    - slug: lpe-creds-config-files
+      match_strength: moderate
+      requires: [foothold, linux-host]
+    - slug: pel-history-environment-files
+      match_strength: moderate
+      requires: [foothold, linux-host]
+
+- symptom: linux-no-internal-listeners
+  context: "No 127.x bound services — no tunneling / internal targets visible"
+  category: lateral
+  actions:
+    - slug: ft-pivot-ligolo-setup
+      match_strength: strong
+      requires: [foothold, linux-host, adjacent-host]
+    - slug: lpe-misc-internal-services
+      match_strength: moderate
+      requires: [foothold, linux-host]
+    - slug: re-discover-nmap-ping-sweep
+      match_strength: moderate
+      requires: [foothold, linux-host]
+
+# ── linux-* privesc part 1 ───────────────────────────────────────────────────
+- symptom: linux-no-sudo
+  context: "sudo -l empty or no NOPASSWD entries"
+  category: privesc
+  actions:
+    - slug: lpe-suid-find
+      match_strength: strong
+      requires: [foothold, linux-host]
+    - slug: lpe-cron-list-jobs
+      match_strength: strong
+      requires: [foothold, linux-host]
+    - slug: lpe-capabilities-getcap
+      match_strength: moderate
+      requires: [foothold, linux-host]
+    - slug: lpe-creds-ssh-keys
+      match_strength: moderate
+      requires: [foothold, linux-host]
+
+- symptom: linux-no-suid
+  context: "No non-standard SUID binaries found"
+  category: privesc
+  actions:
+    - slug: lpe-cron-list-jobs
+      match_strength: strong
+      requires: [foothold, linux-host]
+    - slug: lpe-capabilities-getcap
+      match_strength: strong
+      requires: [foothold, linux-host]
+    - slug: lpe-sudo-l-read
+      match_strength: moderate
+      requires: [foothold, linux-host]
+    - slug: lpe-kernel-les-suggester
+      match_strength: moderate
+      requires: [foothold, linux-host]
+
+- symptom: linux-no-cron
+  context: "No writable / exploitable cron jobs or timers"
+  category: privesc
+  actions:
+    - slug: lpe-pspy-cron-discovery
+      match_strength: strong
+      requires: [foothold, linux-host]
+    - slug: lpe-service-writable-systemd
+      match_strength: strong
+      requires: [foothold, linux-host]
+    - slug: lpe-service-writable-binary
+      match_strength: moderate
+      requires: [foothold, linux-host]
+
+- symptom: linux-no-kernel-exploit
+  context: "Kernel up-to-date or no known public PE"
+  category: privesc
+  actions:
+    - slug: lpe-creds-shadow-readable
+      match_strength: strong
+      requires: [foothold, linux-host]
+    - slug: lpe-suid-find
+      match_strength: moderate
+      requires: [foothold, linux-host]
+    - slug: lpe-capabilities-getcap
+      match_strength: moderate
+      requires: [foothold, linux-host]
+    - slug: lpe-misc-internal-services
+      match_strength: moderate
+      requires: [foothold, linux-host]
+
+- symptom: linux-no-capabilities
+  context: "No exploitable file capabilities (cap_setuid, cap_dac, etc.)"
+  category: privesc
+  actions:
+    - slug: lpe-suid-find
+      match_strength: strong
+      requires: [foothold, linux-host]
+    - slug: lpe-group-docker-lxd
+      match_strength: strong
+      requires: [foothold, linux-host]
+    - slug: lpe-cron-list-jobs
+      match_strength: moderate
+      requires: [foothold, linux-host]
+
+# ── linux-* privesc part 2 ───────────────────────────────────────────────────
+- symptom: linux-no-writable-criticals
+  context: "/etc/passwd, /etc/shadow, /etc/sudoers not writable"
+  category: privesc
+  actions:
+    - slug: lpe-creds-shadow-readable
+      match_strength: strong
+      requires: [foothold, linux-host]
+    - slug: lpe-service-writable-binary
+      match_strength: moderate
+      requires: [foothold, linux-host]
+    - slug: lpe-service-writable-systemd
+      match_strength: moderate
+      requires: [foothold, linux-host]
+
+- symptom: linux-no-nfs-exploit
+  context: "No NFS exports or no_root_squash configurations"
+  category: privesc
+  actions:
+    - slug: lpe-cron-list-jobs
+      match_strength: strong
+      requires: [foothold, linux-host]
+    - slug: lpe-suid-find
+      match_strength: strong
+      requires: [foothold, linux-host]
+    - slug: lpe-misc-internal-services
+      match_strength: moderate
+      requires: [foothold, linux-host]
+
+- symptom: linux-no-docker-group
+  context: "Current user not in docker / lxd / disk / adm groups"
+  category: privesc
+  actions:
+    - slug: lpe-socket-docker-sock
+      match_strength: strong
+      requires: [foothold, linux-host]
+    - slug: lpe-creds-process-args
+      match_strength: moderate
+      requires: [foothold, linux-host]
+    - slug: lpe-cron-list-jobs
+      match_strength: moderate
+      requires: [foothold, linux-host]
+
+- symptom: linux-no-ld-preload
+  context: "No env_keep+=LD_PRELOAD and no writable RPATH .so"
+  category: privesc
+  actions:
+    - slug: lpe-sudo-gtfobins
+      match_strength: strong
+      requires: [foothold, linux-host]
+    - slug: lpe-suid-find
+      match_strength: strong
+      requires: [foothold, linux-host]
+    - slug: lpe-misc-suid-rpath
+      match_strength: moderate
+      requires: [foothold, linux-host]
+
+- symptom: linux-no-pwnkit
+  context: "pkexec / polkit patched or absent (CVE-2021-4034 blocked)"
+  category: privesc
+  actions:
+    - slug: lpe-kernel-les-suggester
+      match_strength: strong
+      requires: [foothold, linux-host]
+    - slug: lpe-misc-polkit-elevation
+      match_strength: moderate
+      requires: [foothold, linux-host]
+    - slug: lpe-sudo-version-old
+      match_strength: moderate
+      requires: [foothold, linux-host]
+
+# ── windows-* privesc part 1 ─────────────────────────────────────────────────
+- symptom: windows-no-services
+  context: "No modifiable / writable services found"
+  category: privesc
+  actions:
+    - slug: wpe-token-seimpersonate-overview
+      match_strength: strong
+      requires: [foothold, windows-host]
+    - slug: wpe-task-writable-action-binary
+      match_strength: strong
+      requires: [foothold, windows-host]
+    - slug: wpe-service-unquoted-path
+      match_strength: moderate
+      requires: [foothold, windows-host]
+    - slug: wpe-dll-hijack-path-writable
+      match_strength: moderate
+      requires: [foothold, windows-host]
+
+- symptom: windows-no-tokens
+  context: "No SeImpersonate / SeBackup / SeDebug / SeRestore privileges"
+  category: privesc
+  actions:
+    - slug: wpe-token-fullpowers
+      match_strength: strong
+      requires: [foothold, windows-host]
+    - slug: wpe-service-modifiable-binary
+      match_strength: strong
+      requires: [foothold, windows-host]
+    - slug: wpe-task-writable-action-binary
+      match_strength: moderate
+      requires: [foothold, windows-host]
+    - slug: wpe-creds-cmdkey
+      match_strength: moderate
+      requires: [foothold, windows-host]
+
+- symptom: windows-no-unquoted
+  context: "No unquoted service paths with writable intermediate directory"
+  category: privesc
+  actions:
+    - slug: wpe-service-modifiable-binary
+      match_strength: strong
+      requires: [foothold, windows-host]
+    - slug: wpe-service-modifiable-binpath
+      match_strength: strong
+      requires: [foothold, windows-host]
+    - slug: wpe-task-writable-action-binary
+      match_strength: moderate
+      requires: [foothold, windows-host]
+    - slug: wpe-dll-hijack-application
+      match_strength: moderate
+      requires: [foothold, windows-host]
+
+- symptom: windows-no-alwaysinstallelevated
+  context: "AlwaysInstallElevated registry keys absent or only HKLM set"
+  category: privesc
+  actions:
+    - slug: wpe-token-seimpersonate-overview
+      match_strength: strong
+      requires: [foothold, windows-host]
+    - slug: wpe-task-writable-action-binary
+      match_strength: moderate
+      requires: [foothold, windows-host]
+    - slug: wpe-cve-printnightmare
+      match_strength: moderate
+      requires: [foothold, windows-host]
+
+- symptom: windows-no-stored-creds
+  context: "cmdkey /list empty"
+  category: lateral
+  actions:
+    - slug: wpe-creds-files-broad-search
+      match_strength: strong
+      requires: [foothold, windows-host]
+    - slug: wpe-creds-unattend
+      match_strength: strong
+      requires: [foothold, windows-host]
+    - slug: pel-win-credential-manager
+      match_strength: moderate
+      requires: [foothold, windows-host]
+    - slug: wpe-creds-registry-apps
+      match_strength: moderate
+      requires: [foothold, windows-host]
+
+- symptom: windows-no-autologon-creds
+  context: "Registry has no DefaultPassword / AutoAdminLogon"
+  category: lateral
+  actions:
+    - slug: wpe-creds-unattend
+      match_strength: strong
+      requires: [foothold, windows-host]
+    - slug: wpe-creds-registry-apps
+      match_strength: strong
+      requires: [foothold, windows-host]
+    - slug: wpe-creds-pshistory
+      match_strength: moderate
+      requires: [foothold, windows-host]
+
+# ── windows-* privesc part 2 + windows-* loot ────────────────────────────────
+- symptom: windows-no-gpp-cpassword
+  context: "Groups.xml / Services.xml / Scheduled Tasks.xml clean"
+  category: privesc
+  actions:
+    - slug: wpe-creds-cmdkey
+      match_strength: strong
+      requires: [foothold, windows-host]
+    - slug: wpe-creds-unattend
+      match_strength: strong
+      requires: [foothold, windows-host]
+    - slug: wpe-token-seimpersonate-overview
+      match_strength: moderate
+      requires: [foothold, windows-host]
+
+- symptom: windows-no-dll-hijack
+  context: "No writable PATH dirs and no NAME NOT FOUND DLL loads"
+  category: privesc
+  actions:
+    - slug: wpe-service-modifiable-binary
+      match_strength: strong
+      requires: [foothold, windows-host]
+    - slug: wpe-task-writable-action-binary
+      match_strength: strong
+      requires: [foothold, windows-host]
+    - slug: wpe-token-seimpersonate-overview
+      match_strength: moderate
+      requires: [foothold, windows-host]
+
+- symptom: windows-no-scheduled-tasks
+  context: "No non-Microsoft scheduled tasks with operator-writable binaries"
+  category: privesc
+  actions:
+    - slug: wpe-service-modifiable-binary
+      match_strength: strong
+      requires: [foothold, windows-host]
+    - slug: wpe-token-seimpersonate-overview
+      match_strength: strong
+      requires: [foothold, windows-host]
+    - slug: wpe-msi-alwaysinstallelevated
+      match_strength: moderate
+      requires: [foothold, windows-host]
+
+- symptom: windows-no-creds-in-files
+  context: "Unattend / sysprep / password=... search empty"
+  category: lateral
+  actions:
+    - slug: wpe-creds-pshistory
+      match_strength: strong
+      requires: [foothold, windows-host]
+    - slug: wpe-creds-registry-apps
+      match_strength: strong
+      requires: [foothold, windows-host]
+    - slug: pel-win-credential-manager
+      match_strength: moderate
+      requires: [foothold, windows-host]
+    - slug: wpe-creds-files-broad-search
+      match_strength: moderate
+      requires: [foothold, windows-host]
+
+- symptom: windows-no-ps-history-secrets
+  context: "PSReadline / ConsoleHost_history empty or clean"
+  category: lateral
+  actions:
+    - slug: wpe-creds-files-broad-search
+      match_strength: strong
+      requires: [foothold, windows-host]
+    - slug: pel-history-powershell-windows
+      match_strength: moderate
+      requires: [foothold, windows-host]
+    - slug: wpe-creds-cmdkey
+      match_strength: moderate
+      requires: [foothold, windows-host]
+
+- symptom: windows-no-internal-listeners
+  context: "No 127.x bound services — no tunneling targets visible"
+  category: lateral
+  actions:
+    - slug: ft-pivot-ligolo-setup
+      match_strength: strong
+      requires: [foothold, windows-host, adjacent-host]
+    - slug: wpe-misc-internal-listeners
+      match_strength: strong
+      requires: [foothold, windows-host]
+    - slug: re-discover-nmap-ping-sweep
+      match_strength: moderate
+      requires: [foothold]
+
+- symptom: windows-no-loot-flags
+  context: "lootr.ps1 found no local.txt / proof.txt on this host"
+  category: privesc
+  actions:
+    - slug: wpe-enum-winpeas
+      match_strength: strong
+      requires: [foothold, windows-host]
+    - slug: wpe-enum-powerup
+      match_strength: strong
+      requires: [foothold, windows-host]
+    - slug: wpe-enum-accesschk
+      match_strength: moderate
+      requires: [foothold, windows-host]
+
+- symptom: windows-no-browser-creds
+  context: "Chrome / Edge / Firefox saved-password stores empty or unreadable"
+  category: lateral
+  actions:
+    - slug: pel-browser-firefox-logins
+      match_strength: strong
+      requires: [foothold, windows-host]
+    - slug: pel-browser-history-cookies
+      match_strength: moderate
+      requires: [foothold, windows-host]
+    - slug: pel-win-dpapi-masterkeys
+      match_strength: moderate
+      requires: [foothold, windows-host]
+
+- symptom: windows-no-config-secrets
+  context: "Config-file password grep returned nothing"
+  category: lateral
+  actions:
+    - slug: wpe-creds-unattend
+      match_strength: strong
+      requires: [foothold, windows-host]
+    - slug: wpe-creds-files-broad-search
+      match_strength: strong
+      requires: [foothold, windows-host]
+    - slug: pel-config-web-app-secrets
+      match_strength: moderate
+      requires: [foothold, windows-host]
+
+- symptom: windows-no-rdp-creds
+  context: "No saved RDP credentials in registry"
+  category: lateral
+  actions:
+    - slug: wpe-creds-registry-apps
+      match_strength: strong
+      requires: [foothold, windows-host]
+    - slug: pel-win-credential-manager
+      match_strength: strong
+      requires: [foothold, windows-host]
+    - slug: pel-misc-vpn-rdp-saved-configs
+      match_strength: moderate
+      requires: [foothold, windows-host]
+
+- symptom: windows-no-putty-keys
+  context: "No PuTTY sessions / saved keys in registry"
+  category: lateral
+  actions:
+    - slug: wpe-creds-registry-apps
+      match_strength: strong
+      requires: [foothold, windows-host]
+    - slug: pel-misc-vpn-rdp-saved-configs
+      match_strength: moderate
+      requires: [foothold, windows-host]
+    - slug: wpe-creds-files-broad-search
+      match_strength: moderate
+      requires: [foothold, windows-host]
+
+# ── cred-* ───────────────────────────────────────────────────────────────────
+- symptom: cred-spray-exhausted
+  context: "Full sprayr sweep of known users × passes returned no valid combo"
+  category: foothold
+  actions:
+    - slug: ph-workflow-asreproast-to-cleartext
+      match_strength: strong
+      requires: [domain-context]
+    - slug: ph-workflow-kerberoast-to-cleartext
+      match_strength: strong
+      requires: [creds, domain-context]
+    - slug: ad-poison-responder-default
+      match_strength: moderate
+      requires: [adjacent-host]
+    - slug: ph-wordlist-cewl-target-derived
+      match_strength: moderate
+      requires: []
+
+- symptom: cred-no-spray-targets
+  context: "sprayr invoked but no live SMB / WinRM / SSH / etc. targets"
+  category: foothold
+  actions:
+    - slug: re-discover-nmap-ping-sweep
+      match_strength: strong
+      requires: []
+    - slug: re-scan-nmap-full-tcp
+      match_strength: strong
+      requires: []
+    - slug: re-discover-nmap-arp-scan
+      match_strength: moderate
+      requires: [adjacent-host]
+
+- symptom: cred-no-userlist
+  context: "sprayr invoked but no userlist available"
+  category: foothold
+  actions:
+    - slug: ad-enum-kerbrute-userenum
+      match_strength: strong
+      requires: [domain-context]
+    - slug: re-smb-impacket-lookupsid-rid-brute
+      match_strength: strong
+      requires: [smb-port]
+    - slug: ad-enum-ldap-anonymous-bind
+      match_strength: moderate
+      requires: []
+    - slug: ph-spray-prep-username-formats
+      match_strength: moderate
+      requires: []
+
+- symptom: cred-no-passlist
+  context: "sprayr invoked but no password candidates"
+  category: foothold
+  actions:
+    - slug: ph-wordlist-rockyou-and-seclists
+      match_strength: strong
+      requires: []
+    - slug: ph-wordlist-cewl-target-derived
+      match_strength: strong
+      requires: []
+    - slug: ph-wordlist-season-year-mutations
+      match_strength: moderate
+      requires: []
+    - slug: ph-wordlist-username-as-password
+      match_strength: moderate
+      requires: []
+
+- symptom: cred-crack-exhausted
+  context: "crackr wordlist + rules exhausted, no plaintext recovered"
+  category: foothold
+  actions:
+    - slug: ph-hashcat-mask-attack
+      match_strength: strong
+      requires: []
+    - slug: ph-hashcat-rules-rockyou-best64
+      match_strength: strong
+      requires: []
+    - slug: ph-wordlist-cewl-target-derived
+      match_strength: moderate
+      requires: []
+    - slug: ph-hashcat-known-plaintext-pattern
+      match_strength: moderate
+      requires: []
+
+- symptom: cred-no-hashes-input
+  context: "crackr invoked but no hashes / file provided"
+  category: foothold
+  actions:
+    - slug: ad-roast-asrep-roast
+      match_strength: strong
+      requires: [creds, domain-context]
+    - slug: ad-roast-kerberoast
+      match_strength: strong
+      requires: [creds, domain-context]
+    - slug: ad-poison-responder-default
+      match_strength: moderate
+      requires: [adjacent-host]
+    - slug: lpe-creds-shadow-readable
+      match_strength: moderate
+      requires: [foothold]
+
+- symptom: cred-hash-format-unknown
+  context: "hashid could not identify the hash format"
+  category: foothold
+  actions:
+    - slug: ph-hashid-name-that-hash
+      match_strength: strong
+      requires: []
+    - slug: ph-hashcat-attack-modes-reference
+      match_strength: moderate
+      requires: []
+    - slug: ph-john-format-selection
+      match_strength: moderate
+      requires: []
+
+- symptom: cred-crack-timeout
+  context: "Crack job hit timeout before exhausting wordlist"
+  category: foothold
+  actions:
+    - slug: ph-hashcat-stop-resume
+      match_strength: strong
+      requires: []
+    - slug: ph-hashcat-perf-vm-vs-host
+      match_strength: strong
+      requires: []
+    - slug: ph-hashcat-mask-attack
+      match_strength: moderate
+      requires: []
+
