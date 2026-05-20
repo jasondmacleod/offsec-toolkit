@@ -264,3 +264,130 @@ state_list_targets() {
     [[ -d "$root" ]] || return 0
     find "$root" -mindepth 1 -maxdepth 1 -type d -printf '%f\n' 2>/dev/null | sort
 }
+
+#------------------------------------------------------------------------------
+# WRITE API (targetcheckr.sh additions per its design spec §5)
+#
+# Three append-only writers. Each is idempotent on the dimensions named in
+# the spec. Atomic on POSIX append for the line sizes we emit (well under
+# PIPE_BUF, typically <200 bytes).
+#
+# Source-of-truth conventions (env-overridable, defaults sane for the only
+# current caller, targetcheckr.sh):
+#   STATE_WRITE_SOURCE   tool name embedded as the foothold log's 4th field
+#                        (default: targetcheckr)
+#   STATE_WRITE_PROTO    proto column for creds.txt (default: exploit)
+#   STATE_WRITE_HOST     host column for creds.txt (default: -)
+#   STATE_WRITE_NOTE     note column for creds.txt (default: via-targetcheckr)
+#------------------------------------------------------------------------------
+
+# state_write_foothold <ip> <user> <method>
+# Append a foothold event to targets/<ip>/state/foothold.log.
+# Line format: <ISO timestamp> <user> <method> <source-tool>
+# Idempotent at READ time (reader collapses by (user, method)); the writer
+# always appends so the file serves as an audit trail.
+state_write_foothold() {
+    local ip="$1" user="$2" method="$3"
+    [[ -n "$ip" && -n "$user" && -n "$method" ]] || {
+        echo "state_write_foothold: usage: state_write_foothold <ip> <user> <method>" >&2
+        return 2
+    }
+    local src="${STATE_WRITE_SOURCE:-targetcheckr}"
+    local td; td=$(_state_target_dir "$ip")
+    local logf="$td/state/foothold.log"
+    mkdir -p "$td/state" || return 1
+    printf '%s %s %s %s\n' \
+        "$(date -u +%Y-%m-%dT%H:%M:%S)" "$user" "$method" "$src" >> "$logf"
+}
+
+# state_append_cred <user-pass-or-hash>
+#
+# AUTHORITATIVE CONTRACT (locked 2026-05-20, supersedes targetcheckr spec §5
+# placeholder `creds/creds.txt`):
+#   path     = $TOOLKIT_ROOT/creds.txt          (NOT $TOOLKIT_ROOT/creds/creds.txt)
+#   schema   = TIMESTAMP | PROTO | HOST | USER | CRED | NOTE   (6 fields, pipe-separated)
+#   dedupe   = (USER, CRED) tuple across the entire file (timestamps always differ)
+#   readers  = sprayr.sh::parse_creds_file (awk -F'|', fields 4/5/6)
+#   writers  = adr / sprayr / crackr / startr / targetcheckr
+# Future tools (watchdog / livefetch / proofr) MUST use this function rather
+# than rolling their own append — the schema, padding, and dedupe rule are
+# co-evolved across the toolkit; bypassing the API breaks `sprayr --from-creds`.
+#
+# Append a credential to $TOOLKIT_ROOT/creds.txt. The single positional arg is
+# `user:cred`, `domain/user:cred`, or any variant whose first `:` separates
+# the user side from the cred side. Returns 0 on append, 0 (silent) on
+# dedupe-skip, 2 on malformed input.
+state_append_cred() {
+    local raw="$1"
+    [[ -n "$raw" ]] || {
+        echo "state_append_cred: usage: state_append_cred <user-pass-or-hash>" >&2
+        return 2
+    }
+    if [[ "$raw" != *:* ]] || [[ "$raw" == :* ]]; then
+        echo "state_append_cred: malformed cred (expected user:cred): $raw" >&2
+        return 2
+    fi
+    local user="${raw%%:*}"
+    local cred="${raw#*:}"
+    [[ -n "$user" && -n "$cred" ]] || {
+        echo "state_append_cred: malformed cred (empty user or cred): $raw" >&2
+        return 2
+    }
+
+    local creds_file="${TOOLKIT_ROOT}/creds.txt"
+    mkdir -p "$(dirname "$creds_file")" 2>/dev/null || return 1
+
+    # Dedupe by (user, cred) tuple — same parse used by sprayr's
+    # parse_creds_file. Whitespace-trim both sides before compare.
+    if [[ -f "$creds_file" ]]; then
+        if awk -F'|' -v u="$user" -v c="$cred" '
+            NF >= 6 {
+                fu = $4; gsub(/^[[:space:]]+|[[:space:]]+$/, "", fu)
+                fc = $5; gsub(/^[[:space:]]+|[[:space:]]+$/, "", fc)
+                if (fu == u && fc == c) { found = 1; exit }
+            }
+            END { exit (found ? 0 : 1) }
+        ' "$creds_file" 2>/dev/null; then
+            return 0  # silent dedupe-skip
+        fi
+    fi
+
+    local proto="${STATE_WRITE_PROTO:-exploit}"
+    local host="${STATE_WRITE_HOST:--}"
+    local note="${STATE_WRITE_NOTE:-via-targetcheckr}"
+    printf '%s | %-8s | %-15s | %-20s | %s | %s\n' \
+        "$(date '+%Y-%m-%d %H:%M:%S')" "$proto" "$host" "$user" "$cred" "$note" \
+        >> "$creds_file"
+}
+
+# state_write_event <ip> <key>
+# Append a success-side event to targets/<ip>/state/sentinels.log. Same file
+# as state_emit_empty; different key namespace (positive: `success-…`).
+# Dedupe: skip if the same (ip, key) appears within the last 60 seconds.
+state_write_event() {
+    local ip="$1" key="$2"
+    [[ -n "$ip" && -n "$key" ]] || {
+        echo "state_write_event: usage: state_write_event <ip> <key>" >&2
+        return 2
+    }
+    local td; td=$(_state_target_dir "$ip")
+    local logf="$td/state/sentinels.log"
+    mkdir -p "$td/state" || return 1
+
+    # 60-second (ip, key) window — secondary dedupe per targetcheckr §8.
+    # date -d on an ISO-8601 'Z' (UTC) timestamp returns the correct epoch.
+    if [[ -f "$logf" ]]; then
+        local now_ep; now_ep=$(date -u +%s)
+        local recent
+        recent=$(awk -v k="$key" '$2 == k { print $1 }' "$logf" | tail -1)
+        if [[ -n "$recent" ]]; then
+            local then_ep
+            then_ep=$(date -u -d "${recent}Z" +%s 2>/dev/null || echo 0)
+            if [[ "$then_ep" -gt 0 ]] && (( now_ep - then_ep < 60 )); then
+                return 0  # silent dedupe-skip
+            fi
+        fi
+    fi
+
+    printf '%s %s\n' "$(date -u +%Y-%m-%dT%H:%M:%S)" "$key" >> "$logf"
+}

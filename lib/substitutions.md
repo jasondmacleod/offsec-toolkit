@@ -142,6 +142,17 @@ TARGET_TOKEN_RE = re.compile(r'\bTARGET(?:_IP)?\b')
 
 # Matches the KALI side — used to ASSERT NON-MATCH on these.
 KALI_IP_RE = re.compile(r'\b10\.10\.14\.\d+\b')
+
+# Matches the corpus-example AD domain literal (placeholder #2).
+DOMAIN_LITERAL_RE = re.compile(r'\bcorp\.local\b|<DOMAIN>')
+
+# Matches the corpus-example username literal (placeholder #4).
+USER_LITERAL_RE = re.compile(r'\bjdoe\b|<USER(?:NAME)?>')
+
+# Matches the corpus-example single-quoted password literal (placeholder #5).
+# Quotes are part of the match — preserving them on substitution is the
+# whole point (see §5 above).
+PASS_LITERAL_RE = re.compile(r"'Password1'|<PASS(?:WORD)?>")
 ```
 
 Any new consumer of this table must reuse these regexes verbatim. Forking
