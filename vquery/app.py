@@ -301,6 +301,10 @@ WIKILINK_RE = re.compile(r"\[\[([^\]]+)\]\]")
 CALLOUT_RE = re.compile(
     r"<blockquote>\s*<p>\[!(?P<type>[A-Za-z]+)\]\s*(?P<title>[^\n<]*)",
 )
+# Python-markdown's `tables` extension splits cells on unescaped `|` but
+# leaves `\|` inside code spans literally — operator-facing copy of
+# `Get-DomainUser \| select foo` should show a real pipe.
+CODE_PIPE_RE = re.compile(r"(<code[^>]*>)([^<]*)(</code>)")
 
 
 def _resolve_wikilink(raw: str, cur_doc: str, bidx: dict[str, list[str]]) -> str:
@@ -341,6 +345,10 @@ def render_markdown(text: str, cur_doc: str = "") -> str:
     pre = WIKILINK_RE.sub(
         lambda m: _resolve_wikilink(m.group(1), cur_doc, bidx), text or "")
     html = md.markdown(pre, extensions=["fenced_code", "tables", "sane_lists"])
+    html = CODE_PIPE_RE.sub(
+        lambda m: m.group(1) + m.group(2).replace(r"\|", "|") + m.group(3),
+        html,
+    )
 
     def _callout(m: re.Match) -> str:
         t = m.group("type").lower()

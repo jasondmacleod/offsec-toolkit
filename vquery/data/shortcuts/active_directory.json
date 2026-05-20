@@ -196,5 +196,15 @@
     "target_chunk_id": "Checklists/Active_Directory_Checklist_Methodology.md#7-6-gmsa",
     "tags": "ad gmsa credentials",
     "priority": 170
+  },
+  {
+    "slug": "powerview-domain-trust",
+    "triggers": ["get-domaintrust", "domain trust", "domain trusts", "enum domain trust", "get-netdomaintrust", "powerview trust"],
+    "title": "PowerView — enumerate domain trusts",
+    "answer_type": "inline",
+    "inline_answer": "```powershell\nGet-DomainTrust            # PowerView v3 / PowerSploit dev (what the cheatsheet uses)\nGet-NetDomainTrust         # PowerView v2 / PowerSploit master (legacy alias — same output)\n```\n\nNo PowerView loaded? `nltest /domain_trusts` runs from any domain-joined host, no module needed.\n\n> [!note] PowerView's `Get-Net*` and `Get-Domain*` names refer to the same cmdlets in different branches — pick whichever your loaded module exposes.",
+    "inline_followup": "_CHEATSHEETS/Active_Directory.md#1-enumeration",
+    "tags": "ad powerview enumeration",
+    "priority": 180
   }
 ]
