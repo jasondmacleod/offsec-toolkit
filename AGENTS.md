@@ -303,11 +303,12 @@ Kickoff prompts under `exploitdb/` (see `APP_BUILD_BRIEF.md`, prior handoff mess
 Run these before committing script changes:
 
 ```bash
-bash -n recon.sh webenum.sh crackr.sh sprayr.sh adr.sh escalatr.sh lootr.sh pivotr.sh servr.sh startr.sh workflow.sh tools_setup.sh evidencr.sh stuckr.sh exploitfixr.sh
-shellcheck recon.sh webenum.sh crackr.sh sprayr.sh adr.sh escalatr.sh lootr.sh pivotr.sh servr.sh startr.sh workflow.sh tools_setup.sh evidencr.sh stuckr.sh exploitfixr.sh
+bash -n recon.sh webenum.sh crackr.sh sprayr.sh adr.sh escalatr.sh lootr.sh pivotr.sh servr.sh startr.sh workflow.sh tools_setup.sh evidencr.sh stuckr.sh exploitfixr.sh targetcheckr.sh
+shellcheck recon.sh webenum.sh crackr.sh sprayr.sh adr.sh escalatr.sh lootr.sh pivotr.sh servr.sh startr.sh workflow.sh tools_setup.sh evidencr.sh stuckr.sh exploitfixr.sh targetcheckr.sh
 pwsh -NoProfile -Command '$errs=$null; $null=[System.Management.Automation.PSParser]::Tokenize((Get-Content -Raw ./lootr.ps1), [ref]$errs); if ($errs) { $errs | Format-List; exit 1 }'
 tests/test_state.sh
 tests/test_exploitfixr_smoke.sh
+tests/test_targetcheckr_demo.sh
 ```
 
 Also validate relevant help/argument behavior when touching parsers:
