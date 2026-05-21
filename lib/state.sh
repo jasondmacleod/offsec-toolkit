@@ -391,3 +391,41 @@ state_write_event() {
 
     printf '%s %s\n' "$(date -u +%Y-%m-%dT%H:%M:%S)" "$key" >> "$logf"
 }
+
+#------------------------------------------------------------------------------
+# READ API — watchdog.sh additions
+#
+# Two tabular readers (tab-separated rows, NOT key=value — these emit lists of
+# tuples, so the per-row scalar form of state_read_target doesn't fit). Both are
+# read-only and missing-file-safe. First consumer: watchdog.sh.
+#------------------------------------------------------------------------------
+
+# state_read_footholds <ip>
+# Emit one tab-separated row per foothold.log line for <ip>:
+#   <ip>\t<iso_ts>\t<user>\t<method>\t<source-tool>
+# foothold.log line schema (state_write_foothold): "<ISO> <user> <method> <src>"
+# — 4 space-separated fields, single tokens, no PID. Audit-trail order preserved
+# (oldest first); the reader does NOT collapse duplicates (caller groups by ip).
+# Missing/unreadable file → no output, return 0.
+state_read_footholds() {
+    local ip="$1"
+    [[ -n "$ip" ]] || { echo "state_read_footholds: missing ip" >&2; return 2; }
+    local td; td=$(_state_target_dir "$ip")
+    local logf="$td/state/foothold.log"
+    [[ -r "$logf" ]] || return 0
+    awk -v ip="$ip" 'NF >= 4 { printf "%s\t%s\t%s\t%s\t%s\n", ip, $1, $2, $3, $4 }' "$logf"
+}
+
+# state_read_pivots
+# Emit the pivot state vector from $TOOLKIT_ROOT/pivots/state.tsv verbatim:
+#   <kind>\t<value>\t<extra>     kind ∈ {process, tun, route, tunnel}
+# Written by pivotr.sh (record_state / register_bg); this is a read-only mirror
+# — pivotr's own get_state_entries() is untouched. The canonical tunnel record
+# per mode is the LAST matching line (consumers apply tail -1). `process` PIDs
+# may be stale after an unclean pivotr exit — consumers verify against live ps.
+# Missing/unreadable file → no output, return 0.
+state_read_pivots() {
+    local pf="${TOOLKIT_ROOT}/pivots/state.tsv"
+    [[ -r "$pf" ]] || return 0
+    awk -F'\t' 'NF >= 2 { print }' "$pf"
+}
