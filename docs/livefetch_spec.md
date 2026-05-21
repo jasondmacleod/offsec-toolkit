@@ -111,15 +111,26 @@ Sentinel keys (§8): **DELTA**=`success-livefetch-delta-detected`,
 **SVC**=`…-new-services-found`, **USR**=`…-new-users-found`,
 **EXP**=`…-new-exploits-found`.
 
+**Rider stages** (marked `RIDER` in the tables: `tcp-vulnmatch`, `recon-summary`,
+`web-summary`, `ad-summary`). A rider has **no own marker** and **no independent
+staleness/`--since` trigger** — it cannot be selected on its own. When its
+*primary* stage re-runs, the wrapped script regenerates the rider's artifacts in
+the same pass, so livefetch diffs the rider against the **primary stage's
+snapshot** (same `old_root`/`new_root`) and emits the rider's own keys. Riders
+are **deduped per run** (`<ip>:<stage>`) so a rider that hangs off multiple
+primaries (e.g. `recon-summary`) is diffed and reported once per target per run.
+This is a natural extension of the recognition-reference frame: riders are
+recognized by what regenerates them, never triggered by a marker of their own.
+
 ### 5.1 Recon scan tier — `recon/<ip>/`, re-run via `recon.sh --auto <ip> [--outdir DIR]`
 
 | # | Stage (marker) | Artifact → diff target | Noise filters | Meaningful delta → key |
 |---|---|---|---|---|
 | 1 | tcp-discovery (`rustscan` ⚠fallback) | `scans/tcp_ports.txt` (CSV) | none (sort CSV); port-flap absorbed by 60s dedupe | new port→**SVC**; dropped port→**DELTA** |
 | 2 | tcp-services (`nmap_tcp`) | `scans/nmap_tcp.nmap`(`.xml`) | strip `# Nmap …initiated/done`, latency value, `\|_clock-skew:` | new/changed svc·version, new NSE finding, state change→**SVC**/**DELTA** |
-| 3 | tcp-vulnmatch (*rides nmap_tcp*) | `loot/{searchsploit_hits,vulners_hits}.txt` | strip searchsploit local Path col | new CVE/EDB→**EXP** |
+| 3 | tcp-vulnmatch (**RIDER** ◦ primary: `tcp-services`) | `loot/{searchsploit_hits,vulners_hits}.txt` | strip searchsploit local Path col | new CVE/EDB→**EXP** |
 | 4 | udp-scan (`nmap_udp`) | `scans/udp_ports.txt`, `nmap_udp.nmap` | nmap comment/latency; suppress `open\|filtered` churn | new definitive UDP open→**SVC** |
-| 5 | recon-summary (*regenerated*) | `summary.txt`, `loot/{quick_wins,next_steps}.txt` | strip `# Started`/`[ts]` prefixes; line-set diff | new quick-win·next-step→**DELTA** |
+| 5 | recon-summary (**RIDER** ◦ primary: any recon stage) | `summary.txt`, `loot/{quick_wins,next_steps}.txt` | strip `# Started`/`[ts]` prefixes; line-set diff | new quick-win·next-step→**DELTA** |
 
 - Stage 4 needs root (`recon.sh` NOTES); non-root → report "skipped, needs sudo", no empty diff.
 - Stage 3/5 have no own marker — regenerated when stage 2 (resp. any stage) re-runs.
@@ -149,7 +160,7 @@ artifacts exist + domain known (→ `--vhost <domain>`). A recon HTTP port with 
 | 14 | web-vhosts (`vhosts`, `--vhost`) | `content/ffuf_vhosts.json` → vhost list | ffuf json noise | new vhost→**SVC** |
 | 15 | web-params (`params`, `--deep`) | `params/` | ffuf | new parameter·endpoint→**DELTA** |
 | 16 | web-sqli_probe (`sqli_probe`) ⚠path | flagged-suspect list (`DONE` detail `probed=N suspects=M`) | ⚠ (per resolved path) | new injection-suspect→**DELTA** (heuristic, not catalog → not EXP) |
-| 17 | web-summary (*regenerated*) | `loot/next_steps.txt`, `summary/quick_wins.txt` | strip `# Quick Wins — <ts>`, `# Generated:` | new next-step·quick-win→**DELTA** |
+| 17 | web-summary (**RIDER** ◦ primary: any web stage) | `loot/next_steps.txt`, `summary/quick_wins.txt` | strip `# Quick Wins — <ts>`, `# Generated:` | new next-step·quick-win→**DELTA** |
 
 ### 5.4 adr tier — `ad/<DOMAIN>/` (`adr.sh:2180`), re-run via `adr.sh -d <domain> -u <user> {-p <pass>|-H <hash>} -dc <dc_ip> [--outdir DIR]`
 
@@ -175,7 +186,7 @@ crack/spray — livefetch surfaces the count, performs no cred-write (§9).
 | 26 | phase7_shares | `shares/{all_shares,sysvol_interesting}.txt` | none | new readable/writable share→**SVC**; SYSVOL interesting file→**DELTA** |
 | 27 | phase8_sessions | `sessions/{loggedon_users,smb_sessions}.txt` | sessions volatile → 60s dedupe absorbs flaps | new (priv) logged-on user→**DELTA** |
 | 28 | phase9_spray_cracked | `hashes/cracked_passwords.txt`, valid-auth results | none | new cracked pass·valid user→host→**DELTA** (adr appends cred; livefetch surfaces count) |
-| 29 | ad-summary (*regenerated*) | `attack_commands.txt`/`next_steps.txt`, `summary_notes.txt` | strip `CLOCK_SKEW=`; `attack_commands` already dedup'd (`adr.sh:299`) | new attack cmd·`ADMIN_ON_DC=YES`→**DELTA** |
+| 29 | ad-summary (**RIDER** ◦ primary: any adr stage) | `attack_commands.txt`/`next_steps.txt`, `summary_notes.txt` | strip `CLOCK_SKEW=`; `attack_commands` already dedup'd (`adr.sh:299`) | new attack cmd·`ADMIN_ON_DC=YES`→**DELTA** |
 
 ### 5.5 from-foothold tier — `recon/<ip>/from-foothold/` (new dir, additive)
 
