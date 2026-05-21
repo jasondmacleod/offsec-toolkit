@@ -49,7 +49,7 @@ actual on-disk output.
 | `web_vhost` × N | `targets/<ip>/web/vhosts.txt` | `web/<host>_<port>_<proto>/artifacts/vhosts/hosts_entries.txt` (if present) | extract field 2 (hostname) from `/etc/hosts`-format lines, dedupe |
 | `smb_share` × N | `targets/<ip>/recon/smb.txt` | `recon/<ip>/tcp/smb/{smbclient_list,netexec_shares,smbmap_null,smbmap_guest}.txt` | smbclient → copy verbatim (reader branch-1 parses its tab table); netexec + smbmap → normalize to bare tokens — **see §2.1.** Verbatim concat of nxc/smbmap does NOT work: `_state_parse_smb_shares` (`state.sh:143-153`) matches only smbclient-table rows and bare tokens, so raw netexec/smbmap rows are silently dropped by the reader |
 | `ad_user` × N | `targets/<ip>/ad/users.txt` | `ad/<DOMAIN>/users/all_users.txt` | **copy verbatim.** Phase 0 (⚠5) falsified the earlier "raw rpcclient append" assumption: `adr.sh:778` already parses rpcclient output to bare names (`grep -oP 'user:\[\K[^\]]+'`) before appending, and `adr.sh:785` does `sort -u`, so `all_users.txt` is bare-usernames-only. No rpcclient-stripping awk needed (also avoids a gawk-only 3-arg `match()` dependency) |
-| `ad_computer` × N | `targets/<ip>/ad/computers.txt` | `ad/<DOMAIN>/computers/nxc_computers.txt` (preferred) or `all_computers.txt` | extract bare hostnames, dedupe |
+| `ad_computer` × N | `targets/<ip>/ad/computers.txt` | `ad/<DOMAIN>/computers/nxc_computers.txt` (preferred) or `all_computers.txt` | prefer nxc — raw `nxc smb --computers` (`adr.sh:1182`, no `--computers-export` exists; same `SMB ip port HOST <msg>` prefix as shares). Machine accounts are `$5` ending in `$`: `awk '/^SMB[[:space:]]/ && $5 ~ /\$$/ { sub(/\$$/,"",$5); print $5 }'` → bare hostnames (Phase 0 ⚠6-verified: DC01/WS01/FILE01, no `SMB`/`[*]` leak). Fallback `all_computers.txt`: LDAP `dNSHostName:` values + rpcclient `user:[NAME$]` tokens, strip trailing `$`. dedupe |
 | `foothold` | `targets/<ip>/evidence/local.txt` | — | **orient does not write.** Populated by post-foothold tools |
 | `privesc` | `targets/<ip>/evidence/proof.txt` | — | **orient does not write.** Populated by post-privesc tools |
 | `sentinel` | `targets/<ip>/state/sentinels.log` | — | **orient does not write.** Decision-tool surface |
@@ -272,11 +272,13 @@ live `lib/state.sh`; results below.
   lines; the live `adr.sh:778` already strips them (`grep -oP 'user:\[\K[^\]]+'`)
   before append + `sort -u`. `all_users.txt` is bare-usernames-only → ad_user is
   copy-verbatim, no awk (see §2 ad_user row).
-- **⚠6 — RESIDUAL (defer to code phase).** `ad_computer` from
-  `nxc_computers.txt`/`all_computers.txt`: no AD engagement on the test box, so the
-  nxc computers-export format is unverified. Confirm the bare-hostname extractor
-  against a real file or `nxc --computers` doc before locking it; until then treat
-  it as the one un-ground-truthed transform.
+- **⚠6 — RESOLVED (Phase 0 follow-up).** `nxc_computers.txt` is raw
+  `nxc smb --computers` (no `--computers-export`; `adr.sh:1182-1183`) — the same
+  prefix as the shares output, so naive first-token / unguarded `$5` extraction
+  would emit `SMB` or the header rows. Extractor keys on the machine-account `$`
+  suffix (`$5 ~ /\$$/`, strip `$`) → verified DC01/WS01/FILE01 from real-format
+  input, no `[*]` banner leak. Fallback `all_computers.txt` (LDAP `dNSHostName:`
+  + rpcclient `user:[NAME$]`, `adr.sh:1190-1224`) handled by a secondary extractor.
 
 ---
 
@@ -291,8 +293,9 @@ Same pattern as builds 1–6:
    doesn't match what this spec assumed.
 2. Write `orient.sh` (single file, no `lib/orient_normalize.py`). Transforms are
    awk-scale: SMB column extraction (netexec guarded + smbmap), vhost field-2
-   extraction, AD computer hostname extraction (⚠6). `ad_user` and the smbclient
-   table are copy-verbatim. No classifier logic; no Python sidecar warranted.
+   extraction, AD computer extraction (nxc `$`-suffix keyed, LDAP/rpcclient
+   fallback). `ad_user` and the smbclient table are copy-verbatim. No classifier
+   logic; no Python sidecar warranted.
 3. Write `tests/test_orient_demo.sh` with synthetic fixtures under a temp
    `TOOLKIT_ROOT`, exercising each row of §2's mapping table (including ⚠4 and ⚠5).
    Assertion model mirrors `test_targetcheckr` / `test_watchdog` / `test_livefetch`.
