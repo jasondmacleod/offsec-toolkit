@@ -85,9 +85,10 @@ EOF
 #------------------------------------------------------------------------------
 # Global state — credentials, domain, dc_ip (for C's preconditions)
 #------------------------------------------------------------------------------
-mkdir -p "$TMP/creds" "$TMP/ad"
-cat > "$TMP/creds/creds.txt" <<'EOF'
-jdoe:Summer2026!
+# Authoritative creds.txt (6-field pipe schema), read back as cred=USER:CRED.
+mkdir -p "$TMP/ad"
+cat > "$TMP/creds.txt" <<'EOF'
+2026-05-20 16:00:00 | exploit | - | jdoe | Summer2026! | via-targetcheckr
 EOF
 echo "corp.local" > "$TMP/ad/domain.txt"
 echo "10.10.11.5" > "$TMP/ad/dc.txt"

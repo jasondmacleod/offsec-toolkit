@@ -118,12 +118,19 @@ OS details: Windows Server 2019
 EOF
 
 # --- Global state ---
-mkdir -p "$TMP/creds" "$TMP/ad"
-cat > "$TMP/creds/creds.txt" <<'EOF'
-# format: user:pass or :hash
-jdoe:Summer2026!
-admin:Welcome1
-:aad3b435b51404eeaad3b435b51404ee:31d6cfe0d16ae931b73c59d7e0c089c0
+# creds.txt is the authoritative 6-field pipe schema written by
+# state_append_cred (TIMESTAMP|PROTO|HOST|USER|CRED|NOTE), read back as
+# cred=USER:CRED — NOT the legacy creds/creds.txt path. Includes a duplicate
+# (different timestamp) for the dedupe path, a colon-bearing NT hash, and a
+# malformed line that must be skipped (NF<6).
+mkdir -p "$TMP/ad"
+cat > "$TMP/creds.txt" <<'EOF'
+# TIMESTAMP | PROTO | HOST | USER | CRED | NOTE
+2026-05-20 16:00:00 | exploit  | -               | jdoe                 | Summer2026! | via-targetcheckr
+2026-05-20 16:01:00 | crackr   | 10.10.11.42     | admin                | Welcome1 | cracked
+2026-05-20 16:02:00 | adr      | DC01            | svc_backup           | aad3b435b51404eeaad3b435b51404ee:31d6cfe0d16ae931b73c59d7e0c089c0 | nthash
+2026-05-20 16:03:00 | exploit  | -               | jdoe                 | Summer2026! | dup-different-timestamp
+this line is malformed and must be skipped
 EOF
 echo "corp.local" > "$TMP/ad/domain.txt"
 echo "10.10.11.10" > "$TMP/ad/dc.txt"
@@ -132,6 +139,7 @@ echo "10.10.11.10" > "$TMP/ad/dc.txt"
 # Run tests
 #------------------------------------------------------------------------------
 
+# shellcheck disable=SC1090
 source "$LIB"
 
 bar() { printf '\n==== %s ====\n' "$*"; }
@@ -158,4 +166,26 @@ cat "$TMP/targets/$T1/state/sentinels.log"
 echo "-- state_read_target sentinel lines after emit:"
 state_read_target $T1 | grep ^sentinel=
 
+#------------------------------------------------------------------------------
+# Assertions — state_read_global creds reader (authoritative creds.txt schema)
+#------------------------------------------------------------------------------
+bar "ASSERT state_read_global creds reader (USER:CRED, dedupe, skip malformed)"
+APASS=0; AFAIL=0
+ck() { if [[ "$2" == "$3" ]]; then printf '  [PASS] %s\n' "$1"; APASS=$((APASS+1));
+       else printf '  [FAIL] %s (got %s want %s)\n' "$1" "$2" "$3"; AFAIL=$((AFAIL+1)); fi; }
+
+G=$(state_read_global)
+ck "cred jdoe:Summer2026!"  "$(grep -cxF 'cred=jdoe:Summer2026!' <<<"$G")" 1   # also proves dedupe
+ck "cred admin:Welcome1"    "$(grep -cxF 'cred=admin:Welcome1' <<<"$G")" 1
+ck "cred colon-bearing hash" \
+   "$(grep -cxF 'cred=svc_backup:aad3b435b51404eeaad3b435b51404ee:31d6cfe0d16ae931b73c59d7e0c089c0' <<<"$G")" 1
+ck "malformed line skipped"  "$(grep -c 'malformed' <<<"$G")" 0
+ck "no whole-line leak (no pipes in cred=)" "$(grep -c '^cred=.*|' <<<"$G")" 0
+ck "domain=corp.local"       "$(grep -cxF 'domain=corp.local' <<<"$G")" 1
+ck "dc_ip=10.10.11.10"       "$(grep -cxF 'dc_ip=10.10.11.10' <<<"$G")" 1
+
+printf '  --- creds assertions: PASS=%d FAIL=%d ---\n' "$APASS" "$AFAIL"
+
 bar "DONE  (mock root $TMP — cleaned on exit)"
+[[ $AFAIL -eq 0 ]] || exit 1
+exit 0

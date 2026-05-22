@@ -227,13 +227,26 @@ state_read_target() {
 # state_read_global
 state_read_global() {
     local gd; gd=$(_state_global_dir)
-    local creds_f="$gd/creds/creds.txt"
+    local creds_f="$gd/creds.txt"
     local dom_f="$gd/ad/domain.txt"
     local dc_f="$gd/ad/dc.txt"
 
-    _state_parse_lines "$creds_f" | while IFS= read -r p; do
-        [[ -n "$p" ]] && echo "cred=$p"
-    done
+    # creds.txt is the authoritative 6-field pipe schema written by
+    # state_append_cred (TIMESTAMP|PROTO|HOST|USER|CRED|NOTE; see :307-308) —
+    # NOT the legacy $gd/creds/creds.txt path. Mirror sprayr.sh::parse_creds_file
+    # (sprayr.sh:1040-1050): take USER (field 4) and CRED (field 5), trim padding,
+    # emit USER:CRED, dedupe, skip malformed (NF<6 or empty). CRED is taken
+    # verbatim so colon-bearing secrets (NTLM user:HASH:HASH:HASH) round-trip as
+    # the documented cred= shape (:32).
+    if [[ -r "$creds_f" ]]; then
+        awk -F'|' '
+            NF >= 6 {
+                u = $4; gsub(/^[[:space:]]+|[[:space:]]+$/, "", u)
+                c = $5; gsub(/^[[:space:]]+|[[:space:]]+$/, "", c)
+                if (u != "" && c != "" && !seen[u":"c]++) print "cred=" u ":" c
+            }
+        ' "$creds_f"
+    fi
 
     if [[ -r "$dom_f" ]]; then
         local d; d=$(_state_parse_lines "$dom_f" | head -1)
