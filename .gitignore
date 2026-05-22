@@ -11,3 +11,4 @@ spaces/
 *.csv
 .claude/settings.local.json
 /.obsidian/
+lib/__pycache__/
