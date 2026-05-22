@@ -421,8 +421,8 @@ refetch_ad() {
         [[ -d "$d" ]] || continue
         domain="${d%/}"; domain="${domain##*/}"; root="${d%/}"; plog="$root/progress.log"
         # cred from the authoritative creds.txt (6-field pipe; USER/CRED = fields
-        # 4/5, the sprayr reader contract, state.sh:312). NB: state_read_global
-        # reads the legacy creds/creds.txt path — we use the locked one.
+        # 4/5, the sprayr reader contract, state.sh:312). state_read_global reads
+        # the same locked creds.txt since build 8; we read it directly here.
         cred=$(awk -F'|' 'NF>=6 {u=$4;c=$5;gsub(/^ +| +$/,"",u);gsub(/^ +| +$/,"",c);
                                  if(u!=""&&c!=""){print u":"c; exit}}' \
                "$TOOLKIT_ROOT/creds.txt" 2>/dev/null)
