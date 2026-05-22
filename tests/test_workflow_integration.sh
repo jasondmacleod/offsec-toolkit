@@ -378,6 +378,11 @@ absent "S3e no false symptom match on livefetch key"         "$OUT" 'success-liv
 # state_read_target DOES surface them as sentinel= lines (shared namespace, by design)
 has "S3e success-* visible to state reader (shared sentinels.log)" \
     "$(srt "$R" "$IP")" 'sentinel=success-shell-spawned'
+# F-1 regression: positive-event sentinels must NOT suppress the service-only
+# fallback label. stuckr_rank gates on matched SYMPTOM sentinels, not raw count,
+# so a target with services + only success-* keys still gets the labeled fallback.
+has "S3e [F-1] service-only fallback label present despite success-* sentinels" \
+    "$OUT" 'service-only fallback'
 echo
 
 #==============================================================================

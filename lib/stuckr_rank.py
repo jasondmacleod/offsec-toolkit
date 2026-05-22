@@ -293,7 +293,11 @@ def main():
     out = []
     for s, ctx in seen_sentinels.items():
         out.append(f"sentinel|{s}|{ctx}")
-    if fallback_used and not state['sentinels']:
+    # Gate on matched SYMPTOM sentinels (seen_sentinels), not raw
+    # state['sentinels']: positive-event keys (success-*, written by targetcheckr/
+    # watchdog/livefetch) share sentinels.log but are a different namespace and
+    # must not suppress the service-only-fallback label (audit F-1).
+    if fallback_used and not seen_sentinels:
         out.append(f"fallback|{fallback_used}")
 
     if candidates:
