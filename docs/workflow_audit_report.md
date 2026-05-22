@@ -232,3 +232,33 @@ This is close to the strongest possible result: the integration layer the per-to
 suites never had is now permanent and green, and the one bug is cosmetic. With F-1 (if
 the operator chooses to fix it) and the bucket-2 doc calls resolved in the separate
 pass, the toolkit is genuinely frozen and the runway is pure practice.
+
+---
+
+## 8. Addendum — fixes applied (2026-05-22)
+
+> Supersedes the §0 "findings only — no fixes applied" status. §1–§7 above are
+> preserved as the point-in-time audit record; this addendum logs the commissioned
+> fix pass. Every bucket-1 and bucket-2 item is now resolved; bucket-3 limitations
+> are by design and unchanged. All 9 suites (integration + 8 existing) green after
+> the pass.
+
+The operator commissioned the fix pass and adjudicated the bucket-2 doc calls. Fixes
+landed in **two isolated commits** (F-1 separated from the doc/comment changes per the
+operator's split), each verified green:
+
+| Finding | Resolution | Commit |
+|---|---|---|
+| **D-1** | Playbook header: dropped the bare "9-tool" count → "engagement toolkit". Adjudication: the playbook's operational-spine scope and the methodology's 8-build scope genuinely differ, so no unified number was invented; methodology keeps "8-build". | `7052185` |
+| **D-2** | `Methodology:995`: replaced "Both require `orient`…" — now states `watchdog` reads `foothold.log` + `pivots/state.tsv` (needs neither `orient` nor a bound target) and `targetcheckr` logs the foothold with just `--against` (cross-checks richer once `orient` has run). | `7052185` |
+| **D-3** | `Playbook:100`: `exploitfixr` "surfaced by `stuckr`" → "surfaced by `targetcheckr`". | `7052185` |
+| **D-4** | `livefetch.sh:423-425`: stale "`state_read_global` reads the legacy `creds/creds.txt` path" comment corrected to the build-8 reality (authoritative `creds.txt`; livefetch reads it directly). | `7052185` |
+| **F-1** | `lib/stuckr_rank.py`: the service-only-fallback marker now gates on the matched **symptom** set (`seen_sentinels`) instead of raw `state['sentinels']`, so `success-*` positive-event keys no longer suppress the "(service-only fallback — no sentinels yet)" label. **Display-only — ranked moves byte-identical.** Regression assertion added to `tests/test_workflow_integration.sh` S3e. | `3eefc83` |
+
+**Verification.** F-1's "behavior-preserving" claim was gated on a full re-run: all 9
+suites stayed green after the change (the agreed revert-on-red condition never fired),
+and the new `S3e [F-1]` assertion confirms the label is restored under positive-event
+sentinels. Bucket-3 limitations (L-1 runtime-dependent seams, L-2 `gobuster.txt` has no
+producer, L-3 two-tree by design) remain recorded with no action, as before.
+
+With this pass complete, the toolkit is genuinely frozen and the runway is pure practice.
