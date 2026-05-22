@@ -598,7 +598,8 @@ ip -6 neigh                                        # find IPv6 neighbors on the 
 
 ## Related
 
-- [[OffSec_Exam_Methodology_Complete]] — where recon fits in the overall attack chain
+- [[OffSec_Exam_Methodology_Complete]] — where recon fits in the overall attack chain (Phase 2)
+- [[OffSec_Toolkit_Playbook]] — engagement-day run order: recon → `orient` → decision tools
 - [[Active_Recon]] — manual recon to supplement or fill gaps
 - [[Web_App]] — manual follow-up on HTTP findings
 - [[webenum]] — deeper web enumeration (webenum.sh)

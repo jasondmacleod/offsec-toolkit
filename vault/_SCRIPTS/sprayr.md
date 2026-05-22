@@ -411,6 +411,8 @@ Get-ADFineGrainedPasswordPolicy -Filter * | Select-Object Name, LockoutThreshold
 
 ## Related
 
+- [[OffSec_Exam_Methodology_Complete]] — credential spraying (Phase 11)
+- [[OffSec_Toolkit_Playbook]] — the AD credential loop: `crackr -q` → `sprayr --from-creds` (§4)
 - [[adr]] — run first to get users/all_users.txt and check lockout policy
 - [[crackr]] — crack the hashes that sprayr.sh then validates
 - [[Active_Directory_PtH_PtT]] — what to do after Pwn3d! hits

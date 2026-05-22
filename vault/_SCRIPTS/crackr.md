@@ -614,6 +614,8 @@ wevtutil qe Security /q:"*[System[EventID=4648]]" /f:text /rd:true /c:10
 
 ## Related
 
+- [[OffSec_Exam_Methodology_Complete]] — password attacks & credential reuse (Phase 11)
+- [[OffSec_Toolkit_Playbook]] — the AD credential loop: `crackr -q` → `sprayr --from-creds` (§4)
 - [[Passwords]] — manual password attack techniques and methodology
 - [[Active_Directory]] — where NTLM, NTLMv2, Kerberoast, AS-REP hashes come from
 - [[Linux_PrivEsc]] — where shadow files come from

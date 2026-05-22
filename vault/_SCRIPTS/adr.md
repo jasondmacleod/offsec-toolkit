@@ -319,6 +319,8 @@ pip install bloodhound-ce
 
 ## Related
 
+- [[OffSec_Exam_Methodology_Complete]] — AD set workflow (Phase 9); `orient --domain` bridges adr's output
+- [[OffSec_Toolkit_Playbook]] — engagement-day run order; the AD credential loop (§4)
 - [[Active_Directory]] — manual AD attack techniques
 - [[OffSec_AD_Operational_Addendum]] — engagement-day AD reference
 - [[OffSec_AD_Mental_Model_Bus_Review]] — decision-tree for AD attack paths
