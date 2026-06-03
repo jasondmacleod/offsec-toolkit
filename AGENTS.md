@@ -181,7 +181,7 @@ Every change is evaluated against these:
 
 **Gate discipline for structured handoffs:**
 
-Kickoff prompts under `exploitdb/` (see `APP_BUILD_BRIEF.md`, prior handoff messages) include explicit gates: "Step 0: read first, report, wait for confirmation" and intermediate "show me the rendered example before continuing past step N". Respect them. The operator has been consistent about these; skipping them wastes review cycles.
+The exploitdb subproject was built against a fixed seed schema and a staged kickoff with explicit review gates. When changing it, preserve that schema (see `exploitdb/load_seed.py`) and validate against the running app before moving on.
 
 **What NOT to do in exploitdb:**
 
