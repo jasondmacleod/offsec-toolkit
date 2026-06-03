@@ -586,6 +586,5 @@ curl http://127.0.0.1:8888/
 
 - [[_SCRIPTS/ligolo-ng]] — manual Ligolo-ng commands, console reference, troubleshooting
 - [[Tunneling_Pivoting]] — manual techniques and theory
-- [[penelope]] — shell handler used for reverse shells through tunnel
 - [[Active_Recon]] — scanning internal networks after pivot is established
 - [[recon]] — run against internal hosts once routing is up
