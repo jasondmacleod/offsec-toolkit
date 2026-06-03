@@ -40,7 +40,7 @@ def main() -> int:
     only_shortcuts = len(sys.argv) > 1 and sys.argv[1] == "shortcuts"
     import re
     excl = [g.strip() for g in re.split(
-        r"[,:]", os.environ.get("VQUERY_EXCLUDE", "Not FOR engagement/")) if g.strip()]
+        r"[,:]", os.environ.get("VQUERY_EXCLUDE", "Not for the engagement/")) if g.strip()]
 
     try:
         if not only_shortcuts:

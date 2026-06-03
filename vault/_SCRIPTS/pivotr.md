@@ -648,8 +648,8 @@ curl http://127.0.0.1:8888/
 
 - [[_SCRIPTS/ligolo-ng]] — manual Ligolo-ng commands, console reference, troubleshooting
 - [[Tunneling_Pivoting]] — manual techniques and theory
-- [[OffSec_Pivoting_Operational_Addendum]] — engagement-day pivot reference
-- [[OffSec_Pivoting_Mental_Model_Bus_Review]] — decision-tree bus review
+- [[OffSec_Pivoting_Field_Notes]] — engagement pivot reference
+- [[OffSec_Pivoting_Mental_Model]] — decision-tree bus review
 - [[penelope]] — shell handler used for reverse shells through tunnel
 - [[Active_Recon]] — scanning internal networks after pivot is established
 - [[recon]] — run against internal hosts once routing is up

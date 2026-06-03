@@ -7,7 +7,7 @@
 # results and produces a prioritized findings report.
 #
 # IMPORTANT: This script is ENUMERATION ONLY — no auto-exploitation.
-# Compliant with OffSec engagement rules.
+# Compliant with engagement rules.
 #
 # WORKFLOW:
 #   1. Detect target OS (Linux or Windows) or specify with --os flag
@@ -34,7 +34,7 @@
 #   └── progress.log        # What's done, what's running
 #
 # DESIGN DECISIONS:
-#   - Single file: reliability > elegance on engagement day
+#   - Single file: reliability > elegance on engagement
 #   - No auto-exploitation: enumeration and reporting only
 #   - Generates copy-paste commands: you run them on target
 #   - Parses output for quick-wins: saves reading time under pressure
@@ -50,16 +50,16 @@ set -o pipefail
 if [[ -z "${TOOLKIT_ROOT:-}" ]]; then
     if [[ -n "${SUDO_USER:-}" ]]; then
         _inv_home=$(getent passwd "$SUDO_USER" 2>/dev/null | cut -d: -f6)
-        TOOLKIT_ROOT="${_inv_home:-$HOME}/offsec"
+        TOOLKIT_ROOT="${_inv_home:-$HOME}/toolkit"
         unset _inv_home
     else
-        TOOLKIT_ROOT="${HOME}/offsec"
+        TOOLKIT_ROOT="${HOME}/toolkit"
     fi
 fi
 PRIVESC_DIR="${TOOLKIT_ROOT}/privesc"         # Base output directory
 TOOLS_CACHE="$HOME/.offsec_tools/privesc"    # Cached tool downloads
 HTTP_PORT=8888                             # HTTP server port for tool serving
-SERVE_TIMEOUT=1800                         # Auto-stop HTTP server after 30 min (plenty for engagement transfers)
+SERVE_TIMEOUT=1800                         # Auto-stop HTTP server after 30 min (plenty for the engagement transfers)
 REMOTE_TMP="/tmp"                            # Remote writable dir (override with --remote-tmp if /tmp is noexec)
 OFFLINE_MODE=false                           # --offline skips network, cache-only
 

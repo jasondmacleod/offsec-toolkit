@@ -15,7 +15,7 @@
 #
 # DESIGN:
 #   - Mirrors recon.sh conventions (colors, logging, progress, cleanup)
-#   - Single file — nothing to lose on engagement day
+#   - Single file — nothing to lose on engagement
 #   - Enumeration only — no exploitation, OffSec compliant
 #   - Timeouts on everything — nothing hangs the engagement
 #   - Graceful degradation — skips tools that aren't installed
@@ -61,10 +61,10 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 if [[ -z "${TOOLKIT_ROOT:-}" ]]; then
     if [[ -n "${SUDO_USER:-}" ]]; then
         _inv_home=$(getent passwd "$SUDO_USER" 2>/dev/null | cut -d: -f6)
-        TOOLKIT_ROOT="${_inv_home:-$HOME}/offsec"
+        TOOLKIT_ROOT="${_inv_home:-$HOME}/toolkit"
         unset _inv_home
     else
-        TOOLKIT_ROOT="${HOME}/offsec"
+        TOOLKIT_ROOT="${HOME}/toolkit"
     fi
 fi
 OUTPUT_ROOT="${TOOLKIT_ROOT}/web"
@@ -3983,7 +3983,7 @@ if ! mkdir -p "${OUTPUT_DIR}"; then
     exit 1
 fi
 
-# Reachability precheck — fail fast instead of wasting engagement time on a dead host
+# Reachability precheck — fail fast instead of wasting the engagement window on a dead host
 if ! curl -sS -o /dev/null --max-time 5 -k "$TARGET_URL" 2>/dev/null; then
     error "Target unreachable: $TARGET_URL (curl --max-time 5 failed)"
     error "Verify host/port/scheme before running webenum."

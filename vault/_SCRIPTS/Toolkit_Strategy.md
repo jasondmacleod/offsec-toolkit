@@ -9,7 +9,7 @@ tags:
 # OffSec Toolkit Master Strategy Guide
 
 > [!important] This Is Your engagement Runbook
-> You have 14 scripts. This document tells you exactly when to fire each one, in what order, what to do with the output, and what to do when something comes back empty. Under engagement pressure, follow this — don't improvise the sequence.
+> You have 14 scripts. This document tells you exactly when to fire each one, in what order, what to do with the output, and what to do when something comes back empty. under time pressure, follow this — don't improvise the sequence.
 
 ---
 
@@ -23,7 +23,7 @@ export TOOLKIT_ROOT="$HOME/toolkit"
 
 Unified credential log: `$TOOLKIT_ROOT/creds.txt` — populated automatically by adr.sh, crackr.sh, sprayr.sh.
 
-**Before engagement day**, verify your tools are installed:
+**Before engagement**, verify your tools are installed:
 ```bash
 ./tools_setup.sh --check    # no sudo needed, just verifies
 ```
@@ -47,7 +47,7 @@ Verify the evidence-gated next-step rules after script edits:
 
 | Script | Role | Phase | Runs On |
 |--------|------|-------|---------|
-| `startr.sh` | engagement-day workspace + tmux + env + optional recon auto-launch | Setup (T+0) | Kali |
+| `startr.sh` | engagement workspace + tmux + env + optional recon auto-launch | Setup (setup) | Kali |
 | `recon.sh` | Port scan + service enum + quick-wins triage | Recon | Kali |
 | `webenum.sh` | Deep web enum | Recon | Kali |
 | `escalatr.sh` | Privesc tooling + staging | Post-exploit | Kali |
@@ -66,37 +66,35 @@ Verify the evidence-gated next-step rules after script edits:
 
 ---
 
-## OffSec+ engagement Facts (effective Nov 1, 2024)
+## engagement Facts (effective Nov 1, 2024)
 
 Ground truth for the engagement this toolkit targets. All decisions in this document are built on these numbers.
 
 | Fact | Value |
 |------|-------|
-| engagement duration | 23h 45m (proctored) |
-| Report deadline | 24h after engagement ends |
-| Total points | 100 |
-| Pass threshold | 70 |
-| Standalones | 3 machines × 20 pts (10 low-priv + 10 root/admin) = 60 |
-| AD set | 3 hosts (2 clients + 1 DC), **10 + 10 + 20 = 40**, partial points allowed |
-| AD starting state | **Assumed compromise** — OffSec provides a standard domain user/password |
-| Bonus points | **Removed** (no coursework/lab bonus anymore) |
-| Buffer Overflow | **Removed** from course + engagement body of knowledge |
-| Metasploit / Meterpreter | Allowed on **exactly one** target; no pivoting via MSF |
-| Banned tools | Nessus, OpenVAS, Nexpose, Armitage, AutoSploit, Cobalt Strike, AI chatbots (ChatGPT, KAI, etc.) |
+| Engagement window | Time-boxed active testing (example baseline: ~24h) |
+| Report deadline | Due shortly after the testing window closes |
+| Objective | Full compromise of every in-scope host |
+| Standalones | 3 standalone hosts — low-priv foothold + privilege escalation on each |
+| AD set | 3 hosts (2 clients + 1 DC); partial chain progress still demonstrates impact |
+| AD starting state | **Assumed breach** — you're given a standard domain user/password |
+| Out of scope | Stack buffer-overflow development; cloud, phishing, and client-side macros |
+| Metasploit / Meterpreter | Permitted on **exactly one** target; no pivoting via MSF |
+| Restricted tools | Nessus, OpenVAS, Nexpose, Armitage, AutoSploit, Cobalt Strike, AI chatbots |
 | Allowed tools (highlights) | nmap, burp, gobuster/ffuf, netcat, python, bash, wireshark, tcpdump, crackmapexec/nxc, impacket, bloodhound, certipy-ad, responder |
-| Proof files | `local.txt` (low-priv) + `proof.txt` (root/admin) — screenshot + submit via control panel |
+| Proof files | `local.txt` (low-priv) + `proof.txt` (root/admin) — screenshot + record in the engagement tracker |
 
-**Course content NOT on the engagement** (present in PEN-200 but won't appear on engagement day): AWS cloud attacks (Ch 25-26), phishing (Ch 11), client-side attacks like Office macros (Ch 12). Skip these during engagement prep final push; they're career-useful but won't score points.
+**Out-of-scope content** (useful skills, but outside this engagement type): cloud attacks, phishing, client-side macros. Skip these during prep; they're career-useful but not in scope here.
 
-> [!important] **If any doc in this repo conflicts with the table above, the table wins.** The table is derived from OffSec's current OffSec+ engagement Guide, engagement FAQ, and the PEN-200 2025 course manual.
+> [!important] **If any doc in this repo conflicts with the table above, the table wins.** The table reflects the engagement's rules of engagement and the current methodology.
 
 ---
 
-## engagement Day Master Sequence
+## engagement Master Sequence
 
 ### T-0 (setup, before IPs arrive): pre-stage a targets file
 
-Pre-create `~/toolkit/targets.txt` before engagement day so T+0 is one command:
+Pre-create `~/toolkit/targets.txt` before engagement so Start is one command:
 
 ```
 SA1=
@@ -110,7 +108,7 @@ ADUSER=
 ADPASS=
 ```
 
-### T+0: Launch workspace with startr.sh
+### Start: Launch workspace with startr.sh
 
 ```bash
 # Fill the IPs into targets.txt, then:
@@ -121,7 +119,7 @@ This creates `~/toolkit/exam_YYYY-MM-DD/`, builds the tmux session (6 named wind
 
 > [!tip] If VPN drops or a terminal dies: `./startr.sh --attach` re-attaches to the existing session. State survives.
 
-### T+0 to T+5 min: Triage ALL targets first (in parallel with recon)
+### Start through the first 5 min: Triage ALL targets first (in parallel with recon)
 
 ```bash
 sudo ./recon.sh --quick-wins-only --auto $SA1 $SA2 $SA3 $AD1 $AD2 $DC
@@ -136,7 +134,7 @@ cat $TOOLKIT_ROOT/recon/target_priority.txt
 - **Ranking produced?** → Start with the highest-score target. That's your #1.
 - **Ranking empty / all scores tied?** → Start with the AD set if you have assumed-breach creds. Otherwise pick the target with the most open ports from the quick-wins output.
 
-### T+5 min onward: Full recon on all targets
+### first 5 min onward: Full recon on all targets
 
 ```bash
 # Terminal 1: full recon on your #1 target
@@ -181,9 +179,9 @@ AD targets follow the same chain but add `adr.sh` the moment you have creds — 
 > [!warning] Stop / Rotate Rules
 > - **30 min** on web enum with no foothold vector → move to a different target.
 > - **2 hours** on any single target with 0 flags → STOP. Switch targets. Fresh eyes beat tunnel vision.
-> - **AD set with assumed-breach creds available?** → This is your highest-ROI path (40 points). Run `adr.sh --quick` → crack → spray → `--chain` → BloodHound BEFORE grinding standalones.
-> - **AD chain + BloodHound complete, no clear path to DA after 90 min?** → Park AD. Collect standalone points. Come back after more creds surface from other boxes.
-> - **T+18h with < 70 pts?** → Stop attacking. Write the report for what you have. Partial credit > 0 credit.
+> - **AD set with assumed-breach creds available?** → This is your highest-ROI path. Run `adr.sh --quick` → crack → spray → `--chain` → BloodHound BEFORE grinding standalones.
+> - **AD chain + BloodHound complete, no clear path to DA after 90 min?** → Park AD. Collect standalone hosts. Come back after more creds surface from other boxes.
+> - **~18h in with behind on objectives?** → Stop attacking. Write the report for what you have. Partial progress beats none.
 
 ---
 
@@ -258,7 +256,7 @@ cat $TOOLKIT_ROOT/recon/IP/udp/snmp/running_processes.txt
    ```bash
    sudo ./recon.sh --auto --udp-full IP
    ```
-3. Still nothing? → Move to a different target. Come back after 1-2 hours with fresh eyes. Check `Stuck_Decision_Tree.md`.
+3. Still nothing? → Move to a different target. Come back after 1-2 hours with fresh eyes. Check `Triage_Decision_Tree.md`.
 
 ---
 
@@ -551,7 +549,7 @@ cat $TOOLKIT_ROOT/privesc/TARGET_IP/quick-wins.txt         # full parsed finding
 
 **escalatr catches things lootr doesn't:** config files with passwords, writable PATH directories, Docker/LXC group membership (Linux), scheduled tasks with writable scripts (Windows), kernel version + known exploits (last resort — unreliable, can crash the box).
 
-**Nothing from either lootr or escalatr?** → Check `Stuck_Decision_Tree.md`. Consider whether you missed a web vector (Phase 1b) or whether this box requires pivoting from another compromised host.
+**Nothing from either lootr or escalatr?** → Check `Triage_Decision_Tree.md`. Consider whether you missed a web vector (Phase 1b) or whether this box requires pivoting from another compromised host.
 
 ---
 
@@ -950,7 +948,7 @@ Don't manually re-do the setup. `reconnect` handles it.
   --proof-flag "def456..." --points 20 --category AD-DC
 ```
 
-> [!important] evidencr `--points` only accepts `10` or `20`. OffSec+ AD scoring: client=10, DC=20. Standalones=20. Anything else is rejected by validation.
+> [!important] evidencr `--points` only accepts `10` or `20`. Suggested weights: AD client=10, DC=20, standalones=20. Anything else is rejected by validation.
 
 **If you used Metasploit/Meterpreter on this box:**
 
@@ -981,20 +979,20 @@ cat $TOOLKIT_ROOT/evidence/evidence_ledger.txt
 - **All captured flags appear in the ledger?** → Good. Continue attacking.
 - **A flag is missing from the ledger?** → Re-run evidencr.sh for that machine now.
 
-### Step 4 — Submit flag to engagement control panel
+### Step 4 — Submit flag to engagement tracker
 
-Do this right now, not later. Copy the flag value and submit it in the OffSec engagement portal.
+Do this right now, not later. Copy the flag value and submit it in the engagement portal.
 
 ### Step 5 — engagement-wide rollup before report writing
 
-After every machine has been captured, run rollup to confirm you have enough points and no audit gaps:
+After every machine has been captured, run rollup to confirm coverage and no audit gaps:
 
 ```bash
 ./evidencr.sh --rollup
 ```
 
 Output includes:
-- **Total points / 100** and pass status (≥70 = PASS, else points still needed)
+- **Total weighted value captured** and coverage status (objectives met vs. still outstanding)
 - **Per-category breakdown** (standalone / AD-client / AD-DC)
 - **Missing flags** (per-IP `local.txt` / `proof.txt` gaps)
 - **MSF target count** (loud warning if > 1 — OffSec allows MSF on exactly one target)
@@ -1056,7 +1054,7 @@ Run this before starting the report. If it shows missing flags, you still have t
    → Re-run with --batch-size 500 (network congestion)
    → Run --udp-full (full UDP scan)
    → Still nothing? → Move to different target, come back in 1-2 hours
-   → Check Stuck_Decision_Tree.md
+   → Check Triage_Decision_Tree.md
 ```
 
 ### "I have a Windows shell with low privs — what are the fast wins?"
@@ -1081,7 +1079,7 @@ Run this before starting the report. If it shows missing flags, you still have t
    → Look for non-standard services or scheduled tasks running as SYSTEM
 
 4. Truly nothing?
-   → Check Stuck_Decision_Tree.md
+   → Check Triage_Decision_Tree.md
    → Consider: did you miss a web vector? A different user path?
 ```
 
@@ -1152,12 +1150,12 @@ Run this before starting the report. If it shows missing flags, you still have t
 
 | Time Elapsed | Condition | Action |
 |---|---|---|
-| T+1h | 0 flags on current target | Re-read all recon output. Run webenum --deep. Check SNMP running_processes.txt. Try default creds manually on every login page. |
-| T+2h | 0 flags on current target | STOP this target. Move to a different one. Fresh eyes beat tunnel vision. |
-| T+3h | < 2 flags total | **AD is your fastest path to 40 points.** If you have assumed-breach creds and haven't started AD yet, start NOW: `adr.sh --quick` → crack → spray → `--chain` → BloodHound. |
-| T+4.5h | AD chain complete, no DA path | Park AD. Collect standalone points first. Come back after more creds surface. |
-| T+6h | < 3 flags total | Run Stuck_Decision_Tree.md for every target. Re-read ALL lootr/recon output — you missed something. |
-| T+18h | < 70 pts | **Stop attacking. Write the report for what you have.** Don't lose partial credit chasing points. |
+| ~1h in | 0 flags on current target | Re-read all recon output. Run webenum --deep. Check SNMP running_processes.txt. Try default creds manually on every login page. |
+| ~2h in | 0 flags on current target | STOP this target. Move to a different one. Fresh eyes beat tunnel vision. |
+| ~3h in | < 2 flags total | **AD is your fastest path to broad coverage.** If you have assumed-breach creds and haven't started AD yet, start NOW: `adr.sh --quick` → crack → spray → `--chain` → BloodHound. |
+| ~4.5h in | AD chain complete, no DA path | Park AD. Collect standalone hosts first. Come back after more creds surface. |
+| ~6h in | < 3 flags total | Run Triage_Decision_Tree.md for every target. Re-read ALL lootr/recon output — you missed something. |
+| ~18h in | behind on objectives | **Stop attacking. Write the report for what you have.** Don't lose demonstrable progress chasing the last host. |
 
 ---
 
@@ -1194,7 +1192,7 @@ Internal subnets found → pivotr.sh → tunnel up → recon.sh on internals
 Tunnel dies → pivotr.sh reconnect → back in one command
 
 FLAG CAPTURED → evidencr.sh IMMEDIATELY → screenshots NOW → submit to portal
-All flags captured → evidencr.sh --rollup → confirm 70+ pts, no gaps, MSF count ≤ 1
+All flags captured → evidencr.sh --rollup → confirm full coverage, no gaps, MSF count ≤ 1
 
 All creds auto-logged to $TOOLKIT_ROOT/creds.txt by adr.sh, crackr.sh, sprayr.sh
 ```
@@ -1324,18 +1322,18 @@ The table below maps each gap to its phase and the manual technique to fill it.
 10. **Manually re-establishing tunnels after they die** — `pivotr.sh reconnect` does it in one command.
 11. **Not reading SNMP `running_processes.txt`** — passwords in process command-line args is free money.
 12. **Cracking hashes but not spraying the result** — a cracked password is worthless until you spray it everywhere.
-13. **Manually setting up the workspace on engagement day** — pre-stage `targets.txt`, then one `./startr.sh -f targets.txt --recon` covers workspace, tmux, env vars, file server, and recon in one shot.
+13. **Manually setting up the workspace on engagement** — pre-stage `targets.txt`, then one `./startr.sh -f targets.txt --recon` covers workspace, tmux, env vars, file server, and recon in one shot.
 14. **Marking more than one box as `--msf-used`** — OffSec allows MSF on exactly one target. Run `evidencr.sh --rollup` before the report to audit.
 
 ---
 
 ## Related
 
-- [[OffSec_Exam_Methodology_Complete]] — full engagement attack chain
-- [[Stuck_Decision_Tree]] — when you're genuinely stuck
+- [[Engagement_Methodology]] — full engagement attack chain
+- [[Triage_Decision_Tree]] — when you're genuinely stuck
 - [[Creds_Tracker]] — live credential tracking
 - [[Active_Directory]] — manual AD techniques
-- [[startr]] — startr.sh cheatsheet (engagement-day launcher)
+- [[startr]] — startr.sh cheatsheet (engagement launcher)
 - [[recon]] — recon.sh cheatsheet
 - [[webenum]] — webenum.sh cheatsheet
 - [[crackr]] — crackr.sh cheatsheet

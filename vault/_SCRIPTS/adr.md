@@ -70,7 +70,7 @@ Active Directory enumeration and attack-prep script. OffSec-focused, Kali-side o
 | `--no-color` | off | Disable ANSI colors (also: `export NO_COLOR=1`; auto-off when not a TTY) |
 
 When launched through `sudo`, the default `$TOOLKIT_ROOT` resolves to the invoking
-user's home directory instead of `/root/offsec`.
+user's home directory instead of `/root/toolkit`.
 
 ---
 
@@ -319,11 +319,11 @@ pip install bloodhound-ce
 
 ## Related
 
-- [[OffSec_Exam_Methodology_Complete]] — AD set workflow (Phase 9); `orient --domain` bridges adr's output
-- [[OffSec_Toolkit_Playbook]] — engagement-day run order; the AD credential loop (§4)
+- [[Engagement_Methodology]] — AD set workflow (Phase 9); `orient --domain` bridges adr's output
+- [[Toolkit_Strategy]] — engagement run order; the AD credential loop (§4)
 - [[Active_Directory]] — manual AD attack techniques
-- [[OffSec_AD_Operational_Addendum]] — engagement-day AD reference
-- [[OffSec_AD_Mental_Model_Bus_Review]] — decision-tree for AD attack paths
+- [[OffSec_AD_Field_Notes]] — engagement AD reference
+- [[OffSec_AD_Mental_Model]] — decision-tree for AD attack paths
 - [[crackr]] — crack the hashes from `hashes/asreproast.txt` and `hashes/kerberoast.txt`
 - [[Active_Directory_PtH_PtT]] — use cracked hashes for lateral movement
 - [[Tunneling_Pivoting]] — pivot to reach internal DC

@@ -26,6 +26,6 @@ Exit: `0` ok · `1` fatal · `2` usage. **Signal is the per-resource class** in 
 Never probes a target, never drives a REPL, never remediates. A dead tunnel is re-established with `./pivotr.sh reconnect`, not by watchdog.
 
 ## Read more
-- Workflow: [[OffSec_Exam_Methodology_Complete]] Phase 6 (shell liveness), Phase 10 (tunnel liveness)
-- Sequence: [[OffSec_Toolkit_Playbook]] §2, §3
+- Workflow: [[Engagement_Methodology]] Phase 6 (shell liveness), Phase 10 (tunnel liveness)
+- Sequence: [[Toolkit_Strategy]] §2, §3
 - Ground truth: `./watchdog.sh --help`

@@ -170,7 +170,7 @@ editing exploitdb seed to refresh the cache.
 | Var | Default | Use |
 |---|---|---|
 | `VQUERY_VAULT_PATH` | `~/scripts/vault` | Vault root to index |
-| `VQUERY_EXCLUDE` | `Not FOR engagement/` | Comma/colon-separated exclude globs (dir prefix or fnmatch). Empty string indexes everything. `Not FOR engagement/` is excluded by default — it holds sqlmap / AV-evasion material that is banned or irrelevant on the engagement (AGENTS.md §9); keeping it out of a sub-10s engagement-day tool is deliberate. |
+| `VQUERY_EXCLUDE` | `Not for the engagement/` | Comma/colon-separated exclude globs (dir prefix or fnmatch). Empty string indexes everything. `Not for the engagement/` is excluded by default — it holds sqlmap / AV-evasion material that is banned or irrelevant on the engagement (AGENTS.md §9); keeping it out of a sub-10s engagement tool is deliberate. |
 | `VQUERY_HOST` | `127.0.0.1` | Bind address (localhost only by design) |
 | `VQUERY_PORT` | `5051` | Port |
 | `VQUERY_EXPLOITDB_SEED` | `../exploitdb/data/seed` | exploitdb seed dir scanned for `related_vquery` at rebuild |

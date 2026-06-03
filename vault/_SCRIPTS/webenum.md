@@ -16,7 +16,7 @@ It also generates `loot/next_steps.txt`: a finding-driven web command library. C
 
 ---
 
-## Setup (Do This Before engagement Day)
+## Setup (Do This Before engagement)
 
 ```bash
 chmod +x webenum.sh
@@ -47,7 +47,7 @@ If seclists isn't installed: `sudo apt install seclists`
 
 ---
 
-## engagement Day Workflow
+## engagement workflow
 
 ### Step 1: recon.sh Finds HTTP → Run Webenum
 
@@ -138,7 +138,7 @@ webenum --url http://192.168.50.100 --deep --vhost target.htb
 | `-h, --help` | Show help | |
 
 When launched through `sudo`, the default `$TOOLKIT_ROOT` resolves to the invoking
-user's home directory instead of `/root/offsec`.
+user's home directory instead of `/root/toolkit`.
 
 *`--url` or `--from-recon` required.
 
@@ -284,7 +284,7 @@ $TOOLKIT_ROOT/web/<host>_<port>_<proto>/artifacts/web/
 └── progress.log                 # Phase completion tracking
 ```
 
-**Files marked ★ are your primary engagement-day reads.**
+**Files marked ★ are your primary engagement reads.**
 
 > [!warning] After webenum completes — do NOT:
 > - Re-run gobuster or ffuf manually with the same wordlist — webenum already did this
@@ -814,6 +814,6 @@ curl -sk "http://IP/index.php."      # trailing dot (IIS)
 - [[Web_App]] — web attack vectors after enumeration
 - [[SQL_Injection]] — if webenum finds login/search forms
 - [[Burp_Suite]] — manual testing after webenum finds endpoints
-- [[OffSec_Exam_Methodology_Complete]] — where web enum fits in the attack chain (Phase 5)
-- [[OffSec_Toolkit_Playbook]] — engagement-day run order; `livefetch --stage web` for re-fetch + delta
+- [[Engagement_Methodology]] — where web enum fits in the attack chain (Phase 5)
+- [[Toolkit_Strategy]] — engagement run order; `livefetch --stage web` for re-fetch + delta
 - [[Reverse_Shells]] — use Penelope with -O flag after exploitation

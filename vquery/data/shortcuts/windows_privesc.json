@@ -93,7 +93,7 @@
     "triggers": ["windows high roi", "common windows privesc", "windows engagement failures", "windows privesc patterns", "windows privesc priority"],
     "title": "High-ROI Windows privesc patterns",
     "answer_type": "chunk_ref",
-    "target_chunk_id": "BUS_REVIEW/OffSec_PrivEsc_Mental_Model_Bus_Review.md#high-roi-windows-patterns-these-cause-engagement-failures",
+    "target_chunk_id": "BUS_REVIEW/OffSec_PrivEsc_Mental_Model.md#high-roi-windows-patterns-these-cause-engagement-failures",
     "tags": "windows privesc methodology",
     "priority": 180
   },

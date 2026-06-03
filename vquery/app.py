@@ -45,11 +45,11 @@ SESSION_COOKIE = "vq_sid"
 VAULT_PATH = Path(os.environ.get(
     "VQUERY_VAULT_PATH", os.path.expanduser("~/scripts/vault"))).resolve()
 
-# Excluded by default: "Not FOR engagement/" holds banned/irrelevant material
-# (sqlmap, AV evasion). Surfacing it in a sub-10s engagement-day tool is a
+# Excluded by default: "Not for the engagement/" holds banned/irrelevant material
+# (sqlmap, AV evasion). Surfacing it in a sub-10s engagement tool is a
 # compliance footgun (AGENTS.md §9). Override with VQUERY_EXCLUDE
 # (comma/colon-separated globs); empty string indexes everything.
-_excl_raw = os.environ.get("VQUERY_EXCLUDE", "Not FOR engagement/")
+_excl_raw = os.environ.get("VQUERY_EXCLUDE", "Not for the engagement/")
 EXCLUDE_GLOBS = [g.strip() for g in re.split(r"[,:]", _excl_raw) if g.strip()]
 
 DEFAULT_N = 12

@@ -2,7 +2,7 @@
 tags:
   - phase/recon
   - phase/enumeration
-  - tool/offsec-recon
+  - tool/toolkit-recon
   - tool/nmap
   - tool/rustscan
   - type/tool-docs
@@ -20,7 +20,7 @@ Automated enumeration orchestrator for OffSec. Runs rustscan with nmap full-TCP 
 
 ---
 
-## engagement Day Workflow
+## engagement workflow
 
 ```bash
 # 0. Triage first — rank targets by quick-win score before deep scanning
@@ -96,7 +96,7 @@ sudo ./recon.sh --auto --outdir ~/engagement/recon 10.10.10.1
 | `--no-color` | off | Disable ANSI colors (also: `export NO_COLOR=1`; auto-off when not a TTY) |
 
 When launched through `sudo`, the default `$TOOLKIT_ROOT` resolves to the invoking
-user's home directory instead of `/root/offsec`.
+user's home directory instead of `/root/toolkit`.
 
 > [!note] Always `sudo`
 > UDP scanning and OS detection (`-O`) require root. Non-root mode skips both automatically with a warning — no crash.
@@ -307,7 +307,7 @@ sudo apt install nmap
 # Strongly recommended TCP discovery accelerator
 sudo apt install rustscan
 
-# Recommended — install all before engagement
+# Recommended — install all before an engagement
 sudo apt install -y gobuster nikto whatweb smbclient smbmap \
   httpx-toolkit sslscan wafw00f dnsrecon jq davtest cadaver \
   samba-common-bin nbtscan snmp snmpcheck onesixtyone feroxbuster netexec ldap-utils \
@@ -598,8 +598,8 @@ ip -6 neigh                                        # find IPv6 neighbors on the 
 
 ## Related
 
-- [[OffSec_Exam_Methodology_Complete]] — where recon fits in the overall attack chain (Phase 2)
-- [[OffSec_Toolkit_Playbook]] — engagement-day run order: recon → `orient` → decision tools
+- [[Engagement_Methodology]] — where recon fits in the overall attack chain (Phase 2)
+- [[Toolkit_Strategy]] — engagement run order: recon → `orient` → decision tools
 - [[Active_Recon]] — manual recon to supplement or fill gaps
 - [[Web_App]] — manual follow-up on HTTP findings
 - [[webenum]] — deeper web enumeration (webenum.sh)

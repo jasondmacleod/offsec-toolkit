@@ -8,9 +8,9 @@ Authoritative instructions for any coding agent (Claude Code, Codex, Cursor, etc
 
 **Get Jason to a passing OffSec score on June 6.**
 
-Every change, every suggestion, every edit is evaluated against one question: *does this make engagement-day execution faster, more reliable, or more correct?* If it doesn't, don't make it.
+Every change, every suggestion, every edit is evaluated against one question: *does this make engagement execution faster, more reliable, or more correct?* If it doesn't, don't make it.
 
-Pass = 70 points. engagement = 23h45m + 24h report. Targets: 3 standalones (20 pts each, 10 local + 10 proof) + 1 AD set (10 + 10 + 20). The scripts and cheatsheets in this repo are the primary execution surface. Treat them as such.
+Reach the objectives. engagement = the engagement window + 24h report. Targets: 3 standalones (each, local + proof) + 1 AD set (10 + 10 + 20). The scripts and cheatsheets in this repo are the primary execution surface. Treat them as such.
 
 Bias every decision toward: **reducing cognitive load under pressure, reducing the number of things that can fail at 3am, and making the reproducibility chain that the grader will walk as tight as possible.**
 
@@ -24,7 +24,7 @@ This is the bright line. Do not cross it.
 - If a change would add an exploit trigger, a payload delivery, a credential-use-to-execute-code flow, or anything that performs the "gain a shell" step automatically — **stop**. That belongs in manual playbooks, not the suite.
 - Generating copy-paste commands for Jason to run manually is fine. Running them for him is not.
 - Credential spraying (`sprayr.sh`), hash cracking (`crackr.sh`), BloodHound collection (`adr.sh`), privesc enumeration (`escalatr.sh`) — all fine. These are enumeration, not exploitation.
-- The distinction matters for engagement compliance **and** for Jason's muscle memory. Automating exploitation is how people fail the engagement thinking their scripts will save them.
+- The distinction matters for the engagement compliance **and** for Jason's muscle memory. Automating exploitation is how people fail the engagement thinking their scripts will save them.
 
 ---
 
@@ -49,7 +49,7 @@ The cheatsheets and scripts are structured around one principle: **automation ru
 
 - Manual commands in cheatsheets must be gated behind an explicit "script found nothing" trigger. Do not promote a manual command to equal status with script output.
 - When adding a feature to a cheatsheet, check whether the corresponding script already covers it. If it does, reference the script; do not duplicate the command inline at the top level.
-- Never propose replacing a script with a one-liner. The scripts exist because one-liners fail under engagement pressure.
+- Never propose replacing a script with a one-liner. The scripts exist because one-liners fail under time pressure.
 - **Crack-then-spray discipline:** cracked passwords flow immediately into spraying (`crackr.sh → sprayr.sh --from-creds`). Any change touching either script must preserve this loop.
 
 ---
@@ -68,7 +68,7 @@ The cheatsheets and scripts are structured around one principle: **automation ru
 | `pivotr.sh` | Ligolo-ng pivot automation (TUN + routes + teardown) |
 | `servr.sh` | Workspace setup (HTTP server, Penelope, tmux layout) |
 | `evidencr.sh` | Evidence capture (terminal logs, screenshots, per-target orgs) |
-| `startr.sh` | engagement-day bootstrap |
+| `startr.sh` | engagement bootstrap |
 | `tools_setup.sh` | Fresh Kali provisioning — authoritative for directory layout |
 
 ---
@@ -109,7 +109,7 @@ When reviewing a script or doc (before any edit), output in this exact five-part
 
 1. **Verdict** — one line: ready / needs revision / broken.
 2. **What is working** — short; only note things that should be preserved.
-3. **What still slows execution** — friction points under engagement pressure.
+3. **What still slows execution** — friction points under time pressure.
 4. **What is missing** — coverage gaps vs. PEN-200 2025 or vs. the rest of the suite.
 5. **Done or needs revision** — explicit next step.
 
@@ -117,16 +117,16 @@ When reviewing a script or doc (before any edit), output in this exact five-part
 
 ---
 
-## 9. OffSec engagement compliance (hard rules)
+## 9. engagement compliance (hard rules)
 
 Every change is evaluated against these:
 
 - **Metasploit is restricted to ONE machine** on the engagement. The restriction is per-*machine*, not per-module. Post-exploitation modules on an already-compromised machine do not count as additional uses. Do not add Metasploit calls to scripts that run on arbitrary targets.
-- **`sqlmap` is banned** on engagement boxes. Do not reference it in engagement-path tooling.
+- **`sqlmap` is banned** in an engagement boxes. Do not reference it in an engagement-path tooling.
 - **Automated exploitation tools are banned.** See §2 — this is the bright line.
 - **Commercial tools are restricted.** Burp Community is fine; Burp Pro features are not.
 - **Screenshots + `whoami` + `hostname` + flag from original path** are required on every compromise. Interactive shell — web shells do not count for proof. Any evidence-tooling edit must preserve this.
-- **Flags must be submitted to the control panel before engagement time expires.** Flags in the report but not in the control panel = zero points. Evidence tooling should make this hard to forget.
+- **Flags must be submitted to the engagement tracker before an engagement time expires.** Flags in the report but not in the engagement tracker = an unrecorded finding. Evidence tooling should make this hard to forget.
 
 ---
 
@@ -200,7 +200,7 @@ Kickoff prompts under `exploitdb/` (see `APP_BUILD_BRIEF.md`, prior handoff mess
   normal fallback.
 - For Kali-side scripts that may run through `sudo`, resolve `$TOOLKIT_ROOT` to the
   invoking user's home via `$SUDO_USER` instead of silently writing to
-  `/root/offsec`.
+  `/root/toolkit`.
 - Help text, docs, final status output, and actual output paths must agree.
 - Validate arguments before creating output directories when practical,
   especially phase/mode selectors.
@@ -257,7 +257,7 @@ Kickoff prompts under `exploitdb/` (see `APP_BUILD_BRIEF.md`, prior handoff mess
 - Be careful with `echo` and Windows paths; use `printf` when backslashes or
   escape sequences could be mangled.
 - Timeouts should use the configured runtime variables where present, and logs
-  should show enough budget/progress information for engagement use.
+  should show enough budget/progress information for the engagement use.
 - Tool detection should degrade gracefully for optional tooling and fail early
   for truly required tooling.
 - If a faster helper is optional, preserve coverage through a slower fallback

@@ -324,7 +324,7 @@ def discover(vault_root: Path, exclude_globs: list[str]) -> list[tuple[Path, str
 
 
 def _match_glob(rel: str, pattern: str) -> bool:
-    """A directory-prefix or fnmatch match. `Not FOR engagement/` matches
+    """A directory-prefix or fnmatch match. `Not for the engagement/` matches
     anything under that folder; `*.tmp.md` works too."""
     from fnmatch import fnmatch
     pat = pattern.rstrip("/")

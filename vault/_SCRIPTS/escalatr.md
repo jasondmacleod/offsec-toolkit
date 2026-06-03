@@ -727,8 +727,8 @@ nxc ldap DC_IP -u USER -p PASS -M laps
 
 - [[Linux_PrivEsc]] — manual Linux privesc techniques
 - [[Windows_PrivEsc]] — manual Windows privesc techniques
-- [[OffSec_Linux_PrivEsc_Operational_Addendum]] — engagement-day Linux privesc reference
-- [[OffSec_Windows_PrivEsc_Operational_Addendum]] — engagement-day Windows privesc reference
+- [[OffSec_Linux_PrivEsc_Field_Notes]] — engagement Linux privesc reference
+- [[OffSec_Windows_PrivEsc_Field_Notes]] — engagement Windows privesc reference
 - [[File_Transfers]] — transferring tools when HTTP fails
 - [[Passwords]] — cracking hashes found during enumeration
 - [[Tunneling_Pivoting]] — port forwarding internal listeners

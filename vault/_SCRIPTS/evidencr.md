@@ -9,7 +9,7 @@ tags:
 # evidencr
 
 ## What It Is
-A Kali-side evidence capture script for OffSec engagement reporting. Records flag values, generates a per-machine screenshot checklist, logs your attack chain, and appends everything to a cross-machine ledger. Fills the gap between `lootr.sh` (raw loot) and the Word report template.
+A Kali-side evidence capture script for engagement reporting. Records flag values, generates a per-machine screenshot checklist, logs your attack chain, and appends everything to a cross-machine ledger. Fills the gap between `lootr.sh` (raw loot) and the Word report template.
 
 ## When To Use
 **At every flag.** Run it immediately after capturing `local.txt` or `proof.txt`, before moving to the next machine. Do not wait until the end of the engagement — you will forget details.
@@ -28,7 +28,7 @@ A Kali-side evidence capture script for OffSec engagement reporting. Records fla
 # Interactive — prompts for everything
 ./evidencr.sh -t 10.10.10.5
 
-# Fully flags-driven (fastest on engagement day)
+# Fully flags-driven (fastest on engagement)
 ./evidencr.sh -t 10.10.10.5 -n victim01 --os Linux --flags both \
   --points 20 --category standalone
 
@@ -45,7 +45,7 @@ A Kali-side evidence capture script for OffSec engagement reporting. Records fla
 
 ---
 
-## engagement Day Workflow
+## engagement workflow
 
 ### 1. Get a flag → run evidencr immediately
 
@@ -225,7 +225,7 @@ Rollup mode:
 
 ---
 
-## Rollup Mode — engagement-Wide Summary
+## Rollup Mode — engagement-wide Summary
 
 After each machine evidence pass, run `--rollup` to see engagement-wide status. Parses `evidence_ledger.txt` and reports totals, pass/fail, and MSF-limit audit.
 
@@ -235,8 +235,8 @@ After each machine evidence pass, run `--rollup` to see engagement-wide status. 
 ```
 
 Output includes:
-- **Total points** / 100 and pass status (PASS if ≥70, else points still needed)
-- **Per-category breakdown** (standalone / AD-client / AD-DC — machines + points each)
+- **Total weight captured** and coverage status (objectives met vs. still outstanding)
+- **Per-category breakdown** (standalone / AD-client / AD-DC — hosts + weight each)
 - **Missing flags** — IPs with `local.txt` or `proof.txt` not collected
 - **MSF target count** — warns loudly if >1 (OffSec allows MSF on exactly one target)
 
@@ -291,4 +291,4 @@ Use these as a pre-flight before moving off the machine — any unchecked item =
 
 - `lootr.sh` / `lootr.ps1` — Run on the target to collect raw loot **before** running evidencr. Flag files will be in `loot/<hostname>/proof/`
 - `Creds_Tracker.md` — Update with flag UUIDs as part of step 4 above
-- `OffSec_Exam_Methodology_Complete.md` — Phase 18 covers the full flag → evidence → report workflow
+- `Engagement_Methodology.md` — Phase 18 covers the full flag → evidence → report workflow

@@ -55,7 +55,7 @@ crackr --cewl http://target.htb --cewl-mutate -q -f hashes.txt
 > - Hash-type-specific branches: AS-REP → spray + AD enum, Kerberoast → spray + group check, NTLM → spray + PTH + shell, NTLMv2 → spray + direct shell, Linux hashes → SSH + su, DCC2 → spray, MSSQL → mssqlclient + xp_cmdshell
 > - Extraction-specific branches: SSH private keys → SSH attempts, archives/documents → extract + grep for secrets, VNC/WPA → targeted reuse checks
 > - Commands are emitted only when cracked output or `$TOOLKIT_ROOT/creds.txt` is non-empty
-> - Set **`$OffSec_DOMAIN`** and **`$OffSec_DC`** once at engagement start for domain/DC resolution across all branches:
+> - Set **`$OffSec_DOMAIN`** and **`$OffSec_DC`** once during the engagement start for domain/DC resolution across all branches:
 > ```bash
 > export OffSec_DOMAIN=corp.local
 > export OffSec_DC=10.10.10.1
@@ -105,7 +105,7 @@ Runs escalating attack stages, stops early if all hashes are cracked:
 | 3 | rockyou | best64 |
 | 4 | rockyou | rockyou-30000 |
 
-> [!tip] Use `-q` on engagement day for every hash unless you already know the password policy. It covers 80–90% of OffSec hashes.
+> [!tip] Use `-q` on engagement for every hash unless you already know the password policy. It covers 80–90% of OffSec hashes.
 
 ---
 
@@ -361,7 +361,7 @@ Auto-detected from pattern matching. Handles SAM dump format (`user:rid:lm:ntlm:
 | `single` | — | `single` |
 | `korelogic` | — | `KoreLogic` |
 
-> [!note] `best66` is an alias for `best64` in this script — they point to the same file. Verify `best64.rule` exists on your Kali before engagement day.
+> [!note] `best66` is an alias for `best64` in this script — they point to the same file. Verify `best64.rule` exists on your Kali before engagement.
 
 ---
 
@@ -614,9 +614,9 @@ wevtutil qe Security /q:"*[System[EventID=4648]]" /f:text /rd:true /c:10
 
 ## Related
 
-- [[OffSec_Exam_Methodology_Complete]] — password attacks & credential reuse (Phase 11)
-- [[OffSec_Toolkit_Playbook]] — the AD credential loop: `crackr -q` → `sprayr --from-creds` (§4)
+- [[Engagement_Methodology]] — password attacks & credential reuse (Phase 11)
+- [[Toolkit_Strategy]] — the AD credential loop: `crackr -q` → `sprayr --from-creds` (§4)
 - [[Passwords]] — manual password attack techniques and methodology
 - [[Active_Directory]] — where NTLM, NTLMv2, Kerberoast, AS-REP hashes come from
 - [[Linux_PrivEsc]] — where shadow files come from
-- [[OffSec_Password_Attacks_Mental_Model_Bus_Review]] — decision-tree for attack selection
+- [[OffSec_Password_Attacks_Mental_Model]] — decision-tree for attack selection

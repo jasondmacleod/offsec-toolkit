@@ -74,7 +74,7 @@
     "triggers": ["privesc questions", "three questions privesc", "privesc mental model", "how to think privesc", "where to start privesc"],
     "title": "The three privesc questions (always ask)",
     "answer_type": "chunk_ref",
-    "target_chunk_id": "BUS_REVIEW/OffSec_PrivEsc_Mental_Model_Bus_Review.md#the-three-questions-always-ask",
+    "target_chunk_id": "BUS_REVIEW/OffSec_PrivEsc_Mental_Model.md#the-three-questions-always-ask",
     "tags": "privesc methodology decision",
     "priority": 185
   },
@@ -92,7 +92,7 @@
     "triggers": ["linux high roi", "common linux privesc", "linux engagement failures", "linux privesc patterns", "linux privesc priority"],
     "title": "High-ROI Linux privesc patterns",
     "answer_type": "chunk_ref",
-    "target_chunk_id": "BUS_REVIEW/OffSec_PrivEsc_Mental_Model_Bus_Review.md#high-roi-linux-patterns-these-cause-engagement-failures",
+    "target_chunk_id": "BUS_REVIEW/OffSec_PrivEsc_Mental_Model.md#high-roi-linux-patterns-these-cause-engagement-failures",
     "tags": "linux privesc methodology",
     "priority": 180
   },

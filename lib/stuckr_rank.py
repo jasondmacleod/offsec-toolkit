@@ -95,7 +95,7 @@ def main():
                 continue
             corpus[slug] = {
                 'category': d.get('category', ''),
-                'exam_relevance': e.get('exam_relevance', 'unknown'),
+                'engagement_relevance': e.get('engagement_relevance', 'unknown'),
                 'title': e.get('title', slug),
                 'commands': e.get('commands', []),
                 'tech': e.get('tech', []) if isinstance(e.get('tech'), list) else [],
@@ -202,7 +202,7 @@ def main():
 
     def sort_key(c):
         e = corpus.get(c['slug'])
-        rel = e['exam_relevance'] if e else 'unknown'
+        rel = e['engagement_relevance'] if e else 'unknown'
         return (
             -relevance_rank.get(rel, 0),
             strength_rank.get(c['match_strength'], 2),
@@ -312,12 +312,12 @@ def main():
             # §9 case B: raw alternates from broad-enum category — the operator
             # is staring at a quirky banner with no symptom-map hook, so the
             # right surface is general recon, not whatever happens to have
-            # `critical` exam_relevance globally.
+            # `critical` engagement_relevance globally.
             raw_pool = [(s, e) for s, e in corpus.items()
                         if e['category'] == 'recon_enum']
             ranked_raw = sorted(
                 raw_pool,
-                key=lambda kv: -relevance_rank.get(kv[1]['exam_relevance'], 0)
+                key=lambda kv: -relevance_rank.get(kv[1]['engagement_relevance'], 0)
             )[:5]
             for slug, e in ranked_raw:
                 out.append(f"raw|{slug}|{e['title']}")

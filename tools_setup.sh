@@ -2,7 +2,7 @@
 # =============================================================================
 # tools_setup.sh — OffSec Tool Staging Installer
 # Installs Kali-side tools (apt/pip/gem) and downloads precompiled Windows/
-# Linux binaries into ~/tools/ for engagement-day serving via python3 -m http.server
+# Linux binaries into ~/tools/ for engagement serving via python3 -m http.server
 #
 # Usage: sudo ./tools_setup.sh
 #        sudo ./tools_setup.sh --check     # verify without installing
@@ -104,7 +104,7 @@ gh_latest_url() {
 }
 
 # Cleanup temp files on interrupt — only our own files/dirs (prefixed offsec_)
-trap 'rm -rf /tmp/offsec_*.tar.gz /tmp/offsec_*.zip /tmp/offsec_*.gz /tmp/offsec_* 2>/dev/null' EXIT INT TERM
+trap 'rm -rf /tmp/toolkit_*.tar.gz /tmp/toolkit_*.zip /tmp/toolkit_*.gz /tmp/toolkit_* 2>/dev/null' EXIT INT TERM
 
 # Simple direct download — skip if dest already exists
 download() {
@@ -145,8 +145,8 @@ dl_targz() {
     fi
     log_info "  Downloading: ${label}"
     local tmp tmpdir
-    tmp=$(mktemp /tmp/offsec_XXXXXX.tar.gz)
-    tmpdir=$(mktemp -d /tmp/offsec_XXXXXX)
+    tmp=$(mktemp /tmp/toolkit_XXXXXX.tar.gz)
+    tmpdir=$(mktemp -d /tmp/toolkit_XXXXXX)
     if curl -fsSL --retry 3 --retry-delay 2 -o "$tmp" "$url" 2>/dev/null; then
         tar -xzf "$tmp" -C "$tmpdir" 2>/dev/null || true
         local extracted
@@ -178,8 +178,8 @@ dl_zip() {
     fi
     log_info "  Downloading: ${label}"
     local tmp tmpdir
-    tmp=$(mktemp /tmp/offsec_XXXXXX.zip)
-    tmpdir=$(mktemp -d /tmp/offsec_XXXXXX)
+    tmp=$(mktemp /tmp/toolkit_XXXXXX.zip)
+    tmpdir=$(mktemp -d /tmp/toolkit_XXXXXX)
     if curl -fsSL --retry 3 --retry-delay 2 -o "$tmp" "$url" 2>/dev/null; then
         unzip -q "$tmp" -d "$tmpdir" 2>/dev/null || true
         local extracted
@@ -211,7 +211,7 @@ dl_gz() {
     fi
     log_info "  Downloading: ${label}"
     local tmp
-    tmp=$(mktemp /tmp/offsec_XXXXXX.gz)
+    tmp=$(mktemp /tmp/toolkit_XXXXXX.gz)
     if curl -fsSL --retry 3 --retry-delay 2 -o "$tmp" "$url" 2>/dev/null; then
         if gunzip -c "$tmp" > "$dest" 2>/dev/null; then
             chmod +x "$dest"
@@ -424,7 +424,7 @@ if [[ "$CHECK_ONLY" == true ]]; then
         echo -e "\n${YELLOW}Run without --check to install missing tools.${NC}"
         exit 1
     else
-        echo -e "\n${GREEN}${BOLD}All tools present. Ready for engagement day.${NC}"
+        echo -e "\n${GREEN}${BOLD}All tools present. Ready for engagement.${NC}"
     fi
     exit 0
 fi
@@ -538,8 +538,8 @@ if [[ -f "${WIN_DIR}/mimikatz.exe" ]]; then
     log_warn "  SKIP (exists): mimikatz.exe"; SKIPPED+=("mimikatz.exe")
 elif [[ -n "$MK_ZIP_URL" ]]; then
     log_info "  Downloading: mimikatz (zip)"
-    tmp_zip=$(mktemp /tmp/offsec_mk_XXXXXX.zip)
-    tmp_dir=$(mktemp -d /tmp/offsec_mk_XXXXXX)
+    tmp_zip=$(mktemp /tmp/toolkit_mk_XXXXXX.zip)
+    tmp_dir=$(mktemp -d /tmp/toolkit_mk_XXXXXX)
     if curl -fsSL --retry 3 -o "$tmp_zip" "$MK_ZIP_URL" 2>/dev/null; then
         unzip -q "$tmp_zip" -d "$tmp_dir" 2>/dev/null || true
         mk_bin=$(find "$tmp_dir" -name "mimikatz.exe" -path "*/x64/*" | head -1)
@@ -653,7 +653,7 @@ echo -e "  penelope → ${TOOLS_DIR}/penelope.py"
 echo -e "  RunasCs  → ${WIN_DIR}/RunasCs.exe"
 echo -e "  SeManageVolumeExploit → ${WIN_DIR}/SeManageVolumeExploit.exe"
 
-echo -e "\n${BOLD}engagement-day file server:${NC}"
+echo -e "\n${BOLD}engagement file server:${NC}"
 echo -e "  cd ${WIN_DIR} && python3 -m http.server 80"
 echo ""
 

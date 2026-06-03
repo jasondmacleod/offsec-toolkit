@@ -972,7 +972,7 @@
   paste_command: null
   explanation: |
     Exploit requires lab-prep work (mona scripts, debugger attach, offset
-    discovery). Out of scope for engagement-day repair per vault §5 warning.
+    discovery). Out of scope for engagement repair per vault §5 warning.
     Classification-only — abandon and find a working ExploitDB PoC.
   references:
     - vault_path: vault/_CHEATSHEETS/Fixing_Exploits.md#section-5-fixing-buffer-overflow-exploits

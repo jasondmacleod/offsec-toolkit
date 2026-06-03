@@ -27,6 +27,6 @@ The **outcome classifier** (decision layer). Reads captured exploit/post-ex outp
 Never executes, never opens sockets, never re-runs the exploit. Requires `orient` to have run for the target before state writes are meaningful.
 
 ## Read more
-- Workflow: [[OffSec_Exam_Methodology_Complete]] Phase 6 (foothold), Phases 7–8 (privesc loot), Phase 9 (AD)
-- Sequence: [[OffSec_Toolkit_Playbook]] §2 (invocation order), §4 (AD credential loop)
+- Workflow: [[Engagement_Methodology]] Phase 6 (foothold), Phases 7–8 (privesc loot), Phase 9 (AD)
+- Sequence: [[Toolkit_Strategy]] §2 (invocation order), §4 (AD credential loop)
 - Ground truth: `./targetcheckr.sh --help`

@@ -14,7 +14,7 @@ Multi-protocol credential spray wrapper. Given a cracked or obtained credential,
 
 **Authentication testing only — no command execution.**
 
-> [!important] **The engagement default loop:** After ANY successful crack → `./sprayr.sh --from-creds`. After spray → read `next_steps.txt` for pre-built follow-on commands. This is the credential loop.
+> [!important] **the engagement default loop:** After ANY successful crack → `./sprayr.sh --from-creds`. After spray → read `next_steps.txt` for pre-built follow-on commands. This is the credential loop.
 
 > [!warning] Lockout risk — read before running
 > Domain sprays with a user file can trigger lockouts. Always check the lockout policy first with `adr.sh --quick`. Use `--safe` when spraying domain accounts.
@@ -24,7 +24,7 @@ Multi-protocol credential spray wrapper. Given a cracked or obtained credential,
 ## Quick Reference
 
 ```bash
-# ★ Re-spray ALL creds after any crack (THE engagement default — one command covers everything)
+# ★ Re-spray ALL creds after any crack (the engagement default — one command covers everything)
 ./sprayr.sh --from-creds
 
 # Validate a cracked password against all protocols
@@ -93,7 +93,7 @@ Multi-protocol credential spray wrapper. Given a cracked or obtained credential,
 | `--no-color` | off | Disable ANSI colors (also: `export NO_COLOR=1`) |
 
 When launched through `sudo`, the default `$TOOLKIT_ROOT` resolves to the invoking
-user's home directory instead of `/root/offsec`.
+user's home directory instead of `/root/toolkit`.
 
 ---
 
@@ -186,7 +186,7 @@ SSH and FTP do not support NTLM hash auth — auto-skipped with a warning when u
 
 ## Common Workflows
 
-### ★ Re-spray all known creds (THE engagement default)
+### ★ Re-spray all known creds (the engagement default)
 ```bash
 # After crackr.sh cracks anything — spray every cred in creds.txt
 # against every host found in recon. One command covers the whole network.
@@ -411,10 +411,10 @@ Get-ADFineGrainedPasswordPolicy -Filter * | Select-Object Name, LockoutThreshold
 
 ## Related
 
-- [[OffSec_Exam_Methodology_Complete]] — credential spraying (Phase 11)
-- [[OffSec_Toolkit_Playbook]] — the AD credential loop: `crackr -q` → `sprayr --from-creds` (§4)
+- [[Engagement_Methodology]] — credential spraying (Phase 11)
+- [[Toolkit_Strategy]] — the AD credential loop: `crackr -q` → `sprayr --from-creds` (§4)
 - [[adr]] — run first to get users/all_users.txt and check lockout policy
 - [[crackr]] — crack the hashes that sprayr.sh then validates
 - [[Active_Directory_PtH_PtT]] — what to do after Pwn3d! hits
 - [[Active_Directory]] — broader AD attack methodology
-- [[OffSec_AD_Mental_Model_Bus_Review]] — decision-tree for lateral movement
+- [[OffSec_AD_Mental_Model]] — decision-tree for lateral movement

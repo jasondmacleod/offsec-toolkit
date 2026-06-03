@@ -8,7 +8,7 @@ tags:
 ---
 # lootr — Linux + Windows Loot Collection Cheatsheet
 
-> [!note] engagement Relevance
+> [!note] relevance
 > Use **lootr.sh** on Linux footholds and **lootr.ps1** on Windows footholds to collect flags, credentials, privesc leads, and pivot data fast. This is **post-exploitation enumeration only**, which fits your OffSec workflow and should be run early after stable shell access.
 
 ---
@@ -493,7 +493,6 @@ copy \\?\GLOBALROOT\Device\HarddiskVolumeShadowCopy1\Windows\System32\config\SYS
 
 ## Related
 
-- [[OffSec_Exam_Methodology_Complete]]
 - [[Reverse_Shells]]
 - [[Linux_PrivEsc]]
 - [[Windows_PrivEsc]]

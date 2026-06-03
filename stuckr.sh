@@ -271,7 +271,7 @@ report_target() {
         # §9 case B
         printf '%sno confident suggestions from the symptom map.%s\n' "$YELLOW" "$NC"
         echo
-        printf 'raw alternates from exploitdb (top 5 by exam_relevance):\n'
+        printf 'raw alternates from exploitdb (top 5 by engagement_relevance):\n'
         local line slug title
         for line in "${raw_lines[@]}"; do
             IFS='|' read -r _ slug title <<< "$line"

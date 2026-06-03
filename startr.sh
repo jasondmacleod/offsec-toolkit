@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #==============================================================================
-# STARTR.SH — OffSec engagement Day Launch Automation
+# STARTR.SH — engagement Day Launch Automation
 #==============================================================================
 # Automates the first 10-15 minutes of engagement setup:
 #   - Workspace directory creation
@@ -16,7 +16,7 @@
 #   ./startr.sh -f targets.txt [--recon]
 #   ./startr.sh --attach
 #
-# DESIGN: Enumeration/setup only — no exploitation. OffSec engagement compliant.
+# DESIGN: Enumeration/setup only — no exploitation. engagement compliant.
 #==============================================================================
 
 set -o pipefail
@@ -31,10 +31,10 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 if [[ -z "${TOOLKIT_ROOT:-}" ]]; then
     if [[ -n "${SUDO_USER:-}" ]]; then
         _inv_home=$(getent passwd "$SUDO_USER" 2>/dev/null | cut -d: -f6)
-        TOOLKIT_ROOT="${_inv_home:-$HOME}/offsec"
+        TOOLKIT_ROOT="${_inv_home:-$HOME}/toolkit"
         unset _inv_home
     else
-        TOOLKIT_ROOT="${HOME}/offsec"
+        TOOLKIT_ROOT="${HOME}/toolkit"
     fi
 fi
 EXAM_DATE="$(date +%F)"
@@ -75,7 +75,7 @@ header()  { echo -e "\n${BOLD}${CYAN}══════════════�
 #------------------------------------------------------------------------------
 usage() {
     cat <<EOF
-${BOLD}STARTR.SH${NC} — OffSec engagement Day Launch Automation
+${BOLD}STARTR.SH${NC} — engagement Day Launch Automation
 
 ${BOLD}USAGE:${NC}
   $0 --sa1 IP --sa2 IP --sa3 IP --ad1 IP --ad2 IP --dc IP \\
@@ -282,7 +282,7 @@ create_workspace() {
     if [[ ! -f "${EXAM_DIR}/creds.txt" ]]; then
         cat > "${EXAM_DIR}/creds.txt" <<'CREDS'
 #==============================================================================
-# CREDENTIALS LOG — OffSec engagement
+# CREDENTIALS LOG — engagement
 #==============================================================================
 # Format: TIMESTAMP | PROTO | HOST | USER | CRED | NOTE
 #-----------------------------------------------------------------------------|
@@ -298,7 +298,7 @@ CREDS
     if [[ ! -f "${EXAM_DIR}/hosts.txt" ]]; then
         cat > "${EXAM_DIR}/hosts.txt" <<HOSTS
 #==============================================================================
-# HOSTS — OffSec engagement ${EXAM_DATE}
+# HOSTS — engagement ${EXAM_DATE}
 #==============================================================================
 # Label    IP               Role
 #----------|----------------|------------------
@@ -480,7 +480,7 @@ print_summary() {
     local wbi
     wbi="$(tmux show-option -gv base-index 2>/dev/null || echo 0)"
 
-    header "engagement ENVIRONMENT READY"
+    header "engagement environment READY"
 
     echo -e ""
     echo -e "  ${BOLD}Kali IP:${NC}    ${GREEN}${KALI_IP}${NC}"
@@ -569,7 +569,7 @@ main() {
     # Validate
     validate_inputs
 
-    header "OffSec engagement DAY — LET'S GO"
+    header "engagement DAY — LET'S GO"
     info "Date: ${EXAM_DATE}"
 
     # Initialize KALI_IP before workspace/env (preflight sets it)

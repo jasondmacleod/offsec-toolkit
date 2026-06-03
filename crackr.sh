@@ -45,10 +45,10 @@ disable_colors() { RED='' GREEN='' YELLOW='' CYAN='' BOLD='' NC=''; }
 if [[ -z "${TOOLKIT_ROOT:-}" ]]; then
     if [[ -n "${SUDO_USER:-}" ]]; then
         _inv_home=$(getent passwd "$SUDO_USER" 2>/dev/null | cut -d: -f6)
-        TOOLKIT_ROOT="${_inv_home:-$HOME}/offsec"
+        TOOLKIT_ROOT="${_inv_home:-$HOME}/toolkit"
         unset _inv_home
     else
-        TOOLKIT_ROOT="${HOME}/offsec"
+        TOOLKIT_ROOT="${HOME}/toolkit"
     fi
 fi
 WORDLIST="/usr/share/wordlists/rockyou.txt"

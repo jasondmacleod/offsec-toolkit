@@ -56,7 +56,7 @@ set -o pipefail
 # Resolve TOOLKIT_ROOT to the invoking user's home when run through sudo.
 if [[ -z "${TOOLKIT_ROOT:-}" ]]; then
     if [[ -n "${SUDO_USER:-}" && "$SUDO_USER" != "root" ]]; then
-        TOOLKIT_ROOT="$(eval echo "~${SUDO_USER}")/offsec"
+        TOOLKIT_ROOT="$(eval echo "~${SUDO_USER}")/toolkit"
     else
         TOOLKIT_ROOT="$HOME/toolkit"
     fi

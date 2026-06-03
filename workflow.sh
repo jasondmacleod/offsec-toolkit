@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #==============================================================================
-# workflow.sh — OffSec engagement Workflow Quick Reference
+# workflow.sh — engagement Workflow Quick Reference
 # Prints the recommended attack flow with exact commands using the toolkit.
 #
 # Usage: ./workflow.sh [phase] [--no-color]

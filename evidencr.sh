@@ -27,10 +27,10 @@ disable_colors() { USE_COLOR=false; }
 if [[ -z "${TOOLKIT_ROOT:-}" ]]; then
     if [[ -n "${SUDO_USER:-}" ]]; then
         _inv_home=$(getent passwd "$SUDO_USER" 2>/dev/null | cut -d: -f6)
-        TOOLKIT_ROOT="${_inv_home:-$HOME}/offsec"
+        TOOLKIT_ROOT="${_inv_home:-$HOME}/toolkit"
         unset _inv_home
     else
-        TOOLKIT_ROOT="${HOME}/offsec"
+        TOOLKIT_ROOT="${HOME}/toolkit"
     fi
 fi
 OUTDIR="${TOOLKIT_ROOT}/evidence"
@@ -121,8 +121,8 @@ Options:
 
 Rollup mode:
   --rollup             Parse evidence_ledger.txt and print engagement-wide summary:
-                         total points, per-category breakdown, missing flags,
-                         MSF count vs OffSec limit, pass/fail vs 70-pt threshold.
+                         total weight captured, per-category breakdown, missing flags,
+                         MSF count vs the one-target limit, coverage vs objectives.
 EOF
 }
 
@@ -906,7 +906,7 @@ report_reminder() {
 NEXT STEPS:
   1. Take all screenshots listed in:
        ${SCREENSHOT_DIR}/checklist.txt
-  2. Transfer attack chain notes to your Obsidian engagement day notes
+  2. Transfer attack chain notes to your Obsidian engagement notes
   3. Copy flag values to your Creds_Tracker.md
   4. Verify nothing was missed in the creds ledger:
        cat ${TOOLKIT_ROOT}/creds.txt
@@ -1026,12 +1026,8 @@ rollup() {
         }
         END {
             print ""
-            printf "  Machines recorded:  %d\n", total_machines
-            printf "  Total points:       %d / 100\n", total_points
-            if (total_points >= 70)
-                printf "  Status:             PASS (>= 70)\n"
-            else
-                printf "  Status:             %d more points needed to pass\n", 70 - total_points
+            printf "  Hosts recorded:     %d\n", total_machines
+            printf "  Weight captured:    %d\n", total_points
             print ""
             print "  By category:"
             for (c in by_cat_count)

@@ -83,7 +83,7 @@
     "triggers": ["web categories", "web mental model", "types of web attack", "web attack categories", "how to think web"],
     "title": "The 5 web attack categories",
     "answer_type": "chunk_ref",
-    "target_chunk_id": "BUS_REVIEW/OffSec_Web_Mental_Model_Bus_Review.md#the-5-web-attack-categories",
+    "target_chunk_id": "BUS_REVIEW/OffSec_Web_Mental_Model.md#the-5-web-attack-categories",
     "tags": "web methodology",
     "priority": 185
   },

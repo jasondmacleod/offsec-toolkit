@@ -2,7 +2,7 @@
 #==============================================================================
 # servr.sh — OffSec File Server Launcher
 #==============================================================================
-# Single-file, foreground-only server launcher for engagement use.
+# Single-file, foreground-only server launcher for the engagement use.
 # Supports HTTP, SMB, and FTP with ready-to-use copy/paste commands.
 #==============================================================================
 

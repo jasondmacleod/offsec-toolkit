@@ -1,15 +1,13 @@
 ---
 tags:
-  - type/engagement
   - type/tool-docs
-  - tool/startr
 ---
 
-# startr.sh — engagement Day Launch Automation
+# startr.sh — engagement Launch Automation
 
 Automates the first 10–15 minutes of engagement setup: workspace creation, tmux session with named windows, environment variables, file server staging, connectivity checks, and auto-recon launch.
 
-> [!important] Run this the moment you have your target IPs. It replaces the manual setup in [[Exam_Quickstart]].
+> [!important] Run this the moment you have your target IPs. It replaces the manual setup in [[Quickstart]].
 
 ---
 
@@ -23,7 +21,7 @@ Automates the first 10–15 minutes of engagement setup: workspace creation, tmu
   --domain corp.com --aduser stephanie --adpass 'Password123!' \
   --recon
 
-# Or load targets from a file (recommended — pre-create template before engagement day)
+# Or load targets from a file (recommended — pre-create template before engagement)
 ./startr.sh -f targets.txt --recon
 
 # Re-attach after VPN drop or terminal crash
@@ -48,7 +46,7 @@ ADUSER=stephanie
 ADPASS=Password123!
 ```
 
-> [!tip] Pre-create this file template before engagement day. On engagement start, just fill in the IPs and run `./startr.sh -f targets.txt --recon`.
+> [!tip] Pre-create this file template before engagement. in an engagement start, just fill in the IPs and run `./startr.sh -f targets.txt --recon`.
 
 ---
 
@@ -64,7 +62,7 @@ ADPASS=Password123!
 8. **Prints summary** — target map, tmux navigation, quick reference commands, engagement end time
 
 > [!warning] Toolkit Directory
-> The file server serves from `~/tools/` — the same path `tools_setup.sh` populates. Make sure this directory exists and is populated with your transfer tools (linpeas, winpeas, nc, chisel, etc.) **before engagement day**.
+> The file server serves from `~/tools/` — the same path `tools_setup.sh` populates. Make sure this directory exists and is populated with your transfer tools (linpeas, winpeas, nc, chisel, etc.) **before engagement**.
 
 ---
 
@@ -216,10 +214,10 @@ cd ~/tools && python3 -m http.server 80
 
 ## Related
 
-- [[Exam_Quickstart]] — manual fallback if startr fails
+- [[Quickstart]] — manual fallback if startr fails
 - [[tmux]] — tmux commands and navigation
 - [[recon]] — recon script launched by `--recon`
 - [[Creds_Tracker]] — structured credential tracking (separate from the `creds.txt` scratchpad)
 - [[lootr]] — post-exploitation loot collection after first shell
 - [[evidencr]] — evidence capture at every flag
-- [[OffSec_Exam_Methodology_Complete]] — full engagement playbook
+- [[Engagement_Methodology]] — full engagement playbook

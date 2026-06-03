@@ -4,7 +4,7 @@
     "triggers": ["which script", "what script", "scripts overview", "toolkit scripts", "list scripts", "script for", "13 scripts"],
     "title": "Which script does what (toolkit at a glance)",
     "answer_type": "chunk_ref",
-    "target_chunk_id": "BUS_REVIEW/Toolkit_Strategy_Bus_Review.md#the-13-scripts-at-a-glance",
+    "target_chunk_id": "BUS_REVIEW/Toolkit_Strategy.md#the-13-scripts-at-a-glance",
     "tags": "toolkit scripts overview",
     "priority": 195
   },
@@ -13,7 +13,7 @@
     "triggers": ["script interaction", "script map", "how scripts connect", "script pipeline", "scripts together", "script flow"],
     "title": "Script interaction map",
     "answer_type": "chunk_ref",
-    "target_chunk_id": "BUS_REVIEW/Toolkit_Strategy_Bus_Review.md#script-interaction-map-quick-reference",
+    "target_chunk_id": "BUS_REVIEW/Toolkit_Strategy.md#script-interaction-map-quick-reference",
     "tags": "toolkit scripts overview",
     "priority": 185
   },
@@ -22,7 +22,7 @@
     "triggers": ["recon", "recon.sh", "recon script", "recon orchestrator", "offsec recon"],
     "title": "recon.sh — recon orchestrator",
     "answer_type": "chunk_ref",
-    "target_chunk_id": "_SCRIPTS/recon.md#engagement-day-workflow",
+    "target_chunk_id": "_SCRIPTS/recon.md#engagement workflow",
     "tags": "toolkit recon script",
     "priority": 185
   },
@@ -85,7 +85,7 @@
     "triggers": ["webenum", "webenum.sh", "web enum script", "web enumeration script"],
     "title": "webenum.sh — deep web enumeration",
     "answer_type": "chunk_ref",
-    "target_chunk_id": "BUS_REVIEW/Toolkit_Strategy_Bus_Review.md#phase-1b-web-enum-webenum-sh",
+    "target_chunk_id": "BUS_REVIEW/Toolkit_Strategy.md#phase-1b-web-enum-webenum-sh",
     "tags": "toolkit web script",
     "priority": 180
   },
@@ -94,7 +94,7 @@
     "triggers": ["servr", "servr.sh", "file server script", "http server script", "workspace script"],
     "title": "servr.sh — workspace / file serving",
     "answer_type": "chunk_ref",
-    "target_chunk_id": "BUS_REVIEW/Toolkit_Strategy_Bus_Review.md#phase-4-file-serving-servr-sh",
+    "target_chunk_id": "BUS_REVIEW/Toolkit_Strategy.md#phase-4-file-serving-servr-sh",
     "tags": "toolkit serving script",
     "priority": 180
   }

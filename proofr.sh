@@ -407,7 +407,7 @@ audit_target() {
 }
 
 #------------------------------------------------------------------------------
-# engagement-WIDE FOOTER
+# engagement-wide FOOTER
 #------------------------------------------------------------------------------
 print_footer() {
     local all_mode="$1"
@@ -450,7 +450,7 @@ print_footer() {
            bump_rc 2 ;;
     esac
 
-    printf '  point total → run: evidencr --rollup\n'
+    printf '  weight total → run: evidencr --rollup\n'
 }
 
 #------------------------------------------------------------------------------
