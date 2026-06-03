@@ -590,8 +590,4 @@ ip -6 neigh                                        # find IPv6 neighbors on the 
 ## Related
 
 - [[Toolkit_Strategy]] — engagement run order: recon → `orient` → decision tools
-- [[Active_Recon]] — manual recon to supplement or fill gaps
-- [[Web_App]] — manual follow-up on HTTP findings
 - [[webenum]] — deeper web enumeration (webenum.sh)
-- [[Passwords]] — crack anything surfaced in quick_wins
-- [[Active_Directory]] — AD-specific enumeration after initial access

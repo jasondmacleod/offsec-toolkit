@@ -1328,8 +1328,6 @@ The table below maps each gap to its phase and the manual technique to fill it.
 
 ## Related
 
-- [[Creds_Tracker]] — live credential tracking
-- [[Active_Directory]] — manual AD techniques
 - [[startr]] — startr.sh cheatsheet (engagement launcher)
 - [[recon]] — recon.sh cheatsheet
 - [[webenum]] — webenum.sh cheatsheet

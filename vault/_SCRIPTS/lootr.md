@@ -145,7 +145,7 @@ The scripts handle all collection logic. This section tells you **what to look f
 | `files` | `files/suid_binaries.txt`, `files/capabilities.txt`, `files/cron_jobs.txt`, `files/recently_modified.txt` | GTFOBins candidates, cap_setuid, writable cron scripts, fresh changes |
 | `procs` | `procs/root_processes.txt`, `procs/services.txt` | Root-owned services to abuse, pspy candidates |
 
-> For exploitation steps on SUID, capabilities, cron, and other Linux privesc vectors → [[Linux_PrivEsc]]
+> For exploitation steps on SUID, capabilities, cron, and other Linux privesc vectors →
 
 ### Windows — `lootr.ps1`
 
@@ -157,7 +157,7 @@ The scripts handle all collection logic. This section tells you **what to look f
 | `network` | `network\internal_listeners.txt`, `network\shares.txt`, `network\mapped_drives.txt`, `network\hosts.txt` | 127.0.0.1 services to tunnel, SMB shares to loot, lateral targets |
 | `files` | `files\always_install_elevated.txt`, `files\unquoted_service_paths.txt`, `files\writable_service_binaries.txt`, `files\writable_path_dirs.txt`, `files\dll_hijack_candidates.txt` | Direct privesc vectors — each maps to a known technique |
 
-> For exploitation steps on AlwaysInstallElevated, service abuse, potato attacks, and other Windows privesc vectors → [[Windows_PrivEsc]]
+> For exploitation steps on AlwaysInstallElevated, service abuse, potato attacks, and other Windows privesc vectors →
 
 ## Review Order After Execution
 
@@ -477,9 +477,6 @@ copy \\?\GLOBALROOT\Device\HarddiskVolumeShadowCopy1\Windows\System32\config\SYS
 
 ## Related
 
-- [[Reverse_Shells]]
-- [[Linux_PrivEsc]]
-- [[Windows_PrivEsc]]
 - [[pivotr]]
 - [[sprayr]]
 - [[crackr]]

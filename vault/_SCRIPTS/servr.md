@@ -289,7 +289,5 @@ ip a show tun0
 
 ## Related
 
-- [[File_Transfers]] — manual fallback methods when servr.sh isn't available (restricted Kali env, pivot host serving, base64/exe2hex last resorts)
-- [[Reverse_Shells]] — payload generation (msfvenom); servr.sh is the delivery mechanism post-generation
 - [[pivotr]] — if target can't reach Kali directly, set up Ligolo tunnel first, then run servr.sh normally (use pivot IP on target)
 - [[escalatr]] — tools staged and served by escalatr.sh use HTTP (same pattern as servr.sh http)

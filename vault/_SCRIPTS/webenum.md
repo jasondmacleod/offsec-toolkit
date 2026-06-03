@@ -785,8 +785,4 @@ curl -sk "http://IP/index.php."      # trailing dot (IIS)
 ## Related
 
 - [[recon]] — run this first to find HTTP services
-- [[Web_App]] — web attack vectors after enumeration
-- [[SQL_Injection]] — if webenum finds login/search forms
-- [[Burp_Suite]] — manual testing after webenum finds endpoints
 - [[Toolkit_Strategy]] — engagement run order; `livefetch --stage web` for re-fetch + delta
-- [[Reverse_Shells]] — use Penelope with -O flag after exploitation

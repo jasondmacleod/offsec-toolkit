@@ -584,7 +584,4 @@ curl http://127.0.0.1:8888/
 
 ## Related
 
-- [[_SCRIPTS/ligolo-ng]] — manual Ligolo-ng commands, console reference, troubleshooting
-- [[Tunneling_Pivoting]] — manual techniques and theory
-- [[Active_Recon]] — scanning internal networks after pivot is established
 - [[recon]] — run against internal hosts once routing is up

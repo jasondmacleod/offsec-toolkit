@@ -54,7 +54,7 @@ ADPASS=Password123!
 
 1. **Pre-flight checks** — verifies tmux installed, VPN connected (tun0), pings all targets
 2. **Creates workspace** — `~/toolkit/exam_YYYY-MM-DD/` with per-target subdirectories
-3. **Initializes tracking** — `creds.txt` (scratchpad, pre-populated with AD assumed-breach creds) and `hosts.txt` (all target IPs). Structured credential tracking stays in [[Creds_Tracker]]
+3. **Initializes tracking** — `creds.txt` (scratchpad, pre-populated with AD assumed-breach creds) and `hosts.txt` (all target IPs). Structured credential tracking stays in
 4. **Writes env.sh** — exports target IPs, AD creds, Kali IP, workspace path — sourced in every tmux pane
 5. **Builds tmux session** — 6 named windows with splits, env sourced in all panes
 6. **Starts file server** — HTTP server on port 80 from `~/tools/` in the staging window
@@ -215,6 +215,5 @@ cd ~/tools && python3 -m http.server 80
 ## Related
 
 - [[recon]] — recon script launched by `--recon`
-- [[Creds_Tracker]] — structured credential tracking (separate from the `creds.txt` scratchpad)
 - [[lootr]] — post-exploitation loot collection after first shell
 - [[evidencr]] — evidence capture at every flag

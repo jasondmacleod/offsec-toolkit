@@ -679,11 +679,3 @@ nxc ldap DC_IP -u USER -p PASS -M laps
 ```
 
 ---
-
-## Related
-
-- [[Linux_PrivEsc]] — manual Linux privesc techniques
-- [[Windows_PrivEsc]] — manual Windows privesc techniques
-- [[File_Transfers]] — transferring tools when HTTP fails
-- [[Passwords]] — cracking hashes found during enumeration
-- [[Tunneling_Pivoting]] — port forwarding internal listeners

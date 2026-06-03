@@ -306,10 +306,7 @@ pip install bloodhound-ce
 ## Related
 
 - [[Toolkit_Strategy]] — engagement run order; the AD credential loop (§4)
-- [[Active_Directory]] — manual AD attack techniques
 - [[crackr]] — crack the hashes from `hashes/asreproast.txt` and `hashes/kerberoast.txt`
-- [[Active_Directory_PtH_PtT]] — use cracked hashes for lateral movement
-- [[Tunneling_Pivoting]] — pivot to reach internal DC
 
 
 ## `--chain` — Interactive AD Kill Chain
