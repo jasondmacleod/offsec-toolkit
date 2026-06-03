@@ -9,7 +9,7 @@ tags:
 # OffSec Toolkit Master Strategy Guide
 
 > [!important] This Is Your engagement Runbook
-> You have 14 scripts. This document tells you exactly when to fire each one, in what order, what to do with the output, and what to do when something comes back empty. under time pressure, follow this — don't improvise the sequence.
+> You have 21 scripts. This document tells you exactly when to fire each one, in what order, what to do with the output, and what to do when something comes back empty. under time pressure, follow this — don't improvise the sequence.
 
 ---
 
@@ -43,7 +43,7 @@ Verify the evidence-gated next-step rules after script edits:
 
 ---
 
-## The 14 Scripts at a Glance
+## The 21 Scripts at a Glance
 
 | Script | Role | Phase | Runs On |
 |--------|------|-------|---------|
@@ -311,7 +311,6 @@ Act on `summary.md`, `quick_wins.txt`, and `hosts_entries.txt` using the decisio
 
 ```bash
 ./webenum.sh --url http://IP --deep
-# Still nothing after deep? → manual wordlists, different extensions per tech stack
 # >30 min with no foothold vector? → move to a different target
 ```
 
@@ -1201,7 +1200,7 @@ All creds auto-logged to $TOOLKIT_ROOT/creds.txt by adr.sh, crackr.sh, sprayr.sh
 
 ## Toolkit Blind Spots — What the Scripts Don't Cover
 
-> [!warning] The 13 scripts automate the common path. This section is your manual testing checklist. If you're stuck, something you need is probably here.
+> [!warning] The 21 scripts automate the common path. This section is your manual testing checklist. If you're stuck, something you need is probably here.
 
 The table below maps each gap to its phase and the manual technique to fill it.
 
@@ -1329,8 +1328,6 @@ The table below maps each gap to its phase and the manual technique to fill it.
 
 ## Related
 
-- [[Engagement_Methodology]] — full engagement attack chain
-- [[Triage_Decision_Tree]] — when you're genuinely stuck
 - [[Creds_Tracker]] — live credential tracking
 - [[Active_Directory]] — manual AD techniques
 - [[startr]] — startr.sh cheatsheet (engagement launcher)

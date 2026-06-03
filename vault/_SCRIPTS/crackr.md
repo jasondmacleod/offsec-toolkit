@@ -429,7 +429,6 @@ crackr -f hashes.txt -m 0               # force MD5
 # "All hashes already in potfile" — show results
 crackr --show -f hashes.txt
 
-# KeePass extraction: strip prefix
 # (script does this automatically with -e keepass)
 keepass2john db.kdbx | sed 's/^[^:]*://' > keepass.hash
 crackr -f keepass.hash -m 13400 -q
@@ -452,16 +451,6 @@ crackr -f keepass.hash -m 13400 -q
 hashid hash.txt
 hashcat --example-hashes | grep -A3 "NTLM\|sha512\|bcrypt"
 
-# hashcat mode reference
-# 1000  = NTLM (Windows)
-# 5600  = NTLMv2 (Net-NTLMv2, from Responder)
-# 13100 = Kerberoast (TGS-REP etype 23)
-# 18200 = AS-REP (etype 23)
-# 1800  = sha512crypt (Linux /etc/shadow $6$)
-# 500   = md5crypt ($1$)
-# 3200  = bcrypt ($2y$)
-# 13400 = KeePass
-# 22000 = WPA2
 # 7z, zip = 11600, 13600
 ```
 
@@ -504,7 +493,6 @@ echo "jsmith" | hashcat -m 1000 hash.txt --stdin -r /usr/share/hashcat/rules/bes
 ### NTLMv2 Hashes (From Responder / Relay)
 
 ```bash
-# NTLMv2 must be cracked offline — cannot be passed directly
 # Format: user::domain:challenge:response:blob
 hashcat -m 5600 ntlmv2.txt /usr/share/wordlists/rockyou.txt
 
@@ -521,11 +509,6 @@ john --wordlist=/usr/share/wordlists/rockyou.txt ntlmv2.txt
 ### DPAPI — Credential Blobs From lootr/Windows
 
 ```bash
-# DPAPI master key + credential blobs
-# Transfer the following from target to Kali:
-# - C:\Users\user\AppData\Roaming\Microsoft\Protect\<SID>\<master-key-file>
-# - C:\Users\user\AppData\Roaming\Microsoft\Credentials\*
-
 # Decrypt with domain backup key (requires DC access)
 impacket-dpapi backupkeys --export -t corp.local/admin:pass@DC_IP
 impacket-dpapi masterkey -file <masterkey-file> -pvk ntds_capi_0.pvk
@@ -543,8 +526,6 @@ impacket-dpapi masterkey -file <masterkey-file> -password userpass -sid user-SID
 # KeePass 2.x — extract hash
 keepass2john Database.kdbx | sed 's/^[^:]*://' > keepass.hash
 hashcat -m 13400 keepass.hash /usr/share/wordlists/rockyou.txt
-# If that fails: target-specific mutations with cewl output
-
 # KeePass 1.x
 keepass2john Database.kdb | sed 's/^[^:]*://' > keepass1.hash
 hashcat -m 13400 keepass1.hash /usr/share/wordlists/rockyou.txt
@@ -579,7 +560,6 @@ hashcat -m 10500 pdf.hash /usr/share/wordlists/rockyou.txt
 ### GPP cPassword (Group Policy Preferences)
 
 ```bash
-# If you find Groups.xml, Services.xml, Scheduledtasks.xml, Printers.xml in SYSVOL
 # Extract the cPassword value, then decrypt:
 gpp-decrypt '<cPassword_value>'
 
@@ -614,9 +594,7 @@ wevtutil qe Security /q:"*[System[EventID=4648]]" /f:text /rd:true /c:10
 
 ## Related
 
-- [[Engagement_Methodology]] — password attacks & credential reuse (Phase 11)
 - [[Toolkit_Strategy]] — the AD credential loop: `crackr -q` → `sprayr --from-creds` (§4)
 - [[Passwords]] — manual password attack techniques and methodology
 - [[Active_Directory]] — where NTLM, NTLMv2, Kerberoast, AS-REP hashes come from
 - [[Linux_PrivEsc]] — where shadow files come from
-- [[OffSec_Password_Attacks_Mental_Model]] — decision-tree for attack selection

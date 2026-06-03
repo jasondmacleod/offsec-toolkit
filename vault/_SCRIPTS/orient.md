@@ -27,6 +27,6 @@ Exit: `0` ok · `1` cannot create output dir · `2` usage. Output is files under
 Never runs recon, classifies an outcome, pings a host, or writes evidence / creds / sentinels. Full-file replacement (idempotent); never reads its own output.
 
 ## Read more
-- Workflow: [[Engagement_Methodology]] Phase 2 (Bridge the Recon Output)
+- Workflow: Phase 2 (Bridge the Recon Output)
 - Sequence + three-layer data-flow diagram: [[Toolkit_Strategy]] §1, §4
 - Design spec: `docs/orient_spec.md` (scripts repo) · ground truth: `./orient.sh --help`

@@ -22,9 +22,9 @@ The **stuck advisor** (decision layer). Surfaces the top 3–5 *untried* next mo
 Exit: `0` ok · `1` no target inferable / missing library · `2` usage. Output = a single screen of ranked actions on stdout.
 
 ## Boundaries
-Never executes anything, never mutates state, never prompts. It only ranks and prints; `exploitfixr` and the manual [[Triage_Decision_Tree]] are where you act when it runs out of moves.
+Never executes anything, never mutates state, never prompts. It only ranks and prints; `exploitfixr` and the manual are where you act when it runs out of moves.
 
 ## Read more
-- Workflow: [[Engagement_Methodology]] Phase 3 (Triage) and Phase 12 (When You're Stuck)
+- Workflow: Phase 3 (Triage) and Phase 12 (When You're Stuck)
 - Sequence: [[Toolkit_Strategy]] §4 (stuck path; recon→orient→decision cycle)
 - Ground truth: `./stuckr.sh --help`

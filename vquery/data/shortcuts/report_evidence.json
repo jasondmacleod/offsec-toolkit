@@ -1,63 +1,110 @@
 [
   {
     "slug": "flag-submission",
-    "triggers": ["flag submission", "submit flags", "engagement tracker", "submit proof", "where submit flags", "flag panel"],
+    "triggers": [
+      "flag submission",
+      "submit flags",
+      "engagement tracker",
+      "submit proof",
+      "where submit flags",
+      "flag panel"
+    ],
     "title": "Flag submission (CRITICAL)",
     "answer_type": "inline",
     "inline_answer": "Submit every `local.txt` / `proof.txt` value to the **engagement tracker** as you get it. A flag that is in your report but **not** submitted to the panel = **no credit** for it. Submit immediately on capture; do not batch it for the end.",
-    "inline_followup": "BUS_REVIEW/OffSec_Report_Drafting_Framework.md#flag-submission-critical",
     "tags": "report flags evidence",
     "priority": 205
   },
   {
     "slug": "screenshot-rules",
-    "triggers": ["screenshot rules", "what screenshot", "proof screenshot", "screenshot requirements", "evidence screenshot", "how to screenshot proof"],
+    "triggers": [
+      "screenshot rules",
+      "what screenshot",
+      "proof screenshot",
+      "screenshot requirements",
+      "evidence screenshot",
+      "how to screenshot proof"
+    ],
     "title": "Screenshot rules",
     "answer_type": "inline",
     "inline_answer": "One screenshot per flag, **one image**, containing all of: an interactive shell (not a web shell), `whoami`, `hostname`, `ip a` / `ipconfig`, and the flag read with `cat`/`type` **from its original path**. If any element is missing or it's a web shell, the flag may be rejected. Capture at the moment you get the shell — don't promise to redo it later.",
-    "inline_followup": "BUS_REVIEW/OffSec_Report_Drafting_Framework.md#screenshot-rules",
     "tags": "report screenshot evidence",
     "priority": 205
   },
   {
     "slug": "tool-restrictions",
-    "triggers": ["tool restrictions", "allowed tools", "metasploit limit", "banned tools", "sqlmap allowed", "what tools allowed", "is metasploit allowed"],
+    "triggers": [
+      "tool restrictions",
+      "allowed tools",
+      "metasploit limit",
+      "banned tools",
+      "sqlmap allowed",
+      "what tools allowed",
+      "is metasploit allowed"
+    ],
     "title": "Tool restrictions",
     "answer_type": "chunk_ref",
-    "target_chunk_id": "_reporting/Engagement_Notes.md#tool-restrictions",
+    "target_chunk_id": null,
     "tags": "report compliance rules",
     "priority": 195
   },
   {
     "slug": "report-structure",
-    "triggers": ["report structure", "report template", "how to write report", "report per target", "report sections", "report format"],
+    "triggers": [
+      "report structure",
+      "report template",
+      "how to write report",
+      "report per target",
+      "report sections",
+      "report format"
+    ],
     "title": "Required report structure per target",
     "answer_type": "chunk_ref",
-    "target_chunk_id": "BUS_REVIEW/OffSec_Report_Drafting_Framework.md#required-structure-per-target",
+    "target_chunk_id": null,
     "tags": "report structure",
     "priority": 190
   },
   {
     "slug": "report-quality-killers",
-    "triggers": ["report mistakes", "point loss report", "report quality", "report fails", "lose points report", "report killers"],
+    "triggers": [
+      "report mistakes",
+      "point loss report",
+      "report quality",
+      "report fails",
+      "lose points report",
+      "report killers"
+    ],
     "title": "Report quality killers (point loss)",
     "answer_type": "chunk_ref",
-    "target_chunk_id": "BUS_REVIEW/OffSec_Report_Drafting_Framework.md#report-quality-killers-point-loss",
+    "target_chunk_id": null,
     "tags": "report quality",
     "priority": 185
   },
   {
     "slug": "report-time-strategy",
-    "triggers": ["report time", "when to write report", "report time budget", "24 hour report", "report deadline"],
+    "triggers": [
+      "report time",
+      "when to write report",
+      "report time budget",
+      "24 hour report",
+      "report deadline"
+    ],
     "title": "Report time strategy",
     "answer_type": "chunk_ref",
-    "target_chunk_id": "BUS_REVIEW/OffSec_Report_Drafting_Framework.md#time-strategy",
+    "target_chunk_id": null,
     "tags": "report time",
     "priority": 180
   },
   {
     "slug": "evidence-capture",
-    "triggers": ["evidencr", "evidence capture", "evidence script", "capture evidence", "evidence ledger", "evidencr.sh"],
+    "triggers": [
+      "evidencr",
+      "evidence capture",
+      "evidence script",
+      "capture evidence",
+      "evidence ledger",
+      "evidencr.sh"
+    ],
     "title": "Evidence capture (evidencr.sh)",
     "answer_type": "chunk_ref",
     "target_chunk_id": "_SCRIPTS/evidencr.md#engagement workflow",

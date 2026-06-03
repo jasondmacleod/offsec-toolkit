@@ -25,6 +25,6 @@ Exit: `0` report-ready · `1` gaps · `2` **CRITICAL** (Metasploit on >1 machine
 Does **not** write your report, capture or compose screenshots, total points (that's `evidencr --rollup`), or mutate any state. Pure reader + reporter.
 
 ## Read more
-- Workflow + exit-code meaning: [[Engagement_Methodology]] Phase 13 (Submission Gate)
+- Workflow + exit-code meaning: Phase 13 (Submission Gate)
 - Sequence: [[Toolkit_Strategy]] §6
 - Design spec: `docs/proofr_spec.md` (scripts repo) · ground truth: `./proofr.sh --help`

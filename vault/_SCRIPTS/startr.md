@@ -7,7 +7,7 @@ tags:
 
 Automates the first 10–15 minutes of engagement setup: workspace creation, tmux session with named windows, environment variables, file server staging, connectivity checks, and auto-recon launch.
 
-> [!important] Run this the moment you have your target IPs. It replaces the manual setup in [[Quickstart]].
+> [!important] Run this the moment you have your target IPs. It replaces the manual workspace setup.
 
 ---
 
@@ -214,10 +214,8 @@ cd ~/tools && python3 -m http.server 80
 
 ## Related
 
-- [[Quickstart]] — manual fallback if startr fails
 - [[tmux]] — tmux commands and navigation
 - [[recon]] — recon script launched by `--recon`
 - [[Creds_Tracker]] — structured credential tracking (separate from the `creds.txt` scratchpad)
 - [[lootr]] — post-exploitation loot collection after first shell
 - [[evidencr]] — evidence capture at every flag
-- [[Engagement_Methodology]] — full engagement playbook

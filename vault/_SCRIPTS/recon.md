@@ -30,15 +30,10 @@ cat $TOOLKIT_ROOT/recon/target_priority.txt   # attack highest-score target firs
 # 1. Fire deep recon on all targets simultaneously
 sudo ./recon.sh --auto 10.10.10.1 10.10.10.2 10.10.10.3
 
-# 2. Read engagement instructions while it runs, then check summaries
-# summary.txt includes a short high-value preview of grounded next steps
-# next_steps.txt has the full evidence-backed follow-up command library
 # quick_wins.txt has only high-confidence actionable findings, not plain service detections
 cat $TOOLKIT_ROOT/recon/*/summary.txt
 cat $TOOLKIT_ROOT/recon/*/loot/next_steps.txt
 cat $TOOLKIT_ROOT/recon/*/loot/quick_wins.txt
-
-# 3. Start with the box that has the most findings
 
 # 4. If stuck, launch deep UDP on that target
 sudo ./recon.sh --auto --udp-full 10.10.10.X
@@ -292,7 +287,6 @@ cat $TOOLKIT_ROOT/recon/10.10.10.1/progress.log
 # See failed phases
 grep 'FAIL' $TOOLKIT_ROOT/recon/10.10.10.1/progress.log
 
-# Ctrl+C kills all background jobs cleanly — no zombies
 # Resume anytime — completed phases are skipped automatically
 ```
 
@@ -470,8 +464,6 @@ curl -sk -X TRACE http://IP/ -v 2>&1 | grep -i trace
 
 # IIS ShortName (tilde) enumeration — finds hidden files/dirs
 java -jar ~/tools/IIS-ShortName-Scanner.jar 2 20 http://IP/
-# Or: python3 iis_shortname_scan.py http://IP/
-
 # WebDAV probe
 davtest -url http://IP                             # checks writable WebDAV
 curl -sk -X OPTIONS http://IP/ -v 2>&1 | grep Allow
@@ -564,7 +556,6 @@ nmblookup -A IP                                   # get NetBIOS name, workgroup,
 nbtscan IP                                        # NetBIOS scan
 nmap --script nbstat -p 137 IP                    # NetBIOS stat
 
-# If you see the domain name here but AD ports look closed:
 # this host may be a workgroup member, not domain-joined
 ```
 
@@ -598,7 +589,6 @@ ip -6 neigh                                        # find IPv6 neighbors on the 
 
 ## Related
 
-- [[Engagement_Methodology]] — where recon fits in the overall attack chain (Phase 2)
 - [[Toolkit_Strategy]] — engagement run order: recon → `orient` → decision tools
 - [[Active_Recon]] — manual recon to supplement or fill gaps
 - [[Web_App]] — manual follow-up on HTTP findings
