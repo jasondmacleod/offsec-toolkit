@@ -49,54 +49,6 @@
     "priority": 205
   },
   {
-    "slug": "triage-decision-tree",
-    "triggers": [
-      "triage",
-      "triage tree",
-      "after recon decision",
-      "what to attack first",
-      "triage decision",
-      "recon done what next"
-    ],
-    "title": "Triage decision tree",
-    "answer_type": "chunk_ref",
-    "target_chunk_id": null,
-    "tags": "methodology triage decision",
-    "priority": 195
-  },
-  {
-    "slug": "mvp-pass-paths",
-    "triggers": [
-      "priority paths",
-      "minimum viable path",
-      "highest-impact path",
-      "mvp paths",
-      "where to focus",
-      "fastest route to impact"
-    ],
-    "title": "Minimum viable pass paths",
-    "answer_type": "chunk_ref",
-    "target_chunk_id": null,
-    "tags": "methodology points strategy",
-    "priority": 195
-  },
-  {
-    "slug": "attack-order",
-    "triggers": [
-      "attack order",
-      "what order",
-      "engagement order",
-      "recommended order",
-      "sequencing",
-      "which box first order"
-    ],
-    "title": "Recommended attack order",
-    "answer_type": "chunk_ref",
-    "target_chunk_id": null,
-    "tags": "methodology strategy",
-    "priority": 185
-  },
-  {
     "slug": "engagement-default-chain",
     "triggers": [
       "default chain",
@@ -129,22 +81,6 @@
     "priority": 190
   },
   {
-    "slug": "rules-burn-in",
-    "triggers": [
-      "rules to remember",
-      "burn into brain",
-      "engagement rules",
-      "key rules",
-      "golden rules",
-      "rules to burn"
-    ],
-    "title": "Rules to burn into your brain",
-    "answer_type": "chunk_ref",
-    "target_chunk_id": null,
-    "tags": "methodology rules",
-    "priority": 185
-  },
-  {
     "slug": "rotation-stop-rules",
     "triggers": [
       "stop rules",
@@ -158,38 +94,5 @@
     "target_chunk_id": "BUS_REVIEW/Toolkit_Strategy.md#rotation-stop-rules",
     "tags": "methodology time stuck",
     "priority": 185
-  },
-  {
-    "slug": "stuck-rules",
-    "triggers": [
-      "stuck no shell",
-      "cant get foothold",
-      "stuck initial",
-      "no foothold",
-      "stuck on box",
-      "stuck what now",
-      "im stuck"
-    ],
-    "title": "Stuck rules",
-    "answer_type": "chunk_ref",
-    "target_chunk_id": null,
-    "tags": "methodology stuck",
-    "priority": 190
-  },
-  {
-    "slug": "hour-by-hour",
-    "triggers": [
-      "hour by hour",
-      "game plan",
-      "engagement timeline",
-      "time plan",
-      "24 hour plan",
-      "hourly plan"
-    ],
-    "title": "Hour-by-hour game plan",
-    "answer_type": "chunk_ref",
-    "target_chunk_id": null,
-    "tags": "methodology time strategy",
-    "priority": 180
   }
 ]

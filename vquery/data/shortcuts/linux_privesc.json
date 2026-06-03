@@ -116,21 +116,6 @@
     "priority": 190
   },
   {
-    "slug": "privesc-three-questions",
-    "triggers": [
-      "privesc questions",
-      "three questions privesc",
-      "privesc mental model",
-      "how to think privesc",
-      "where to start privesc"
-    ],
-    "title": "The three privesc questions (always ask)",
-    "answer_type": "chunk_ref",
-    "target_chunk_id": null,
-    "tags": "privesc methodology decision",
-    "priority": 185
-  },
-  {
     "slug": "linux-privesc-workflow",
     "triggers": [
       "linux privesc",
@@ -144,21 +129,6 @@
     "target_chunk_id": "_CHEATSHEETS/Linux_PrivEsc.md#workflow-start-here",
     "tags": "linux privesc methodology",
     "priority": 190
-  },
-  {
-    "slug": "linux-high-roi",
-    "triggers": [
-      "linux high roi",
-      "common linux privesc",
-      "linux engagement failures",
-      "linux privesc patterns",
-      "linux privesc priority"
-    ],
-    "title": "High-ROI Linux privesc patterns",
-    "answer_type": "chunk_ref",
-    "target_chunk_id": null,
-    "tags": "linux privesc methodology",
-    "priority": 180
   },
   {
     "slug": "linux-privesc-stuck",

@@ -24,7 +24,7 @@ HERE = Path(__file__).parent
 DB_PATH = HERE / "data" / "vquery.sqlite"
 SHORTCUTS_DIR = HERE / "data" / "shortcuts"
 VAULT_PATH = Path(os.environ.get(
-    "VQUERY_VAULT_PATH", os.path.expanduser("~/scripts/vault"))).resolve()
+    "VQUERY_VAULT_PATH", str(HERE.parent / "vault"))).resolve()
 EXPLOITDB_SEED_DIR = Path(os.environ.get(
     "VQUERY_EXPLOITDB_SEED",
     str(HERE.parent / "exploitdb" / "data" / "seed"))).resolve()

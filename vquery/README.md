@@ -1,7 +1,7 @@
 # vquery — Vault Query Engine
 
 Local, read-only, OffSec-rules-compliant retrieval over the Obsidian vault
-(`~/scripts/vault/`). Answer-shaped: returns the relevant ~chunk, not a
+(`~/offsec-toolkit/vault/`). Answer-shaped: returns the relevant ~chunk, not a
 whole doc. Companion to **exploitdb** (port 5050):
 
 - exploitdb (5050) — *what command do I run for this exploit*
@@ -169,7 +169,7 @@ editing exploitdb seed to refresh the cache.
 
 | Var | Default | Use |
 |---|---|---|
-| `VQUERY_VAULT_PATH` | `~/scripts/vault` | Vault root to index |
+| `VQUERY_VAULT_PATH` | `~/offsec-toolkit/vault` | Vault root to index |
 | `VQUERY_EXCLUDE` | `Not for the engagement/` | Comma/colon-separated exclude globs (dir prefix or fnmatch). Empty string indexes everything. `Not for the engagement/` is excluded by default — it holds sqlmap / AV-evasion material that is banned or irrelevant on the engagement (AGENTS.md §9); keeping it out of a sub-10s engagement tool is deliberate. |
 | `VQUERY_HOST` | `127.0.0.1` | Bind address (localhost only by design) |
 | `VQUERY_PORT` | `5051` | Port |

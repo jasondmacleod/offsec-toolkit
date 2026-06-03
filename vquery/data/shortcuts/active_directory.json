@@ -169,22 +169,6 @@
     "priority": 190
   },
   {
-    "slug": "ad-decision-tree",
-    "triggers": [
-      "ad decision tree",
-      "where to start ad",
-      "ad mental model",
-      "ad stuck",
-      "ad next step",
-      "5 step ad"
-    ],
-    "title": "The 5-step AD decision tree",
-    "answer_type": "chunk_ref",
-    "target_chunk_id": null,
-    "tags": "ad methodology decision",
-    "priority": 185
-  },
-  {
     "slug": "bloodhound-edges",
     "triggers": [
       "bloodhound edge",

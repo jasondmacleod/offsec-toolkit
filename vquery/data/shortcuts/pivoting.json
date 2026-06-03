@@ -161,21 +161,6 @@
     "priority": 180
   },
   {
-    "slug": "ligolo-vs-chisel",
-    "triggers": [
-      "ligolo vs chisel",
-      "which tunnel tool",
-      "ligolo or ssh",
-      "pivot tool selection",
-      "chisel or ligolo"
-    ],
-    "title": "Ligolo vs Chisel vs SSH",
-    "answer_type": "chunk_ref",
-    "target_chunk_id": null,
-    "tags": "pivoting methodology decision",
-    "priority": 180
-  },
-  {
     "slug": "ligolo-double-pivot",
     "triggers": [
       "double pivot",

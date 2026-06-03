@@ -172,7 +172,7 @@ After first foothold → [[lootr]] for collection → [[evidencr]] for evidence 
 - `tmux` installed
 - VPN connected (tun0 up)
 - `~/tools/` directory populated with transfer tools for HTTP server (see warning above)
-- `recon.sh` for `--recon` flag — searched script-adjacent first, then `~/scripts/recon.sh`, then `~/scripts/bin/recon.sh`
+- `recon.sh` for `--recon` flag — searched script-adjacent first, then `~/offsec-toolkit/recon.sh`, then `~/offsec-toolkit/bin/recon.sh`
 
 ---
 

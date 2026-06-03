@@ -14,7 +14,7 @@
 #   - Two or more actions per symptom; cap at four
 #   - First action is "if you have the easiest follow-on path, take this"
 #   - Substituted slugs (gap-fill) are invisible at output layer — see
-#     ~/scripts/exploitdb/data/seed/symptom_map_gaps.md for the substitution log
+#     ~/offsec-toolkit/exploitdb/data/seed/symptom_map_gaps.md for the substitution log
 #
 # Last updated: 2026-05-20
 #==============================================================================

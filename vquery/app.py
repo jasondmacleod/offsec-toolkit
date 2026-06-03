@@ -43,7 +43,7 @@ EXPLOITDB_BASE_URL = os.environ.get(
 SESSION_COOKIE = "vq_sid"
 
 VAULT_PATH = Path(os.environ.get(
-    "VQUERY_VAULT_PATH", os.path.expanduser("~/scripts/vault"))).resolve()
+    "VQUERY_VAULT_PATH", str(HERE.parent / "vault"))).resolve()
 
 # Excluded by default: "Not for the engagement/" holds banned/irrelevant material
 # (sqlmap, AV evasion). Surfacing it in a sub-10s engagement tool is a

@@ -147,21 +147,6 @@
     "priority": 190
   },
   {
-    "slug": "windows-high-roi",
-    "triggers": [
-      "windows high roi",
-      "common windows privesc",
-      "windows engagement failures",
-      "windows privesc patterns",
-      "windows privesc priority"
-    ],
-    "title": "High-ROI Windows privesc patterns",
-    "answer_type": "chunk_ref",
-    "target_chunk_id": null,
-    "tags": "windows privesc methodology",
-    "priority": 180
-  },
-  {
     "slug": "windows-privesc-stuck",
     "triggers": [
       "windows privesc stuck",

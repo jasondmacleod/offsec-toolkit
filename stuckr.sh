@@ -31,7 +31,7 @@
 #   - State files are plain text. lib/state.sh parses with grep/awk.
 #   - YAML and exploitdb corpus parsing is done in a single Python heredoc
 #     (python3 + PyYAML are present on Kali by default — same dependency
-#     surface as ~/scripts/exploitdb/).
+#     surface as ~/offsec-toolkit/exploitdb/).
 #   - Ranking is deterministic per spec §6 — no heuristics.
 #   - Substitutions for corpus gaps are invisible at output layer — the
 #     gap log lives at exploitdb/data/seed/symptom_map_gaps.md.
@@ -189,7 +189,7 @@ report_target() {
         if [[ ! -d "$td" ]] || [[ -z "$(ls -A "$td" 2>/dev/null)" ]]; then
             printf '%starget%s  %s     no enumeration data found\n\n' "$BOLD" "$NC" "$ip"
             printf '%srun this first%s\n' "$BOLD" "$NC"
-            printf '  ~/scripts/recon.sh %s\n\n' "$ip"
+            printf '  ~/offsec-toolkit/recon.sh %s\n\n' "$ip"
             return
         fi
     fi

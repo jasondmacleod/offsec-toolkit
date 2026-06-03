@@ -37,7 +37,7 @@ These override model defaults. Do not "correct" them.
 - **SharpHound + `impacket-smbserver`** for BloodHound collection. `bloodhound-python` / `bloodhound-ce-python` is unreliable in this environment (DNS SRV timeouts against lab DCs). Do not suggest it as the primary path.
 - **`pipx`** for Python tool installs (e.g. `git-dumper`). Not `pip` into system Python.
 - **Wordlists live in `/usr/share/wordlists/`** unless a specific script override exists.
-- **`TOOLKIT_ROOT`** defaults to `~/toolkit`. Tools live in `~/tools/`. Scripts live in `~/scripts/`.
+- **`TOOLKIT_ROOT`** defaults to `~/toolkit`. Tools live in `~/tools/`. Scripts live in `~/offsec-toolkit/`.
 - **Ligolo-ng** over chisel/SSH for pivoting when possible — real TUN interface, no proxychains.
 - **PrintSpoofer / GodPotato** for `SeImpersonatePrivilege` on modern Windows. JuicyPotato only for older boxes.
 
@@ -157,7 +157,7 @@ Every change is evaluated against these:
 
 ## 12. exploitdb subproject
 
-`~/scripts/exploitdb/` is a local Flask app: read-only OffSec technique reference (442 entries served, FTS5-indexed) + per-engagement findings intake. Companion to the `.sh` scripts, not a replacement. Vault doc: [[exploitdb]] at `vault/_SCRIPTS/exploitdb.md`.
+`~/offsec-toolkit/exploitdb/` is a local Flask app: read-only OffSec technique reference (442 entries served, FTS5-indexed) + per-engagement findings intake. Companion to the `.sh` scripts, not a replacement. Vault doc: [[exploitdb]] at `vault/_SCRIPTS/exploitdb.md`.
 
 **Architecture you must respect:**
 
