@@ -108,8 +108,23 @@ function Get-ExecutablePathFromCommandLine {
     $quoted = [regex]::Match($expanded, '^\s*"([^"]+)"')
     if ($quoted.Success) { return $quoted.Groups[1].Value }
 
-    $exePath = [regex]::Match($expanded, '^\s*([A-Za-z]:\\.*?\.exe)\b', 'IgnoreCase')
+    # Path up to a known executable extension (handles spaces before args)
+    $exePath = [regex]::Match($expanded, '^\s*([A-Za-z]:\\.*?\.(?:exe|bat|cmd|com|scr|sys|dll))\b', 'IgnoreCase')
     if ($exePath.Success) { return $exePath.Groups[1].Value }
+
+    # Unquoted path with spaces and no extension before the args: resolve the
+    # longest leading token-prefix that is an existing file — the same way
+    # Windows resolves an unquoted ImagePath (so "C:\Program Files\My App\run"
+    # is not truncated to "C:\Program").
+    if ($expanded -match '^\s*[A-Za-z]:\\') {
+        $tokens = $expanded.Trim() -split '\s+'
+        for ($i = $tokens.Count; $i -ge 1; $i--) {
+            $candidate = ($tokens[0..($i-1)] -join ' ')
+            if (Test-Path -LiteralPath $candidate -PathType Leaf -ErrorAction SilentlyContinue) {
+                return $candidate
+            }
+        }
+    }
 
     $firstToken = [regex]::Match($expanded, '^\s*(\S+)')
     if ($firstToken.Success) { return $firstToken.Groups[1].Value }
@@ -122,36 +137,48 @@ function Test-CurrentPrincipalCanWrite {
 
     if (-not (Test-Path $Path -ErrorAction SilentlyContinue)) { return $false }
 
-    try {
-        $identity = [System.Security.Principal.WindowsIdentity]::GetCurrent()
-        $principalNames = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
-        $null = $principalNames.Add($identity.Name)
-        $null = $principalNames.Add("Everyone")
-        $null = $principalNames.Add("BUILTIN\Users")
-        $null = $principalNames.Add("NT AUTHORITY\Authenticated Users")
+    # Real write-attempt — the only reliable test. ACL string-matching misses
+    # rights granted via group membership or via a SID that doesn't translate to
+    # a name, producing false negatives on the highest-value Windows finding.
+    # A service/task binary is hijackable if we can write either the file itself
+    # or its parent directory (replace-by-delete), so probe both.
+    $item = $null
+    try { $item = Get-Item -LiteralPath $Path -Force -ErrorAction Stop } catch { return $false }
 
-        foreach ($group in $identity.Groups) {
-            try {
-                $null = $principalNames.Add($group.Translate([System.Security.Principal.NTAccount]).Value)
-            } catch { $null = $_ }
-        }
+    $dirs = @()
+    if ($item.PSIsContainer) {
+        $dirs += $item.FullName
+    } else {
+        $parent = Split-Path -Parent $item.FullName
+        if ($parent) { $dirs += $parent }
+    }
 
-        $acl = Get-Acl $Path -ErrorAction Stop
-        foreach ($ace in $acl.Access) {
-            if ($ace.AccessControlType -ne [System.Security.AccessControl.AccessControlType]::Allow) { continue }
-            if (-not $principalNames.Contains($ace.IdentityReference.Value)) { continue }
-            $rights = $ace.FileSystemRights
-            if (($rights -band [System.Security.AccessControl.FileSystemRights]::FullControl) -ne 0 -or
-                ($rights -band [System.Security.AccessControl.FileSystemRights]::Modify) -ne 0 -or
-                ($rights -band [System.Security.AccessControl.FileSystemRights]::Write) -ne 0 -or
-                ($rights -band [System.Security.AccessControl.FileSystemRights]::WriteData) -ne 0 -or
-                ($rights -band [System.Security.AccessControl.FileSystemRights]::CreateFiles) -ne 0 -or
-                ($rights -band [System.Security.AccessControl.FileSystemRights]::AppendData) -ne 0) {
-                return $true
-            }
+    # 1. Can we create (and remove) a file in the target/parent directory?
+    foreach ($dir in $dirs) {
+        if ([string]::IsNullOrEmpty($dir) -or -not (Test-Path -LiteralPath $dir)) { continue }
+        try {
+            $testFile = Join-Path $dir "lootr_wtest_$([System.IO.Path]::GetRandomFileName())"
+            $fs = [System.IO.File]::Create($testFile)
+            $fs.Close()
+            Remove-Item -LiteralPath $testFile -Force -ErrorAction SilentlyContinue
+            return $true
+        } catch { $null = $_ }
+    }
+
+    # 2. For a file, can we open the binary itself for write? UnauthorizedAccess
+    #    is a definitive "no"; a sharing violation on a running .exe is
+    #    inconclusive, so we don't treat it as writable here.
+    if (-not $item.PSIsContainer) {
+        try {
+            $fsw = [System.IO.File]::Open($item.FullName, [System.IO.FileMode]::Open,
+                [System.IO.FileAccess]::Write, [System.IO.FileShare]::ReadWrite)
+            $fsw.Close()
+            return $true
+        } catch [System.UnauthorizedAccessException] {
+            return $false
+        } catch {
+            $null = $_
         }
-    } catch {
-        return $false
     }
 
     return $false
@@ -709,9 +736,13 @@ function Invoke-PhaseCredential {
     foreach ($sd in $searchDirs) {
         if (-not (Test-Path $sd)) { continue }
         try {
-            $results = Select-String -Path "$sd\*" -Pattern $credPatterns `
+            # Select-String has no -Recurse — enumerate with Get-ChildItem -Recurse
+            # first, then pipe the files in (the old -Recurse threw and was
+            # swallowed by catch, so this sweep silently found nothing).
+            $results = Get-ChildItem -Path $sd -Recurse -File `
                 -Include "*.txt","*.ini","*.conf","*.config","*.xml","*.json","*.ps1","*.bat","*.cmd" `
-                -Recurse -ErrorAction SilentlyContinue |
+                -ErrorAction SilentlyContinue |
+                Select-String -Pattern $credPatterns -ErrorAction SilentlyContinue |
                 Select-Object -First 50 |
                 ForEach-Object { $_.Path }
             $credFiles.AddRange([string[]]($results | Select-Object -Unique))
@@ -1099,7 +1130,9 @@ function Invoke-PhaseFile {
             Where-Object { $_.TaskPath -notlike "\Microsoft\*" }
         foreach ($task in $tasks) {
             $principal = $task.Principal.UserId
-            if ($principal -notmatch 'SYSTEM|Administrator|Administrators') { continue }
+            # UserId may be a name OR a raw SID — match both so a SYSTEM task
+            # registered as S-1-5-18 isn't skipped. S-1-5-32-544 = Administrators.
+            if ($principal -notmatch 'SYSTEM|Administrator|LocalSystem|S-1-5-18|S-1-5-32-544') { continue }
             foreach ($action in $task.Actions) {
                 $actionLine = ("{0} {1}" -f $action.Execute, $action.Arguments).Trim()
                 $binPath = Get-ExecutablePathFromCommandLine -CommandLine $actionLine

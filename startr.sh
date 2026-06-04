@@ -449,23 +449,45 @@ launch_recon() {
         return 1
     fi
 
-    # Detect pane base index for portable targeting
-    local pbi
-    pbi="$(tmux show-option -gv pane-base-index 2>/dev/null || echo 0)"
+    # Resolve the real pane index per window from the live session. show-option
+    # -gv pane-base-index can print empty/wrong even when ~/.tmux.conf sets it,
+    # which sends recon to a non-existent pane and silently launches nothing.
+    _recon_pane() {
+        local win="$1" p
+        p="$(tmux list-panes -t "${SESSION_NAME}:${win}" -F '#{pane_index}' 2>/dev/null | head -1)"
+        [[ "$p" =~ ^[0-9]+$ ]] && printf '%s' "$p" || printf '0'
+    }
 
+    local launched=0 failed=0
     local targets=("SA-1:$SA1" "SA-2:$SA2" "SA-3:$SA3")
     for entry in "${targets[@]}"; do
         local win="${entry%%:*}"
         local ip="${entry##*:}"
+        local p0; p0="$(_recon_pane "$win")"
         info "Launching recon on $win ($ip)"
-        tmux send-keys -t "${SESSION_NAME}:${win}.${pbi}" "${RECON_SCRIPT} --auto ${ip}" C-m
+        if tmux send-keys -t "${SESSION_NAME}:${win}.${p0}" "${RECON_SCRIPT} --auto ${ip}" C-m 2>/dev/null; then
+            launched=$((launched + 1))
+        else
+            warn "Could not send recon command to ${win}.${p0} — launch manually in that window"
+            failed=$((failed + 1))
+        fi
     done
 
     # AD targets — launch all three in the AD window
+    local adp0; adp0="$(_recon_pane "AD")"
     info "Launching recon on AD targets (${AD1}, ${AD2}, ${DC})"
-    tmux send-keys -t "${SESSION_NAME}:AD.${pbi}" "${RECON_SCRIPT} --auto ${AD1} ${AD2} ${DC}" C-m
+    if tmux send-keys -t "${SESSION_NAME}:AD.${adp0}" "${RECON_SCRIPT} --auto ${AD1} ${AD2} ${DC}" C-m 2>/dev/null; then
+        launched=$((launched + 1))
+    else
+        warn "Could not send recon command to AD.${adp0} — launch manually in that window"
+        failed=$((failed + 1))
+    fi
 
-    success "Recon launched on all targets"
+    if (( failed == 0 )); then
+        success "Recon launched on all ${launched} target window(s)"
+    else
+        warn "Recon launched on ${launched} window(s); ${failed} failed — see warnings above"
+    fi
 }
 
 #------------------------------------------------------------------------------

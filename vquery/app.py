@@ -118,7 +118,10 @@ def build_fts_query(q: str) -> str | None:
     never parse as FTS5 operators."""
     if not q or not q.strip():
         return None
-    tokens = [t.strip('"') for t in q.strip().split() if t.strip('"')]
+    # Strip ALL double-quotes from each token (not just edges) — an internal "
+    # like foo"bar would otherwise wrap to "foo"bar", a malformed FTS5 phrase
+    # that raises "unterminated string" and 500s the search.
+    tokens = [s for s in (t.replace('"', "") for t in q.strip().split()) if s]
     if not tokens:
         return None
     return " ".join(f'"{t}"' for t in tokens)
@@ -194,13 +197,17 @@ def search_chunks(q: str, limit: int) -> list[dict]:
         return []
     db = get_db()
     weights = ", ".join(str(w) for w in BM25_WEIGHTS)
-    rows = db.execute(
-        f"SELECT chunk_id, doc_path, doc_title, heading, heading_anchor, "
-        f"       body, tags, display_path, "
-        f"       bm25(chunks, {weights}) AS score "
-        f"FROM chunks WHERE chunks MATCH ? ORDER BY score LIMIT ?",
-        (fts, limit),
-    ).fetchall()
+    try:
+        rows = db.execute(
+            f"SELECT chunk_id, doc_path, doc_title, heading, heading_anchor, "
+            f"       body, tags, display_path, "
+            f"       bm25(chunks, {weights}) AS score "
+            f"FROM chunks WHERE chunks MATCH ? ORDER BY score LIMIT ?",
+            (fts, limit),
+        ).fetchall()
+    except sqlite3.OperationalError:
+        # Malformed FTS5 expression — return no matches rather than 500.
+        return []
     terms = [t.lower() for t in q.split()]
     results: list[dict] = []
     for r in rows:
@@ -754,6 +761,13 @@ def _503(e):
     return render_template("error.html", code=503,
                            message=getattr(e, "description", "Unavailable"),
                            title="503"), 503
+
+
+@app.errorhandler(500)
+def _500(e):
+    return render_template("error.html", code=500,
+                           message="Internal error — adjust your query and retry.",
+                           title="500"), 500
 
 
 if __name__ == "__main__":

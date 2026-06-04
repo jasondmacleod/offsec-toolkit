@@ -653,6 +653,16 @@ phase1_domain_context() {
     timeout 30 nxc smb "$DC_IP" "${NXC_AUTH[@]}" 2>&1 | tee "$ctx_out"
 
     if ! grep -qF '[+]' "$ctx_out"; then
+        if [[ "$KERBEROS" == "true" || "$AUTH_TYPE" == "kerberos" ]]; then
+            # nxc --use-kcache against a DC *IP* often shows no [+] even with a
+            # valid ticket (Kerberos wants the FQDN). Don't abort the whole AD
+            # run on an inconclusive check — warn and continue enumeration.
+            warn "Kerberos credential validation inconclusive (no [+] vs ${DC_IP})"
+            warn "  Kerberos needs the DC FQDN, not an IP — if enum fails, set -dc <DC_FQDN> and check KRB5CCNAME"
+            echo "KERBEROS_VALIDATION=INCONCLUSIVE" >> "${OUTDIR}/summary_notes.txt"
+            progress_log "WARN" "$phase_key" "kerberos validation inconclusive — continuing"
+            return 0
+        fi
         error "Credential validation FAILED — verify username/password/hash and domain"
         progress_log "FAIL" "$phase_key" "credential validation failed"
         return 1
