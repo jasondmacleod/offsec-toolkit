@@ -269,7 +269,11 @@ tun_exists() {
 }
 
 route_exists() {
-    ip route show | grep -qF "$1"
+    # Exact match on the route destination (the first field of each line), not
+    # a substring — otherwise overlapping subnets (e.g. 172.16.5.0/24 vs
+    # 172.16.50.0/24) or an address that appears in another route's via/field
+    # produce false matches, skipping a needed route or deleting the wrong one.
+    ip route show 2>/dev/null | awk -v s="$1" '$1 == s { found = 1 } END { exit !found }'
 }
 
 create_tun() {
@@ -599,11 +603,19 @@ mode_ligolo() {
         # Daemon mode: background process, poll log for readiness, then wait
         local proxy_log="${STATE_DIR}/proxy.log"
         info "Starting (daemon): ${proxy_bin} -nobanner -selfcert -daemon -laddr 0.0.0.0:${port}"
+        # stdin from /dev/null so the first-run "Enable Ligolo-ng WebUI? (y/N)"
+        # prompt reads EOF and takes its default (No) instead of blocking the
+        # readiness check on a terminal read. This build has no -no-webui flag,
+        # so EOF-on-the-prompt is the version-agnostic way to suppress it.
         "$proxy_bin" -nobanner -selfcert -daemon \
             -certfile "${ligolo_dir}/certs/cert.pem" \
             -keyfile  "${ligolo_dir}/certs/key.pem"  \
-            -laddr "0.0.0.0:${port}" > "$proxy_log" 2>&1 &
+            -laddr "0.0.0.0:${port}" < /dev/null > "$proxy_log" 2>&1 &
         local proxy_pid=$!
+        # Register the PID BEFORE the readiness gate — a timeout/early return
+        # then still hands the proxy to the EXIT trap for cleanup, so no
+        # orphaned ligolo-proxy is left holding the port for the next run.
+        register_bg "$proxy_pid" "ligolo-proxy"
 
         local waited=0
         local proxy_timeout=10
@@ -624,7 +636,6 @@ mode_ligolo() {
             return 1
         fi
 
-        register_bg "$proxy_pid" "ligolo-proxy"
         success "Ligolo proxy listening on 0.0.0.0:${port} (log: ${proxy_log})"
         info "Proxy PID ${proxy_pid} — press Ctrl+C to stop and clean up"
         wait "$proxy_pid" 2>/dev/null || true
@@ -1348,9 +1359,15 @@ mode_reconnect() {
         esac
     done < <(echo "$tunnel_config" | tr ';' '\n')
 
-    # Teardown stale state first
-    info "Tearing down stale infrastructure..."
-    mode_teardown --all 2>/dev/null || true
+    # Teardown ONLY the tunnel being reconnected — not every tracked pivot.
+    # A second (double-pivot) TUN/route must survive so its agent can reconnect
+    # to the restarted proxy; --all would destroy the inner route and never
+    # rebuild it (reconnect only replays this one tunnel).
+    local rc_tun="${rc_tun_name:-ligolo}"
+    info "Tearing down stale infrastructure for ${rc_tun}..."
+    local -a td_args=(--tun-name "$rc_tun" --tun2-name "$rc_tun")
+    [[ -n "${rc_subnet:-}" ]] && td_args+=(--subnet "$rc_subnet")
+    mode_teardown "${td_args[@]}" 2>/dev/null || true
 
     # Remove old tunnel entries from state
     local tmp_state

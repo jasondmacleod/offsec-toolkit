@@ -456,6 +456,19 @@ print_footer() {
 #------------------------------------------------------------------------------
 # MAIN
 #------------------------------------------------------------------------------
+# Resolve a single target (cwd -> --on -> last_target) unless --all was asked.
+# If none can be inferred, fall back to a full sweep — the safe, useful default
+# for a bare invocation (the audit is read-only; nothing is mutated). Replaces
+# the old usage-error path that depended on .evidencr/last_target, which
+# evidencr never writes.
+if ! $MODE_ALL && [[ -z "$TARGET_IP" ]]; then
+    TARGET_IP=$(infer_target) || true
+    if [[ -z "$TARGET_IP" ]]; then
+        printf '%b\n' "${DIM}[*] no target inferred — auditing all engaged targets (--all)${NC}" >&2
+        MODE_ALL=true
+    fi
+fi
+
 if $MODE_ALL; then
     universe=$(audit_universe)
     if [[ -z "$universe" ]]; then
@@ -467,14 +480,6 @@ if $MODE_ALL; then
     done <<<"$universe"
     print_footer all
     exit "$RC"
-fi
-
-if [[ -z "$TARGET_IP" ]]; then
-    TARGET_IP=$(infer_target) || true
-fi
-if [[ -z "$TARGET_IP" ]]; then
-    error "no target — run from a target dir, pass --on <ip>, or use --all"
-    exit 3
 fi
 
 audit_target "$TARGET_IP"
