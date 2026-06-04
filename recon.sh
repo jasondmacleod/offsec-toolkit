@@ -2026,8 +2026,12 @@ enum_smtp() {
                 ip="$1"; port="$2"; users_file="$3"
                 while IFS= read -r user; do
                     response=$(printf "VRFY %s\r\nQUIT\r\n" "$user" | nc -w 3 "$ip" "$port" 2>/dev/null)
-                    if printf "%s\n" "$response" | grep -qE "^2[0-9]{2}"; then
-                        echo "VALID: $user — $response"
+                    # Drop the 220 greeting and 221 QUIT reply before the match
+                    # so only the VRFY response is evaluated (the greeting alone
+                    # matched ^2[0-9]{2} and flagged every probed user valid).
+                    vrfy_reply=$(printf "%s\n" "$response" | grep -vE "^22[01]")
+                    if printf "%s\n" "$vrfy_reply" | grep -qE "^2[0-9]{2}"; then
+                        echo "VALID: $user — $vrfy_reply"
                     fi
                 done < <(head -100 "$users_file")
             ' -- "$ip" "$port" "$users_file" > "$outdir/vrfy_users.txt" 2>&1 || true
@@ -4351,7 +4355,7 @@ OPTIONS:
   --auto                Skip confirmation prompts (auto-run everything)
   --udp-ports N         Number of top UDP ports to scan (default: 200)
   --udp-full            Also scan ALL 65535 UDP ports (slow — use when stuck)
-  --batch-size N        Rustscan batch size (default: 1500)
+  --batch-size N        Rustscan batch size (default: 4500)
   --rate N              Deprecated alias for --batch-size
   --outdir DIR          Output directory (default: $TOOLKIT_ROOT/recon)
   --max-parallel N      Max parallel service enumerations per target (default: 5)

@@ -55,6 +55,12 @@ WORDLIST="/usr/share/wordlists/rockyou.txt"
 RULE=""
 TOOL="auto"
 OUTPUT_DIR="${TOOLKIT_ROOT}/crackr"
+# Shared state library — provides state_append_cred(), which dedupes creds.txt
+# by (user, cred) so cracked creds flow cleanly into `sprayr.sh --from-creds`.
+if [[ -r "${SCRIPT_DIR}/lib/state.sh" ]]; then
+    # shellcheck source=lib/state.sh
+    source "${SCRIPT_DIR}/lib/state.sh"
+fi
 EXTRACT_MODE=""
 EXTRACT_CONTEXT=""
 INPUT_FILE=""
@@ -602,6 +608,62 @@ creds_log() {
     fi
 }
 
+# append_cred <proto> <host> <user> <cred> <note>
+# Prefer the shared state_append_cred API (dedupes by user:cred) so a value
+# already in creds.txt is not re-sprayed; fall back to the local creds_log
+# writer when the lib is unavailable or no account name was recovered.
+append_cred() {
+    local proto="$1" host="$2" user="$3" cred="$4" note="$5"
+    if [[ -n "$user" ]] && declare -F state_append_cred >/dev/null 2>&1; then
+        STATE_WRITE_PROTO="$proto" STATE_WRITE_HOST="$host" STATE_WRITE_NOTE="$note" \
+            state_append_cred "${user}:${cred}" 2>/dev/null && return 0
+    fi
+    creds_log "$proto" "$host" "$user" "$cred" "$note"
+}
+
+# username_for_cracked <hashcat-mode> <hash-blob>  → echoes account name (may be empty)
+# hashcat outfile/--show is "<hash>:<plain>" with no username column (passing
+# --username errors on bare hashes and breaks multi-colon hash types — so the
+# account name is recovered here instead). Multi-field hash types carry the
+# username inside the blob; single-field hashes are reverse-mapped from the
+# user:hash input file (shadow/unshadow) when one was used.
+username_for_cracked() {
+    local mode="$1" blob="$2" user=""
+    # shellcheck disable=SC2016  # literal \$ in sed regex is intentional
+    case "$mode" in
+        5500|5600)                       # Net-NTLMv1/v2:  USER::DOMAIN:...
+            user="${blob%%::*}"
+            [[ "$user" == "$blob" ]] && user="" ;;
+        13100|19600|19700)               # Kerberoast:  $krb5tgs$ETYPE$*USER$REALM$...
+            user="$(sed -n 's/^\$krb5tgs\$[0-9]*\$\*\([^$]*\)\$.*/\1/p' <<< "$blob")" ;;
+        18200)                           # AS-REP:  $krb5asrep$ETYPE$USER@REALM:...
+            user="$(sed -n 's/^\$krb5asrep\$[0-9]*\$\([^@]*\)@.*/\1/p' <<< "$blob")" ;;
+        7500)                            # Kerberos pre-auth:  $krb5pa$ETYPE$USER$REALM$...
+            user="$(sed -n 's/^\$krb5pa\$[0-9]*\$\([^$]*\)\$.*/\1/p' <<< "$blob")" ;;
+        2100)                            # DCC2/MSCash2:  $DCC2$iter#USER#hash
+            user="$(sed -n 's/^\$DCC2\$[0-9]*#\([^#]*\)#.*/\1/p' <<< "$blob")" ;;
+        *)                               # single-field hash: recover from user:hash input
+            if [[ -n "${INPUT_FILE:-}" && -r "${INPUT_FILE:-}" ]]; then
+                user="$(awk -F: -v h="$blob" '$2==h {print $1; exit}' "$INPUT_FILE")"
+            fi ;;
+    esac
+    printf '%s' "$user"
+}
+
+# log_cracked <hashcat-mode> <cracked-line "<hash>:<plain>">
+# Splits on the LAST colon (multi-field hash blobs contain many colons),
+# recovers the account name, and records user:plain — never hash:plain — so the
+# crackr -> sprayr --from-creds handoff carries the real username in field 4.
+log_cracked() {
+    local mode="$1" line="$2"
+    [[ -z "$line" ]] && return 0
+    local plain="${line##*:}"
+    local blob="${line%:*}"
+    [[ -z "$plain" || "$plain" == "$line" ]] && return 0
+    local user; user="$(username_for_cracked "$mode" "$blob")"
+    append_cred "crackr" "offline" "$user" "$plain" "cracked"
+}
+
 is_positive_integer() {
     [[ "$1" =~ ^[1-9][0-9]*$ ]]
 }
@@ -979,7 +1041,7 @@ run_hashcat() {
         # Log cracked results to central creds log
         while IFS= read -r line; do
             [[ -z "$line" ]] && continue
-            creds_log "crackr" "offline" "${line%%:*}" "${line#*:}" "cracked"
+            log_cracked "$mode" "$line"
         done < "$outfile"
         echo ""
         log_success "Results saved → $outfile"
@@ -991,7 +1053,7 @@ run_hashcat() {
             echo "$show_output"
             while IFS= read -r line; do
                 [[ -z "$line" ]] && continue
-                creds_log "crackr" "offline" "${line%%:*}" "${line#*:}" "cracked"
+                log_cracked "$mode" "$line"
             done <<< "$show_output"
         fi
     fi
@@ -1033,7 +1095,7 @@ run_hashcat_mask() {
         cat "$outfile"
         while IFS= read -r line; do
             [[ -z "$line" ]] && continue
-            creds_log "crackr" "offline" "${line%%:*}" "${line#*:}" "cracked"
+            log_cracked "$mode" "$line"
         done < "$outfile"
         echo ""
         log_success "Results saved → $outfile"
@@ -1084,7 +1146,7 @@ run_hashcat_hybrid() {
         cat "$outfile"
         while IFS= read -r line; do
             [[ -z "$line" ]] && continue
-            creds_log "crackr" "offline" "${line%%:*}" "${line#*:}" "cracked"
+            log_cracked "$mode" "$line"
         done < "$outfile"
         echo ""
         log_success "Results saved → $outfile"
@@ -1142,7 +1204,7 @@ run_jtr() {
             local jtr_pass="${line#*:}"
             # Strip trailing fields after password (john --show can include extra : fields)
             jtr_pass="${jtr_pass%%:*}"
-            [[ -n "$jtr_pass" ]] && creds_log "crackr" "offline" "$jtr_user" "$jtr_pass" "cracked"
+            [[ -n "$jtr_pass" ]] && append_cred "crackr" "offline" "$jtr_user" "$jtr_pass" "cracked"
         done <<< "$show_output"
     fi
 }

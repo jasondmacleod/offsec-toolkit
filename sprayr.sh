@@ -430,11 +430,15 @@ spray_proto() {
         return 0
     fi
 
-    # Assemble full nxc command
+    # Assemble full nxc command. Safe mode forces a single thread so attempts
+    # are serialized (one account at a time) instead of 20-wide — paired with
+    # --jitter this is what actually paces the spray under a lockout policy.
+    local spray_threads="$THREADS"
+    [[ "$SAFE_MODE" == true ]] && spray_threads=1
     local -a cmd=(nxc "$proto" "${live_targets[@]}" "${auth_args[@]}"
         --continue-on-success
         --no-progress
-        -t "$THREADS"
+        -t "$spray_threads"
         --timeout "$PROTO_TIMEOUT"
     )
     [[ "$SAFE_MODE" == true ]] && cmd+=(--jitter 2)
@@ -978,7 +982,8 @@ OPTIONS:
   --proto LIST            Comma-separated protocols (default: all)
                           Available: smb, winrm, wmi, ssh, rdp, ldap, mssql, ftp, vnc
   --quick                 SMB only — fastest validation
-  --safe                  Add 2s jitter between attempts (lockout safety)
+  --safe                  Single-threaded (-t 1) + 2s jitter + sequential
+                          protocols — minimizes (not eliminates) lockout risk
   --threads N             nxc thread count (default: 20)
   --timeout N             Per-protocol timeout seconds (default: 30)
   --from-creds            Spray all creds from $TOOLKIT_ROOT/creds.txt against
@@ -1009,7 +1014,8 @@ NOTES:
   - Hash auth: SSH, FTP, VNC do not support NTLM — auto-skipped
   - VNC has no username concept — accepts password/hash-less tests only
   - (Pwn3d!) = local admin access on that host
-  - Use --safe when spraying domain accounts (prevents lockouts)
+  - Use --safe when spraying domain accounts (single-threaded + jitter to
+    minimize lockout risk — still verify the lockout policy first)
   - Check adr.sh output for password policy before domain sprays
   - Kerberos (-k) requires a valid ccache: export KRB5CCNAME=/path/to/ccache
   - hits.txt and pwnd.txt are written atomically — survive Ctrl+C
@@ -1107,7 +1113,7 @@ mode_from_creds() {
     echo -e "${BOLD}${CYAN}  Targets:     ${target_count} host(s) from recon${NC}"
     echo -e "${BOLD}${CYAN}  Credentials: ${cred_count} unique cred(s) from creds.txt${NC}"
     echo -e "${BOLD}${CYAN}  Protocols:   smb,winrm,ssh,rdp${NC}"
-    echo -e "${BOLD}${YELLOW}  Mode:        SAFE (sequential + per-cred)${NC}"
+    echo -e "${BOLD}${YELLOW}  Mode:        SAFE (single-threaded + sequential + per-cred)${NC}"
     echo -e "${BOLD}${CYAN}════════════════════════════════════════════════════════════${NC}"
     echo ""
 
@@ -1410,7 +1416,7 @@ main() {
     echo -e "${BOLD}${CYAN}  Credential: ${CRED_DISPLAY}${NC}"
     [[ -n "$DOMAIN" ]] && echo -e "${BOLD}${CYAN}  Domain:     ${DOMAIN}${NC}"
     [[ "$LOCAL_AUTH" == true ]] && echo -e "${BOLD}${CYAN}  Auth:       local${NC}"
-    [[ "$SAFE_MODE" == true ]]  && echo -e "${BOLD}${YELLOW}  Mode:       SAFE (sequential + jitter enabled)${NC}"
+    [[ "$SAFE_MODE" == true ]]  && echo -e "${BOLD}${YELLOW}  Mode:       SAFE (single-threaded + sequential + 2s jitter)${NC}"
     [[ "$QUICK_MODE" == true ]] && echo -e "${BOLD}${YELLOW}  Mode:       QUICK (SMB only)${NC}"
     echo -e "${BOLD}${CYAN}  Output:     ${OUTDIR}/${NC}"
     echo -e "${BOLD}${CYAN}════════════════════════════════════════════════════════════${NC}"
@@ -1422,7 +1428,7 @@ main() {
         warn "Check the domain password policy first (null-auth often works):"
         warn "  nxc smb <dc> -u '' -p '' --pass-pol"
         warn "Or via authenticated enum: ./adr.sh -d ${DOMAIN} ... --quick"
-        warn "Use --safe to run protocols sequentially with jitter"
+        warn "Use --safe (single-threaded + 2s jitter) to minimize lockout risk"
         echo ""
     fi
 

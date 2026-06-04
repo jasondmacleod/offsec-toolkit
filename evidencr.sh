@@ -132,7 +132,7 @@ is_valid_ip() {
     [[ "$ip" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]] || return 1
     IFS='.' read -r -a octets <<< "$ip"
     for octet in "${octets[@]}"; do
-        (( octet >= 0 && octet <= 255 )) || return 1
+        (( 10#$octet >= 0 && 10#$octet <= 255 )) || return 1
     done
     return 0
 }

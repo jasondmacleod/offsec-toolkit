@@ -85,8 +85,8 @@ Multi-protocol credential spray wrapper. Given a cracked or obtained credential,
 |------|---------|-------------|
 | `--proto LIST` | all | Comma-separated: `smb,winrm,ssh,rdp,ldap,mssql,ftp` |
 | `--quick` | off | SMB only — fastest credential check |
-| `--safe` | off | Sequential (not parallel) + 2s jitter between attempts |
-| `--threads N` | 20 (1-200) | nxc thread count |
+| `--safe` | off | Single-threaded (`-t 1`) + sequential (not parallel) + 2s jitter between attempts |
+| `--threads N` | 20 (1-200) | nxc thread count (overridden to 1 by `--safe`) |
 | `--timeout N` | 30 (1-3600) | Per-protocol timeout in seconds |
 | `--outdir DIR` | `$TOOLKIT_ROOT/spray/<timestamp>/` | Output directory |
 | `--from-creds` | off | Spray all creds from `$TOOLKIT_ROOT/creds.txt` against all recon targets |
@@ -118,7 +118,7 @@ user's home directory instead of `/root/toolkit`.
 > [!tip] **Simple rule:** Domain spray with a user file → always `--safe`. Single-cred validation → default (parallel) is fine.
 
 **Default (parallel):** All protocols sprayed simultaneously. Fastest. Fine for single-target validation.
-**`--safe`:** Sequential with 2s jitter between attempts. Use for domain account sprays with user lists to reduce lockout risk.
+**`--safe`:** Single-threaded (`-t 1`) and sequential, with 2s jitter between attempts, so accounts are tried one at a time rather than 20-wide. Use for domain account sprays with user lists to reduce lockout risk — it minimizes, not eliminates, the risk, so still check the lockout policy first.
 
 ---
 
