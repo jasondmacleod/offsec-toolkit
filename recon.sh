@@ -2934,7 +2934,6 @@ generate_next_steps() {
             "nmap --script smb-vuln-ms08-067 -p 445 $ip" \
             "nmap --script smb2-security-mode -p 445 $ip" \
             "netexec smb $ip -M zerologon" \
-            "netexec smb $ip -M petitpotam" \
             "# CHEAT: vault/_CHEATSHEETS/Active_Directory.md §1.11 Security Controls Enumeration"
 
         if grep -qi 'SMB MS17-010 VULNERABLE' "$target_dir/loot/quick_wins.txt" 2>/dev/null; then
