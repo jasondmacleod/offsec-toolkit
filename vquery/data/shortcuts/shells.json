@@ -48,41 +48,5 @@
     "inline_followup": "Checklists/Foothold_Paths_Checklist_Methodology.md#a-2-windows-reverse-shells",
     "tags": "shells windows reverse-shell",
     "priority": 195
-  },
-  {
-    "slug": "shell-decision-tree",
-    "triggers": ["which shell", "shell decision", "what reverse shell", "shell type", "bind or reverse"],
-    "title": "Shell decision tree",
-    "answer_type": "chunk_ref",
-    "target_chunk_id": "_CHEATSHEETS/Reverse_Shells.md#shell-decision-tree",
-    "tags": "shells methodology decision",
-    "priority": 185
-  },
-  {
-    "slug": "web-shells",
-    "triggers": ["web shell", "php web shell", "aspx shell", "jsp shell", "webshell", "antak"],
-    "title": "Web shells (PHP / ASPX / JSP)",
-    "answer_type": "chunk_ref",
-    "target_chunk_id": "_CHEATSHEETS/Reverse_Shells.md#6-web-shells",
-    "tags": "shells webshell",
-    "priority": 180
-  },
-  {
-    "slug": "msfvenom-decision",
-    "triggers": ["which msfvenom payload", "msfvenom decision", "staged vs stageless", "payload selection", "meterpreter or shell"],
-    "title": "msfvenom payload decision tree",
-    "answer_type": "chunk_ref",
-    "target_chunk_id": "Checklists/Foothold_Paths_Checklist_Methodology.md#a-4-msfvenom-payload-generation-decision-tree",
-    "tags": "shells msfvenom decision",
-    "priority": 180
-  },
-  {
-    "slug": "payload-delivery",
-    "triggers": ["deliver payload", "get payload to target", "payload delivery", "transfer shell", "run the payload"],
-    "title": "Delivering the payload",
-    "answer_type": "chunk_ref",
-    "target_chunk_id": "_CHEATSHEETS/Reverse_Shells.md#7-delivering-the-payload",
-    "tags": "shells delivery",
-    "priority": 175
   }
 ]

@@ -30,21 +30,5 @@
     "inline_answer": "One screenshot per flag, **one image**, containing all of: an interactive shell (not a web shell), `whoami`, `hostname`, `ip a` / `ipconfig`, and the flag read with `cat`/`type` **from its original path**. If any element is missing or it's a web shell, the flag may be rejected. Capture at the moment you get the shell — don't promise to redo it later.",
     "tags": "report screenshot evidence",
     "priority": 205
-  },
-  {
-    "slug": "evidence-capture",
-    "triggers": [
-      "evidencr",
-      "evidence capture",
-      "evidence script",
-      "capture evidence",
-      "evidence ledger",
-      "evidencr.sh"
-    ],
-    "title": "Evidence capture (evidencr.sh)",
-    "answer_type": "chunk_ref",
-    "target_chunk_id": "_SCRIPTS/evidencr.md#engagement workflow",
-    "tags": "report evidence toolkit",
-    "priority": 185
   }
 ]

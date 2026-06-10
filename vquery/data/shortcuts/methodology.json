@@ -47,52 +47,5 @@
     "inline_answer": "`local.txt` (user) and `proof.txt` (root/SYSTEM) from their **original path**. One screenshot per flag showing, in a single image: an **interactive shell**, `whoami`, `hostname`, `ip a` / `ipconfig`, and the flag `cat`/`type` from the original location. **Web shells do not count.** Submit every flag to the engagement tracker before time expires.",
     "tags": "methodology proof evidence",
     "priority": 205
-  },
-  {
-    "slug": "engagement-default-chain",
-    "triggers": [
-      "default chain",
-      "script chain",
-      "engagement chain",
-      "what scripts to run",
-      "default workflow",
-      "script order"
-    ],
-    "title": "engagement default script chain",
-    "answer_type": "chunk_ref",
-    "target_chunk_id": "BUS_REVIEW/Toolkit_Strategy.md#engagement-default-chain",
-    "tags": "methodology toolkit workflow",
-    "priority": 185
-  },
-  {
-    "slug": "credential-loop",
-    "triggers": [
-      "credential loop",
-      "core engine",
-      "cred loop",
-      "the loop creds",
-      "credential lifecycle",
-      "crack spray loop"
-    ],
-    "title": "The credential loop (core engine)",
-    "answer_type": "chunk_ref",
-    "target_chunk_id": "BUS_REVIEW/Toolkit_Strategy.md#the-credential-loop-your-core-engine",
-    "tags": "methodology credentials doctrine",
-    "priority": 190
-  },
-  {
-    "slug": "rotation-stop-rules",
-    "triggers": [
-      "stop rules",
-      "rotation rules",
-      "when to stop",
-      "when to rotate",
-      "stop conditions"
-    ],
-    "title": "Rotation / stop rules",
-    "answer_type": "chunk_ref",
-    "target_chunk_id": "BUS_REVIEW/Toolkit_Strategy.md#rotation-stop-rules",
-    "tags": "methodology time stuck",
-    "priority": 185
   }
 ]

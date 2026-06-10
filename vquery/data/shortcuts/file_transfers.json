@@ -48,23 +48,5 @@
     "inline_followup": "_CHEATSHEETS/File_Transfers.md#7-base64-encode-decode-no-tools-needed",
     "tags": "file-transfer base64 fallback",
     "priority": 185
-  },
-  {
-    "slug": "transfer-decision",
-    "triggers": ["how to transfer", "file transfer decision", "which transfer method", "transfer file", "move file to target"],
-    "title": "File transfer decision tree",
-    "answer_type": "chunk_ref",
-    "target_chunk_id": "_CHEATSHEETS/File_Transfers.md#transfer-decision-tree",
-    "tags": "file-transfer methodology decision",
-    "priority": 185
-  },
-  {
-    "slug": "transfer-through-pivot",
-    "triggers": ["transfer through pivot", "file transfer pivot", "copy file over tunnel", "transfer over ligolo", "file over pivot"],
-    "title": "File transfer through a pivot",
-    "answer_type": "chunk_ref",
-    "target_chunk_id": "_CHEATSHEETS/File_Transfers.md#11-file-transfer-through-a-pivot",
-    "tags": "file-transfer pivoting",
-    "priority": 180
   }
 ]

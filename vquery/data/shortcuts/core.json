@@ -34,24 +34,5 @@
     "inline_followup": "_CHEATSHEETS/Passwords.md#offline-cracking-hashcat",
     "tags": "ad kerberos hashcat cracking asrep",
     "priority": 200
-  },
-  {
-    "slug": "windows-seimpersonate-check",
-    "triggers": [
-      "seimpersonate",
-      "se impersonate",
-      "seimpersonateprivilege",
-      "impersonate privilege",
-      "potato",
-      "printspoofer",
-      "godpotato",
-      "juicypotato",
-      "whoami priv seimpersonate"
-    ],
-    "title": "Windows — SeImpersonatePrivilege → SYSTEM",
-    "answer_type": "chunk_ref",
-    "target_chunk_id": "_CHEATSHEETS/Windows_PrivEsc.md#8-seimpersonateprivilege-seassignprimarytokenprivilege-system",
-    "tags": "windows privesc seimpersonate potato",
-    "priority": 200
   }
 ]
