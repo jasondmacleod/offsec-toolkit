@@ -852,11 +852,21 @@ parse_linux_output() {
     mkdir -p "$raw_dir"
     cp "$input_file" "$raw_dir/" 2>/dev/null
 
+    # Strip ANSI BEFORE the greps run. linpeas output saved via tee keeps color,
+    # and adjacency patterns (password[[:space:]]*[=:], BUILTIN.*Users.*(F|M)) fail
+    # to match across an embedded color-reset. Point the greps at a de-colored copy;
+    # the raw input is preserved in raw/ above.
+    local _orig_input="$input_file"
+    local _clean_input; _clean_input="$(mktemp)"
+    sed 's/\x1B\[[0-9;]*[mGKHF]//g' "$_orig_input" > "$_clean_input" 2>/dev/null
+    trap 'rm -f "$_clean_input"' RETURN
+    input_file="$_clean_input"
+
     {
         echo "============================================================"
         echo "  LINUX PRIVILEGE ESCALATION — QUICK WINS REPORT"
         echo "  Generated: $(date)"
-        echo "  Source: $input_file"
+        echo "  Source: $_orig_input"
         echo "============================================================"
         echo ""
 
@@ -1308,11 +1318,20 @@ parse_windows_output() {
     mkdir -p "$raw_dir"
     cp "$input_file" "$raw_dir/" 2>/dev/null
 
+    # Strip ANSI BEFORE the greps run. winpeas output saved via tee keeps color,
+    # and adjacency patterns fail to match across an embedded color-reset. Point
+    # the greps at a de-colored copy; the raw input is preserved in raw/ above.
+    local _orig_input="$input_file"
+    local _clean_input; _clean_input="$(mktemp)"
+    sed 's/\x1B\[[0-9;]*[mGKHF]//g' "$_orig_input" > "$_clean_input" 2>/dev/null
+    trap 'rm -f "$_clean_input"' RETURN
+    input_file="$_clean_input"
+
     {
         echo "============================================================"
         echo "  WINDOWS PRIVILEGE ESCALATION — QUICK WINS REPORT"
         echo "  Generated: $(date)"
-        echo "  Source: $input_file"
+        echo "  Source: $_orig_input"
         echo "============================================================"
         echo ""
 
