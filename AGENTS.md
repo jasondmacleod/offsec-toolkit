@@ -33,7 +33,7 @@ This is the bright line. Do not cross it.
 These override model defaults. Do not "correct" them.
 
 - **`nxc` (NetExec) — never `crackmapexec` or `cme`.** CME is deprecated. Every reference, every command, every doc string: `nxc`.
-- **Penelope with `-0` (zero) flag** is the standard reverse shell handler. Not `nc -lvnp`, not `rlwrap nc`, not `pwncat`. Penelope.
+- **Penelope with `-O` (capital O) flag** is the standard reverse shell handler. Not `nc -lvnp`, not `rlwrap nc`, not `pwncat`. Penelope.
 - **SharpHound + `impacket-smbserver`** for BloodHound collection. `bloodhound-python` / `bloodhound-ce-python` is unreliable in this environment (DNS SRV timeouts against lab DCs). Do not suggest it as the primary path.
 - **`pipx`** for Python tool installs (e.g. `git-dumper`). Not `pip` into system Python.
 - **Wordlists live in `/usr/share/wordlists/`** unless a specific script override exists.
