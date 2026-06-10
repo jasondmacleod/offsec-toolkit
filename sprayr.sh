@@ -63,10 +63,13 @@ fi
 creds_log() {
     local creds_file="${TOOLKIT_ROOT}/creds.txt"
     mkdir -p "$(dirname "$creds_file")" 2>/dev/null || true
+    # Sanitize the '|' field delimiter so a pipe-bearing value can't shift the
+    # awk -F'|' columns (same contract as lib/state.sh state_append_cred).
+    local _p="${1//|/%7C}" _h="${2//|/%7C}" _u="${3//|/%7C}" _c="${4//|/%7C}" _n="${5//|/%7C}"
     if ! printf '%s | %-8s | %-15s | %-20s | %s | %s\n' \
-        "$(date '+%Y-%m-%d %H:%M:%S')" "$1" "$2" "$3" "$4" "$5" >> "$creds_file" 2>/dev/null; then
+        "$(date '+%Y-%m-%d %H:%M:%S')" "$_p" "$_h" "$_u" "$_c" "$_n" >> "$creds_file" 2>/dev/null; then
         warn "CRED NOT LOGGED — cannot write to ${creds_file}"
-        warn "Credential: $3@$2 : $4 ($5)"
+        warn "Credential: ${_u}@${_h} : ${_c} (${_n})"
     fi
 }
 
@@ -233,7 +236,7 @@ port_open() {
 
 output_indicates_auth_failure() {
     local raw_file="$1"
-    grep -qiE 'STATUS_LOGON_FAILURE|STATUS_ACCESS_DENIED|STATUS_ACCOUNT_RESTRICTION|invalid credentials|login failed|authentication failed|unauthorized' "$raw_file" 2>/dev/null
+    grep -qiE 'STATUS_LOGON_FAILURE|STATUS_ACCESS_DENIED|STATUS_ACCOUNT_RESTRICTION|STATUS_ACCOUNT_LOCKED_OUT|STATUS_PASSWORD_EXPIRED|STATUS_PASSWORD_MUST_CHANGE|invalid credentials|invalidCredentials|data 52e|login failed|authentication failed|unauthorized|Login incorrect' "$raw_file" 2>/dev/null
 }
 
 #------------------------------------------------------------------------------
@@ -317,6 +320,15 @@ parse_nxc_output() {
 
     local line target hit_user cred_display
     while IFS= read -r line; do
+        # Only count genuine auth successes. An nxc [+] success carries either a
+        # user:secret colon (plaintext/hash/ssh) OR a DOMAIN\user token with NO
+        # colon (kerberos / ldap-bind), optionally (Pwn3d!). Match any of those;
+        # skip [+] banner/enumeration lines.
+        if ! { [[ "$line" == *"(Pwn3d!)"* ]] \
+               || [[ "$line" =~ \[\+\][[:space:]]+[^[:space:]]*\\ ]] \
+               || [[ "$line" =~ \[\+\][[:space:]]+[^[:space:]]*: ]]; }; then
+            continue
+        fi
         # Extract IP — second whitespace field in nxc output:
         # "SMB  10.10.10.5  445  DC01  [+] ..."
         target=$(echo "$line" | awk '{print $2}')
@@ -446,6 +458,12 @@ spray_proto() {
     info "Spraying ${proto_upper} on ${#live_targets[@]} target(s)..."
     cmd_log "${cmd[*]}"
     timeout "$(( PROTO_TIMEOUT + 10 ))" "${cmd[@]}" > "$raw_out" 2>&1 || true
+
+    # Account lockout is a catastrophic outcome — surface it loudly and distinctly,
+    # not as an ordinary miss, regardless of whether any [+] hits landed first.
+    if grep -qiE 'STATUS_ACCOUNT_LOCKED_OUT|account (has been|is) locked' "$raw_out" 2>/dev/null; then
+        error "*** ${proto_upper} ACCOUNT LOCKOUT DETECTED — STOP SPRAYING. Review ${raw_out} ***"
+    fi
 
     # Only call it an auth miss when the output actually indicates auth failure.
     if ! grep -qF '[+]' "$raw_out" 2>/dev/null; then

@@ -2116,7 +2116,7 @@ JWT_NONE
     fi
 
     local auth_hits
-    auth_hits=$(grep -h '| 401 |' "$work_dir/content/"*.txt "$work_dir/content/recursive/"*.txt 2>/dev/null | head -3)
+    auth_hits=$(grep -hE '\|[[:space:]]+401[[:space:]]+\|' "$work_dir/content/"*.txt "$work_dir/content/recursive/"*.txt 2>/dev/null | head -3)
     if [[ -n "$auth_hits" ]]; then
         local auth_cmds=()
         while IFS= read -r auth_line; do
@@ -2132,7 +2132,7 @@ JWT_NONE
             "${auth_cmds[@]}" \
             "" \
             "# Step 2 — read WWW-Authenticate realm (the realm string often names the product → pick default creds):" \
-            "for ap in \$(grep -h '| 401 |' $work_dir/content/*.txt 2>/dev/null | awk '{print \$1}' | sort -u); do" \
+            "for ap in \$(grep -hE '\|[[:space:]]+401[[:space:]]+\|' $work_dir/content/*.txt 2>/dev/null | awk '{print \$1}' | sort -u); do" \
             "    echo \"=== \$ap ===\"" \
             "    curl -skI \"\$ap\" 2>/dev/null | grep -i 'www-authenticate'" \
             "done" \
@@ -2158,7 +2158,7 @@ JWT_NONE
     fi
 
     local login_hits
-    login_hits=$(grep -hiE '/(login|signin|auth|wp-login|admin).*(\| 200 \||\] http)' "$work_dir/content/"*.txt "$work_dir/fingerprint/sensitive_paths.txt" 2>/dev/null | head -3)
+    login_hits=$(grep -hiE '/(login|signin|auth|wp-login|admin).*(\|[[:space:]]+200[[:space:]]+\||\] http)' "$work_dir/content/"*.txt "$work_dir/fingerprint/sensitive_paths.txt" 2>/dev/null | head -3)
     if [[ -n "$login_hits" ]]; then
         append_next_finding "$next_file" \
             "Login page discovered" \
@@ -2181,7 +2181,7 @@ JWT_NONE
     fi
 
     local sensitive_hits
-    sensitive_hits=$(grep -hiE '\.(bak|sql|env|config|conf|xml|json|zip|tar|gz|old|backup|log).*\| 200 \|' "$work_dir/content/"*.txt 2>/dev/null | awk '{print $1}' | head -5)
+    sensitive_hits=$(grep -hiE '\.(bak|sql|env|config|conf|xml|json|zip|tar|gz|old|backup|log).*\|[[:space:]]+200[[:space:]]+\|' "$work_dir/content/"*.txt 2>/dev/null | awk '{print $1}' | head -5)
     if [[ -n "$sensitive_hits" ]]; then
         local sens_cmds=()
         while IFS= read -r found_url; do
@@ -2195,7 +2195,7 @@ JWT_NONE
             "# CHEAT: vault/_CHEATSHEETS/Web_App.md §2 Find What to Attack"
     fi
 
-    if grep -qiE '/\.env.*(\| 200 \||HTTP/[0-9.]+ 200)|APP_KEY=|DB_PASSWORD=|Laravel' "$work_dir/fingerprint/sensitive_paths.txt" "$work_dir/content/"*.txt "$work_dir/fingerprint/homepage_source.html" 2>/dev/null; then
+    if grep -qiE '/\.env.*(\|[[:space:]]+200[[:space:]]+\||HTTP/[0-9.]+ 200)|APP_KEY=|DB_PASSWORD=|Laravel' "$work_dir/fingerprint/sensitive_paths.txt" "$work_dir/content/"*.txt "$work_dir/fingerprint/homepage_source.html" 2>/dev/null; then
         append_next_finding "$next_file" \
             "Laravel/.env indicators found" \
             "sensitive path/source/content output matched .env, APP_KEY, DB_PASSWORD, or Laravel" \
@@ -3306,9 +3306,9 @@ generate_summary() {
             echo ""
             echo '```'
             # Show 200s first, then 301/302, then 401/403
-            grep '| 200 |' "$f" 2>/dev/null | head -20
-            grep '| 30[12] |' "$f" 2>/dev/null | head -10
-            grep '| 40[13] |' "$f" 2>/dev/null | head -10
+            grep -E '\|[[:space:]]+200[[:space:]]+\|' "$f" 2>/dev/null | head -20
+            grep -E '\|[[:space:]]+30[12][[:space:]]+\|' "$f" 2>/dev/null | head -10
+            grep -E '\|[[:space:]]+40[13][[:space:]]+\|' "$f" 2>/dev/null | head -10
             echo '```'
             echo ""
         done
@@ -3370,7 +3370,7 @@ generate_summary() {
                     (( cnt > 0 )) || continue
                     echo "### $(basename "$f") ($cnt)"
                     echo '```'
-                    grep '| 200 |' "$f" 2>/dev/null | head -10
+                    grep -E '\|[[:space:]]+200[[:space:]]+\|' "$f" 2>/dev/null | head -10
                     echo '```'
                     echo ""
                 done
@@ -3463,7 +3463,7 @@ generate_summary() {
         echo "## 200 OK Hits"
         for f in "$work_dir/content/"*.txt; do
             [[ -f "$f" ]] || continue
-            grep '| 200 |' "$f" 2>/dev/null | head -10 | sed 's/^/  /'
+            grep -E '\|[[:space:]]+200[[:space:]]+\|' "$f" 2>/dev/null | head -10 | sed 's/^/  /'
         done
 
         echo ""
@@ -3474,7 +3474,7 @@ generate_summary() {
             while IFS= read -r auth_line; do
                 auth_paths+=("${auth_line}")
                 echo "  AUTH: ${auth_line}"
-            done < <(grep '| 401 |' "$f" 2>/dev/null | head -5)
+            done < <(grep -E '\|[[:space:]]+401[[:space:]]+\|' "$f" 2>/dev/null | head -5)
         done
         if (( ${#auth_paths[@]} > 0 )); then
             echo ""
@@ -3492,7 +3492,7 @@ generate_summary() {
         for f in "$work_dir/content/"*.txt; do
             [[ -f "$f" ]] || continue
             local sens_hits
-            sens_hits=$(grep -iE '\.(bak|sql|env|config|conf|xml|json|zip|tar|gz|old|backup|log).*\| 200 \|' "$f" 2>/dev/null | head -5)
+            sens_hits=$(grep -iE '\.(bak|sql|env|config|conf|xml|json|zip|tar|gz|old|backup|log).*\|[[:space:]]+200[[:space:]]+\|' "$f" 2>/dev/null | head -5)
             if [[ -n "${sens_hits}" ]]; then
                 sens_found=true
                 while IFS= read -r sens_line; do
@@ -3506,7 +3506,7 @@ generate_summary() {
             # Resolve actual paths from hits
             for f in "$work_dir/content/"*.txt; do
                 [[ -f "$f" ]] || continue
-                grep -iE '\.(bak|sql|env|config|conf|xml|json|zip|tar|gz|old|backup|log).*\| 200 \|' "$f" 2>/dev/null \
+                grep -iE '\.(bak|sql|env|config|conf|xml|json|zip|tar|gz|old|backup|log).*\|[[:space:]]+200[[:space:]]+\|' "$f" 2>/dev/null \
                     | awk '{print $1}' | head -5 \
                     | while IFS= read -r found_path; do
                         local clean_path
@@ -3522,7 +3522,7 @@ generate_summary() {
         for f in "$work_dir/content/"*.txt; do
             [[ -f "$f" ]] || continue
             local login_hits
-            login_hits=$(grep -iE '/(login|signin|auth|wp-login|admin).*\| 200 \|' "$f" 2>/dev/null | head -3)
+            login_hits=$(grep -iE '/(login|signin|auth|wp-login|admin).*\|[[:space:]]+200[[:space:]]+\|' "$f" 2>/dev/null | head -3)
             if [[ -n "${login_hits}" ]]; then
                 login_found=true
                 while IFS= read -r login_line; do

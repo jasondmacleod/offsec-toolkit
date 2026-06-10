@@ -67,10 +67,13 @@ cmd_log() {
 creds_log() {
     local creds_file="${TOOLKIT_ROOT}/creds.txt"
     mkdir -p "$(dirname "$creds_file")" 2>/dev/null || true
+    # Sanitize the '|' field delimiter so a pipe-bearing value can't shift the
+    # awk -F'|' columns (same contract as lib/state.sh state_append_cred).
+    local _p="${1//|/%7C}" _h="${2//|/%7C}" _u="${3//|/%7C}" _c="${4//|/%7C}" _n="${5//|/%7C}"
     if ! printf '%s | %-8s | %-15s | %-20s | %s | %s\n' \
-        "$(date '+%Y-%m-%d %H:%M:%S')" "$1" "$2" "$3" "$4" "$5" >> "$creds_file" 2>/dev/null; then
+        "$(date '+%Y-%m-%d %H:%M:%S')" "$_p" "$_h" "$_u" "$_c" "$_n" >> "$creds_file" 2>/dev/null; then
         warn "CRED NOT LOGGED — cannot write to ${creds_file}"
-        warn "Credential: $3@$2 : $4 ($5)"
+        warn "Credential: ${_u}@${_h} : ${_c} (${_n})"
     fi
 }
 
@@ -310,7 +313,10 @@ sync_next_steps_file() {
 generate_ad_2025_next_steps() {
     local notes="${OUTDIR}/summary_notes.txt"
     local valid_context=false
-    grep -qF '[+]' "${OUTDIR}/domain_context.txt" 2>/dev/null && valid_context=true
+    # Match a real nxc auth-success line — a DOMAIN\user token (kerberos/ldap-bind,
+    # no colon) OR user:secret (plaintext/hash) OR (Pwn3d!) — not a bare [+] banner
+    # from a later appended phase.
+    grep -qE '\[\+\][[:space:]]+[^[:space:]]*\\|\[\+\][[:space:]]+[^[:space:]]*:|\(Pwn3d!\)' "${OUTDIR}/domain_context.txt" 2>/dev/null && valid_context=true
 
     if [[ "$valid_context" == true ]]; then
         attack_cmd_once "ON-HOST AD ENUMERATION (PowerView + SharpHound)" \
@@ -652,7 +658,10 @@ phase1_domain_context() {
     cmd_log "nxc smb ${DC_IP} ${NXC_AUTH[*]}"
     timeout 30 nxc smb "$DC_IP" "${NXC_AUTH[@]}" 2>&1 | tee "$ctx_out"
 
-    if ! grep -qF '[+]' "$ctx_out"; then
+    # Require an actual auth-success line — DOMAIN\user (kerberos/ldap-bind, no
+    # colon) OR user:secret OR (Pwn3d!) — not a bare [+] banner. Later phases
+    # append tool output here, so an incidental [+] must not read as validated.
+    if ! grep -qE '\[\+\][[:space:]]+[^[:space:]]*\\|\[\+\][[:space:]]+[^[:space:]]*:|\(Pwn3d!\)' "$ctx_out"; then
         if [[ "$KERBEROS" == "true" || "$AUTH_TYPE" == "kerberos" ]]; then
             # nxc --use-kcache against a DC *IP* often shows no [+] even with a
             # valid ticket (Kerberos wants the FQDN). Don't abort the whole AD
@@ -951,7 +960,7 @@ phase2b_ldap_enum() {
         > "${ldap_dir}/gmsa.txt" 2>&1 || true
     if grep -qiE 'gmsa|msds-managedpassword|Account:' "${ldap_dir}/gmsa.txt" 2>/dev/null; then
         success "gMSA information collected → ldap/gmsa.txt"
-        if grep -qiE 'NTHASH|:[a-fA-F0-9]{32}' "${ldap_dir}/gmsa.txt" 2>/dev/null; then
+        if grep -qiE '(NTLM|nthash)[[:space:]]*:[[:space:]]*[a-fA-F0-9]{32}' "${ldap_dir}/gmsa.txt" 2>/dev/null; then
             success "*** gMSA NT HASH RECOVERED — ldap/gmsa.txt ***"
             echo "GMSA_HASH=YES" >> "${OUTDIR}/summary_notes.txt"
         fi
@@ -997,7 +1006,9 @@ phase2b_ldap_enum() {
     cmd_log "nxc ldap ${DC_IP} ${NXC_AUTH[*]} -M enum_trusts"
     timeout 60 nxc ldap "$DC_IP" "${NXC_AUTH[@]}" -M enum_trusts \
         > "${ldap_dir}/trusts.txt" 2>&1 || true
-    if grep -qiE 'trust|targetname' "${ldap_dir}/trusts.txt" 2>/dev/null; then
+    # Require an actual trust record (direction/type), not the bare word "trust"
+    # which appears in the enum_trusts module banner and "no trusts" messages.
+    if grep -qiE 'Bidirectional|Inbound|Outbound|Parent-Child|External|Forest|targetName' "${ldap_dir}/trusts.txt" 2>/dev/null; then
         success "Domain trusts enumerated → ldap/trusts.txt"
         echo "DOMAIN_TRUSTS=YES" >> "${OUTDIR}/summary_notes.txt"
     fi
@@ -1552,10 +1563,14 @@ phase8_sessions() {
         > "${OUTDIR}/sessions/loggedon_users.txt" 2>&1 || true
     success "Logged-on users → sessions/loggedon_users.txt"
 
-    # Flag privileged sessions
-    if grep -qiE "admin|administrator|domain.admin" \
+    # Flag privileged sessions — exclude nxc status/auth lines (the [+] line
+    # echoes the *connecting* user) and the ADMIN$ share, so we match an actual
+    # privileged account in the session list, not our own auth context.
+    if grep -hvE '\[[*+-]\]' \
         "${OUTDIR}/sessions/loggedon_users.txt" \
-        "${OUTDIR}/sessions/smb_sessions.txt" 2>/dev/null; then
+        "${OUTDIR}/sessions/smb_sessions.txt" 2>/dev/null \
+        | grep -viE 'ADMIN\$' \
+        | grep -qiE 'administrator|domain admins?|\badmin\b'; then
         success "*** PRIVILEGED USER SESSIONS VISIBLE ***"
         echo "PRIV_SESSIONS=YES" >> "${OUTDIR}/summary_notes.txt"
     fi

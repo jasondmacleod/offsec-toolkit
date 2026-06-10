@@ -601,10 +601,13 @@ log_cmd() {
 creds_log() {
     local creds_file="${TOOLKIT_ROOT}/creds.txt"
     mkdir -p "$(dirname "$creds_file")" 2>/dev/null || true
+    # Sanitize the '|' field delimiter so a pipe-bearing value can't shift the
+    # awk -F'|' columns (same contract as lib/state.sh state_append_cred).
+    local _p="${1//|/%7C}" _h="${2//|/%7C}" _u="${3//|/%7C}" _c="${4//|/%7C}" _n="${5//|/%7C}"
     if ! printf '%s | %-8s | %-15s | %-20s | %s | %s\n' \
-        "$(date '+%Y-%m-%d %H:%M:%S')" "$1" "$2" "$3" "$4" "$5" >> "$creds_file" 2>/dev/null; then
+        "$(date '+%Y-%m-%d %H:%M:%S')" "$_p" "$_h" "$_u" "$_c" "$_n" >> "$creds_file" 2>/dev/null; then
         warn "CRED NOT LOGGED — cannot write to ${creds_file}"
-        warn "Credential: $3@$2 : $4 ($5)"
+        warn "Credential: ${_u}@${_h} : ${_c} (${_n})"
     fi
 }
 

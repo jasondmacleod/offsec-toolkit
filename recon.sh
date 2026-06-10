@@ -2027,10 +2027,11 @@ enum_smtp() {
                 while IFS= read -r user; do
                     response=$(printf "VRFY %s\r\nQUIT\r\n" "$user" | nc -w 3 "$ip" "$port" 2>/dev/null)
                     # Drop the 220 greeting and 221 QUIT reply before the match
-                    # so only the VRFY response is evaluated (the greeting alone
-                    # matched ^2[0-9]{2} and flagged every probed user valid).
+                    # so only the VRFY response is evaluated. Accept only 250/251
+                    # (user exists / will-forward); 252 ("cannot VRFY but will
+                    # accept") is NOT a confirmation and must not flag a user valid.
                     vrfy_reply=$(printf "%s\n" "$response" | grep -vE "^22[01]")
-                    if printf "%s\n" "$vrfy_reply" | grep -qE "^2[0-9]{2}"; then
+                    if printf "%s\n" "$vrfy_reply" | grep -qE "^25[01]"; then
                         echo "VALID: $user — $vrfy_reply"
                     fi
                 done < <(head -100 "$users_file")

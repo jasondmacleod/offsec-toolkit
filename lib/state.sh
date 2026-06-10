@@ -243,7 +243,7 @@ state_read_global() {
             NF >= 6 {
                 u = $4; gsub(/^[[:space:]]+|[[:space:]]+$/, "", u)
                 c = $5; gsub(/^[[:space:]]+|[[:space:]]+$/, "", c)
-                if (u != "" && c != "" && !seen[u":"c]++) print "cred=" u ":" c
+                if (u != "" && c != "" && !seen[u,c]++) print "cred=" u ":" c
             }
         ' "$creds_f"
     fi
@@ -319,6 +319,8 @@ state_write_foothold() {
 # placeholder `creds/creds.txt`):
 #   path     = $TOOLKIT_ROOT/creds.txt          (NOT $TOOLKIT_ROOT/creds/creds.txt)
 #   schema   = TIMESTAMP | PROTO | HOST | USER | CRED | NOTE   (6 fields, pipe-separated)
+#   encoding = a literal '|' inside any field is stored as %7C so the row stays
+#              awk -F'|' parseable — decode %7C back to '|' when using a cred by hand
 #   dedupe   = (USER, CRED) tuple across the entire file (timestamps always differ)
 #   readers  = sprayr.sh::parse_creds_file (awk -F'|', fields 4/5/6)
 #   writers  = adr / sprayr / crackr / startr / targetcheckr
@@ -346,6 +348,11 @@ state_append_cred() {
         echo "state_append_cred: malformed cred (empty user or cred): $raw" >&2
         return 2
     }
+    # Sanitize the field delimiter: a '|' in user/cred would shift downstream
+    # awk -F'|' columns. Substitute %7C (reversible URL-encoding) so the cred is
+    # RECORDED and parseable rather than dropped.
+    user="${user//|/%7C}"
+    cred="${cred//|/%7C}"
 
     local creds_file="${TOOLKIT_ROOT}/creds.txt"
     mkdir -p "$(dirname "$creds_file")" 2>/dev/null || return 1
@@ -368,6 +375,9 @@ state_append_cred() {
     local proto="${STATE_WRITE_PROTO:-exploit}"
     local host="${STATE_WRITE_HOST:--}"
     local note="${STATE_WRITE_NOTE:-via-targetcheckr}"
+    # Sanitize the delimiter in these fields too (user/cred handled above), so no
+    # '|'-bearing value can shift the awk -F'|' columns.
+    proto="${proto//|/%7C}"; host="${host//|/%7C}"; note="${note//|/%7C}"
     printf '%s | %-8s | %-15s | %-20s | %s | %s\n' \
         "$(date '+%Y-%m-%d %H:%M:%S')" "$proto" "$host" "$user" "$cred" "$note" \
         >> "$creds_file"
