@@ -1,0 +1,170 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>offsec-toolkit: Recon, Decision &amp; Reporting Automation for Pentests</title>
+<meta name="description" content="A layered offensive-security automation toolkit for authorized penetration testing and OSCP-style labs: recon and enumeration scripts, decision-support tooling, and an evidence and reporting workflow, with a searchable note vault.">
+<link rel="canonical" href="https://jasondmacleod.github.io/offsec-toolkit/">
+<meta name="author" content="Jason D. MacLeod">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="offsec-toolkit">
+<meta property="og:url" content="https://jasondmacleod.github.io/offsec-toolkit/">
+<meta property="og:title" content="offsec-toolkit: Recon, Decision &amp; Reporting Automation for Pentests">
+<meta property="og:description" content="Layered offensive-security automation for authorized pentesting and OSCP labs: recon and enumeration, decision support, and evidence and reporting, plus a searchable note vault.">
+<meta name="twitter:card" content="summary">
+<meta name="twitter:title" content="offsec-toolkit: Recon, Decision &amp; Reporting Automation for Pentests">
+<meta name="twitter:description" content="Layered offensive-security automation for authorized pentesting and OSCP labs: recon, decision support, and evidence and reporting, plus a searchable note vault.">
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "SoftwareSourceCode",
+  "name": "offsec-toolkit",
+  "url": "https://jasondmacleod.github.io/offsec-toolkit/",
+  "codeRepository": "https://github.com/jasondmacleod/offsec-toolkit",
+  "description": "A layered offensive-security automation toolkit for authorized penetration testing and OSCP-style labs: recon and enumeration, decision support, and an evidence and reporting workflow, with a searchable note vault.",
+  "programmingLanguage": ["Shell", "PowerShell", "Python"],
+  "author": { "@type": "Person", "name": "Jason D. MacLeod" },
+  "license": "https://opensource.org/licenses/MIT",
+  "keywords": "OSCP, penetration testing, offensive security, recon automation, enumeration, pentest reporting, Kali Linux"
+}
+</script>
+<style>
+  :root{
+    --bg:#0d1117; --panel:#161b22; --panel-2:#1c2330;
+    --ink:#e6edf3; --ink-soft:#9da7b3; --ink-faint:#6e7781;
+    --line:#2a313c; --line-strong:#3a424f;
+    --acc:#3fb950; --acc-deep:#2ea043; --acc-wash:#132a18;
+    --amber:#d29922; --mono:"SF Mono",ui-monospace,"Cascadia Code","JetBrains Mono",Menlo,Consolas,monospace;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0}
+  body{background:var(--bg); color:var(--ink);
+    font-family:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+    font-size:15px; line-height:1.6; -webkit-font-smoothing:antialiased}
+  .wrap{max-width:900px; margin:0 auto; padding:30px 20px 100px}
+  .eyebrow{font-family:var(--mono); font-size:11px; letter-spacing:.14em; text-transform:uppercase;
+    color:var(--acc); font-weight:600; margin:0 0 10px}
+  h1{font-size:clamp(28px,5.2vw,42px); line-height:1.1; letter-spacing:-.02em; margin:0 0 14px; font-weight:800}
+  h1 .mono{font-family:var(--mono); font-weight:700}
+  h2{font-size:20px; letter-spacing:-.01em; margin:36px 0 12px; font-weight:700}
+  h3{font-size:15px; margin:18px 0 4px; font-weight:600}
+  .lede{font-size:16px; color:var(--ink-soft); margin:0 0 22px; max-width:68ch}
+  p{margin:0 0 12px}
+  a{color:var(--acc)}
+  a:hover{color:var(--acc-deep)}
+  .cta{display:flex; flex-wrap:wrap; gap:10px; margin:0 0 26px}
+  .btn{display:inline-flex; align-items:center; gap:7px; font-family:var(--mono); font-size:13px;
+    text-decoration:none; padding:9px 15px; border-radius:8px; border:1px solid var(--line-strong)}
+  .btn.primary{background:var(--acc-deep); color:#fff; border-color:var(--acc-deep); font-weight:600}
+  .btn.primary:hover{background:var(--acc); color:#06120a}
+  .btn.ghost{background:var(--panel); color:var(--ink)}
+  .btn.ghost:hover{border-color:var(--acc); color:var(--acc)}
+  .spec{display:flex; flex-wrap:wrap; gap:6px 8px; margin:0 0 24px}
+  .chip{font-family:var(--mono); font-size:11.5px; color:var(--ink-soft);
+    background:var(--panel); border:1px solid var(--line); padding:4px 9px; border-radius:6px}
+  .chip b{color:var(--ink); font-weight:600}
+  .note{background:var(--acc-wash); border:1px solid var(--acc-deep); border-radius:10px;
+    padding:13px 15px; font-size:13.5px; color:#c9e7cf; margin:0 0 28px}
+  .note b{color:#e6f4ea}
+  .layers{display:grid; grid-template-columns:repeat(auto-fit,minmax(240px,1fr)); gap:12px; margin:14px 0 0}
+  .layer{background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:16px 17px}
+  .layer .n{font-family:var(--mono); font-size:11px; color:var(--acc); font-weight:600}
+  .layer h3{margin:4px 0 6px}
+  .layer p{font-size:13px; color:var(--ink-soft); margin:0}
+  table{width:100%; border-collapse:collapse; margin:10px 0 0; font-size:13.5px}
+  th,td{text-align:left; padding:9px 10px; border-bottom:1px solid var(--line); vertical-align:top}
+  th{color:var(--ink-faint); font-weight:600; font-size:11.5px; text-transform:uppercase; letter-spacing:.05em}
+  td code,.layer code{font-family:var(--mono); font-size:12.5px; color:var(--ink)}
+  pre{background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:14px 16px;
+    overflow:auto; font-family:var(--mono); font-size:12.5px; line-height:1.55; color:var(--ink)}
+  pre .c{color:var(--ink-faint)}
+  ul{margin:0 0 12px; padding-left:20px} li{margin-bottom:6px; color:var(--ink-soft)}
+  li b{color:var(--ink)}
+  footer{margin-top:46px; padding-top:18px; border-top:1px solid var(--line);
+    font-size:12.5px; color:var(--ink-faint); font-family:var(--mono)}
+  footer a{color:var(--ink-soft)}
+</style>
+</head>
+<body>
+
+<div class="wrap">
+  <p class="eyebrow">Offensive security · automation</p>
+  <h1><span class="mono">offsec-toolkit</span></h1>
+  <p class="lede">A layered automation toolkit for authorized penetration testing and OSCP-style labs. It takes an engagement end to end across three stages: recon and collection, decision support, and evidence and reporting, all tied together by a searchable note vault.</p>
+
+  <div class="cta">
+    <a class="btn primary" href="https://github.com/jasondmacleod/offsec-toolkit">View on GitHub →</a>
+    <a class="btn ghost" href="https://github.com/jasondmacleod/offsec-toolkit#quick-start">Quick start</a>
+  </div>
+
+  <div class="spec">
+    <span class="chip"><b>21</b> scripts</span>
+    <span class="chip">Bash &amp; PowerShell</span>
+    <span class="chip"><b>2</b> Flask reference apps</span>
+    <span class="chip">Obsidian note vault</span>
+    <span class="chip">MIT licensed</span>
+  </div>
+
+  <div class="note">
+    <b>For authorized use only.</b> These tools are for penetration testing, security research, and lab environments (such as OSCP practice) where you have explicit permission to test. Use them only against systems you own or are authorized to assess.
+  </div>
+
+  <h2>How it is organized</h2>
+  <p>Every Kali-side script honors a single environment variable, <code>$TOOLKIT_ROOT</code>, for its working tree, so each tool reads and writes a consistent layout as an engagement progresses through the three layers.</p>
+  <div class="layers">
+    <div class="layer">
+      <span class="n">Layer 1</span>
+      <h3>Collection</h3>
+      <p>Recon and enumeration that fan out across targets and write structured output under the shared working tree.</p>
+    </div>
+    <div class="layer">
+      <span class="n">Layer 2</span>
+      <h3>Decision support</h3>
+      <p>Tools that read the collection output, rank what to do next, classify exploit outcomes, and track live access.</p>
+    </div>
+    <div class="layer">
+      <span class="n">Layer 3</span>
+      <h3>Evidence &amp; reporting</h3>
+      <p>Capture of flags and loot, proof auditing, and an evidence ledger that rolls up into report-ready material.</p>
+    </div>
+  </div>
+
+  <h2>Components</h2>
+  <table>
+    <tr><th>Area</th><th>Scripts</th></tr>
+    <tr><td>Setup &amp; workspace</td><td><code>tools_setup.sh</code>, <code>startr.sh</code>, <code>workflow.sh</code></td></tr>
+    <tr><td>Recon &amp; collection</td><td><code>recon.sh</code>, <code>webenum.sh</code>, <code>servr.sh</code>, <code>adr.sh</code>, <code>sprayr.sh</code>, <code>crackr.sh</code></td></tr>
+    <tr><td>Access &amp; movement</td><td><code>pivotr.sh</code>, <code>lootr.sh</code> / <code>lootr.ps1</code>, <code>escalatr.sh</code></td></tr>
+    <tr><td>Decision support</td><td><code>orient.sh</code>, <code>stuckr.sh</code>, <code>targetcheckr.sh</code>, <code>watchdog.sh</code>, <code>livefetch.sh</code>, <code>exploitfixr.sh</code></td></tr>
+    <tr><td>Evidence &amp; reporting</td><td><code>evidencr.sh</code>, <code>proofr.sh</code></td></tr>
+  </table>
+
+  <h3>Reference apps</h3>
+  <ul>
+    <li><b>exploitdb</b>: a Flask app over a curated, cross-referenced catalog of techniques and findings (SQLite + FTS5), with a findings-intake and report-assembly workflow.</li>
+    <li><b>vquery</b>: a fast Flask "vault query" engine that indexes the note vault and command shortcuts for sub-second lookup during an engagement.</li>
+  </ul>
+
+  <h3>Note vault</h3>
+  <p>An Obsidian vault of methodology checklists, technique cheatsheets, tool references, and report templates that the tools and apps cross-reference.</p>
+
+  <h2>Quick start</h2>
+<pre><span class="c"># install recon/enum helper tools (no sudo needed for --check)</span>
+./tools_setup.sh --check
+
+<span class="c"># set the working tree (defaults to ~/toolkit)</span>
+export TOOLKIT_ROOT="$HOME/toolkit"
+
+<span class="c"># run the reference apps</span>
+cd exploitdb &amp;&amp; ./run.sh      <span class="c"># http://127.0.0.1:5000</span>
+cd vquery   &amp;&amp; ./run.sh</pre>
+  <p>Full documentation, the component reference, and setup notes live in the <a href="https://github.com/jasondmacleod/offsec-toolkit#readme">repository README</a>.</p>
+
+  <footer>
+    Open-source offensive-security tooling · MIT licensed · for authorized testing only · by <a href="https://github.com/jasondmacleod">Jason D. MacLeod</a> · <a href="https://github.com/jasondmacleod/offsec-toolkit">source on GitHub</a>
+  </footer>
+</div>
+
+</body>
+</html>
