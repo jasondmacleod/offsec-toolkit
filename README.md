@@ -2,7 +2,7 @@
 
 A layered offensive-security automation toolkit: recon and collection, decision support, and evidence/reporting.
 
-Author: **Jason MacLeod**
+Author: **[Jason D. MacLeod](https://www.jasondmacleod.com/)** (lawyer and cybersecurity compliance professional, Seattle). More at [jasondmacleod.com/code](https://www.jasondmacleod.com/code/).
 
 > Developed with Claude Code (Anthropic).
 
